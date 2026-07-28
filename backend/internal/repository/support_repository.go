@@ -88,7 +88,7 @@ func (r *SupportRepository) InsertMessage(m *models.SupportMessage) (*models.Sup
 		INSERT INTO support_ticket_messages
 		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		ON CONFLICT (account_id, external_id) DO NOTHING
+		ON CONFLICT (account_id, external_id) WHERE external_id IS NOT NULL DO NOTHING
 		RETURNING id`,
 		m.AccountID, m.TicketID, m.Direction, m.Type, m.Content, m.MediaURL, m.MimeType,
 		m.FileName, m.Status, m.ExternalID, m.SenderID, now).Scan(&m.ID)
