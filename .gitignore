@@ -1,0 +1,17 @@
+# Segredos
+**/.env
+!**/.env.example
+
+# Binários / build Go
+/backend/bin/
+/backend/api
+zapdesk-api
+
+# Lixo do macOS
+.DS_Store
+**/.DS_Store
+
+# Flutter (fases futuras)
+**/build/
+**/.dart_tool/
+**/failures/
