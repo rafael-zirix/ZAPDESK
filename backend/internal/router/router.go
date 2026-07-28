@@ -25,13 +25,18 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// --- Wiring: repositórios → serviços → handlers ---
 	userRepo := repository.NewUserRepository(db)
 	authRepo := repository.NewAuthRepository(db)
+	supportRepo := repository.NewSupportRepository(db)
 
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
 	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), nil)
 	userSvc := services.NewUserService(userRepo)
+	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
+	supportSvc := services.NewSupportService(supportRepo, metaClient)
 
 	authH := handlers.NewAuthHandler(authSvc)
 	userH := handlers.NewUserHandler(userSvc)
+	supportH := handlers.NewSupportHandler(supportSvc)
+	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
 
 	// Health.
 	r.GET("/health", func(c *gin.Context) {
@@ -46,6 +51,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		auth.POST("/refresh", authH.Refresh)
 	}
 
+	// Webhook da Meta (público: autenticado pela assinatura HMAC / verify token).
+	webhook := r.Group("/webhook/meta")
+	{
+		webhook.GET("", webhookH.Verify)
+		webhook.POST("", webhookH.Receive)
+	}
+
 	// Rotas autenticadas.
 	api := r.Group("")
 	api.Use(middleware.Auth(jwtSvc))
@@ -58,8 +70,16 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			users.PUT("/:id", middleware.RequireAdmin(), userH.Update)
 			users.DELETE("/:id", middleware.RequireAdmin(), userH.Delete)
 		}
+
+		// Inbox de atendimento.
+		support := api.Group("/support")
+		{
+			support.GET("/tickets", supportH.ListTickets)
+			support.GET("/tickets/:id/messages", supportH.ListMessages)
+			support.POST("/tickets/:id/messages", supportH.Reply)
+		}
 	}
 
-	// TODO (fases seguintes): /support (inbox), /webhook/meta, mídia.
+	// TODO (Fase 2): mídia (upload/download). (Fase 3): multi-número.
 	return r
 }

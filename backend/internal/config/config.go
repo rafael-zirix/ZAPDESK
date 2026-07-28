@@ -14,11 +14,15 @@ type Config struct {
 	DatabaseURL string
 	JWTSecret   string
 
-	// Meta WhatsApp — credenciais GLOBAIS do app (o número de cada tenant vem
-	// da tabela whatsapp_accounts; estas são do app de plataforma).
-	MetaAppSecret   string
-	MetaVerifyToken string
-	MetaAPIBase     string
+	// Meta WhatsApp — nesta fase, credenciais de UM número de teste (globais).
+	// Na fase multi-número virão da tabela whatsapp_accounts, por conta.
+	MetaAppSecret     string
+	MetaVerifyToken   string
+	MetaAPIBase       string
+	MetaToken         string // token de acesso do número
+	MetaPhoneNumberID string // phone number id do número
+	// Conta que recebe as mensagens deste número (fase de 1 número).
+	MetaDefaultAccountID string
 
 	// Resend (envio de OTP por e-mail).
 	ResendAPIKey    string
@@ -33,9 +37,12 @@ func Load() *Config {
 		Port:            getenv("PORT", "8080"),
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://zapdesk:zapdesk@localhost:5432/zapdesk?sslmode=disable"),
 		JWTSecret:       getenv("JWT_SECRET", ""),
-		MetaAppSecret:   os.Getenv("META_APP_SECRET"),
-		MetaVerifyToken: os.Getenv("META_VERIFY_TOKEN"),
-		MetaAPIBase:     getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),
+		MetaAppSecret:        os.Getenv("META_APP_SECRET"),
+		MetaVerifyToken:      os.Getenv("META_VERIFY_TOKEN"),
+		MetaAPIBase:          getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),
+		MetaToken:            os.Getenv("META_TOKEN"),
+		MetaPhoneNumberID:    os.Getenv("META_PHONE_NUMBER_ID"),
+		MetaDefaultAccountID: os.Getenv("META_DEFAULT_ACCOUNT_ID"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		ResendFromEmail: os.Getenv("RESEND_FROM_EMAIL"),
 	}
