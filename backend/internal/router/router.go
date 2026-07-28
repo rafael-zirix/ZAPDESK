@@ -55,6 +55,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	userH := handlers.NewUserHandler(userSvc)
 	supportH := handlers.NewSupportHandler(supportSvc)
 	adminH := handlers.NewAdminHandler(accountSvc)
+	waH := handlers.NewWhatsAppHandler(accountSvc)
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
 
 	// Health.
@@ -98,13 +99,22 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets/:id/messages", supportH.Reply)
 		}
 
-		// Administração da plataforma (super-admin): empresas e números.
+		// Área do CLIENTE: a própria empresa (admin) conecta os seus números.
+		// A conta vem do token — ninguém da plataforma toca no token.
+		settings := api.Group("/settings/whatsapp", middleware.RequireAdmin())
+		{
+			settings.GET("", waH.List)
+			settings.POST("", waH.Connect)
+			settings.DELETE("/:id", waH.Disconnect)
+		}
+
+		// Administração da PLATAFORMA (super-admin): cria e enxerga empresas.
+		// NÃO conecta números (isso é do cliente) e nunca vê tokens.
 		admin := api.Group("/admin", middleware.RequireSuperAdmin())
 		{
 			admin.GET("/accounts", adminH.ListAccounts)
 			admin.POST("/accounts", adminH.CreateAccount)
 			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
-			admin.POST("/accounts/:id/whatsapp", adminH.AddWhatsApp)
 		}
 	}
 

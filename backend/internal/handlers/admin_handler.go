@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -45,26 +44,8 @@ func (h *AdminHandler) CreateAccount(c *gin.Context) {
 	})
 }
 
-// AddWhatsApp inclui um número de WhatsApp numa empresa.
-func (h *AdminHandler) AddWhatsApp(c *gin.Context) {
-	var req models.AddWhatsAppRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
-		return
-	}
-	w, err := h.accounts.AddWhatsApp(c.Param("id"), req)
-	if err != nil {
-		if errors.Is(err, services.ErrAccountNotFound) {
-			RespondError(c, http.StatusNotFound, ErrNotFound, "Empresa não encontrada", nil)
-			return
-		}
-		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao incluir o número", err.Error())
-		return
-	}
-	RespondSuccess(c, http.StatusCreated, "Número incluído", w.ToResponse())
-}
-
-// ListWhatsApp lista os números de uma empresa.
+// ListWhatsApp lista os números de uma empresa (só metadados — o super-admin
+// enxerga o status para dar suporte, mas nunca o token).
 func (h *AdminHandler) ListWhatsApp(c *gin.Context) {
 	list, err := h.accounts.ListWhatsApp(c.Param("id"))
 	if err != nil {

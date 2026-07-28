@@ -65,3 +65,14 @@ func (r *WhatsAppRepository) FindByPhoneNumberID(phoneNumberID string) (*models.
 	}
 	return w, err
 }
+
+// Delete remove um número — sempre escopado pela conta dona, para que uma
+// empresa nunca desconecte o número de outra (evita IDOR).
+func (r *WhatsAppRepository) Delete(id, accountID string) (bool, error) {
+	res, err := r.db.Exec(`DELETE FROM whatsapp_accounts WHERE id=$1 AND account_id=$2`, id, accountID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
