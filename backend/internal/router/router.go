@@ -3,11 +3,13 @@ package router
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"zapdesk/internal/config"
+	"zapdesk/internal/crypto"
 	"zapdesk/internal/handlers"
 	"zapdesk/internal/middleware"
 	"zapdesk/internal/repository"
@@ -26,16 +28,33 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	userRepo := repository.NewUserRepository(db)
 	authRepo := repository.NewAuthRepository(db)
 	supportRepo := repository.NewSupportRepository(db)
+	accountRepo := repository.NewAccountRepository(db)
+	waRepo := repository.NewWhatsAppRepository(db)
+
+	// Cifra dos tokens das empresas (AES-256-GCM). Sem chave em dev, a
+	// administração de números fica indisponível (mas o resto sobe).
+	var cipher *crypto.Cipher
+	if cfg.EncryptionKey != "" {
+		c, err := crypto.New(cfg.EncryptionKey)
+		if err != nil {
+			log.Fatalf("ENCRYPTION_KEY inválida: %v", err)
+		}
+		cipher = c
+	} else {
+		log.Println("[aviso] ENCRYPTION_KEY ausente — administração de números desativada")
+	}
 
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
 	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), nil)
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
 	supportSvc := services.NewSupportService(supportRepo, metaClient)
+	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher)
 
 	authH := handlers.NewAuthHandler(authSvc)
 	userH := handlers.NewUserHandler(userSvc)
 	supportH := handlers.NewSupportHandler(supportSvc)
+	adminH := handlers.NewAdminHandler(accountSvc)
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
 
 	// Health.
@@ -77,6 +96,15 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.GET("/tickets", supportH.ListTickets)
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
+		}
+
+		// Administração da plataforma (super-admin): empresas e números.
+		admin := api.Group("/admin", middleware.RequireSuperAdmin())
+		{
+			admin.GET("/accounts", adminH.ListAccounts)
+			admin.POST("/accounts", adminH.CreateAccount)
+			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
+			admin.POST("/accounts/:id/whatsapp", adminH.AddWhatsApp)
 		}
 	}
 

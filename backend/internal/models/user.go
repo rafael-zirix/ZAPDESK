@@ -2,10 +2,11 @@ package models
 
 import "time"
 
-// Papéis de usuário dentro de uma conta.
+// Papéis de usuário.
 const (
-	RoleAdmin = "admin"
-	RoleAgent = "agent"
+	RoleSuperadmin = "superadmin" // dono da plataforma (SaaS), sem conta
+	RoleAdmin      = "admin"      // administra uma empresa
+	RoleAgent      = "agent"      // atendente de uma empresa
 )
 
 // User é um atendente ou administrador de uma conta (empresa cliente do SaaS).
@@ -24,6 +25,9 @@ type User struct {
 
 // IsAdmin indica se o usuário administra a conta.
 func (u *User) IsAdmin() bool { return u.Role == RoleAdmin }
+
+// IsSuperAdmin indica se o usuário é dono da plataforma (SaaS).
+func (u *User) IsSuperAdmin() bool { return u.Role == RoleSuperadmin }
 
 // CreateUserRequest é o corpo para criar um usuário.
 type CreateUserRequest struct {

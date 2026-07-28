@@ -52,6 +52,20 @@ func RequireAdmin() gin.HandlerFunc {
 	}
 }
 
+// RequireSuperAdmin exige que o usuário seja dono da plataforma (SaaS).
+func RequireSuperAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetString(CtxRole) != "superadmin" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   gin.H{"code": "FORBIDDEN", "message": "Requer super-admin da plataforma"},
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
 // AccountID devolve a conta do usuário autenticado.
 func AccountID(c *gin.Context) string { return c.GetString(CtxAccountID) }
 

@@ -11,8 +11,9 @@ import (
 type Config struct {
 	Env         string // dev | prd
 	Port        string
-	DatabaseURL string
-	JWTSecret   string
+	DatabaseURL   string
+	JWTSecret     string
+	EncryptionKey string // 32 bytes em hex — cifra os tokens das empresas
 
 	// Meta WhatsApp — nesta fase, credenciais de UM número de teste (globais).
 	// Na fase multi-número virão da tabela whatsapp_accounts, por conta.
@@ -37,6 +38,7 @@ func Load() *Config {
 		Port:            getenv("PORT", "8080"),
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://zapdesk:zapdesk@localhost:5432/zapdesk?sslmode=disable"),
 		JWTSecret:       getenv("JWT_SECRET", ""),
+		EncryptionKey:   os.Getenv("ENCRYPTION_KEY"),
 		MetaAppSecret:        os.Getenv("META_APP_SECRET"),
 		MetaVerifyToken:      os.Getenv("META_VERIFY_TOKEN"),
 		MetaAPIBase:          getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),

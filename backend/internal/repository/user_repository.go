@@ -16,10 +16,12 @@ const userColumns = `id, account_id, full_name, email, phone, role, is_active, c
 
 func scanUser(row interface{ Scan(...any) error }) (*models.User, error) {
 	var u models.User
-	if err := row.Scan(&u.ID, &u.AccountID, &u.FullName, &u.Email, &u.Phone,
+	var accountID sql.NullString // super-admin da plataforma não tem conta
+	if err := row.Scan(&u.ID, &accountID, &u.FullName, &u.Email, &u.Phone,
 		&u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt); err != nil {
 		return nil, err
 	}
+	u.AccountID = accountID.String
 	return &u, nil
 }
 
