@@ -34,4 +34,14 @@ class ContactsController extends ChangeNotifier {
     }
     return r.message ?? 'Não foi possível salvar o contato';
   }
+
+  /// Exclui o contato. Retorna null em sucesso, ou o erro.
+  Future<String?> remove(String id) async {
+    final r = await _api.delete('/contacts/$id');
+    if (r.ok) {
+      await load();
+      return null;
+    }
+    return r.message ?? 'Não foi possível excluir o contato';
+  }
 }

@@ -37,4 +37,24 @@ class AccountsController extends ChangeNotifier {
     }
     return r.message ?? 'Não foi possível criar a empresa';
   }
+
+  /// Edita nome e situação da empresa. Retorna null em sucesso, ou o erro.
+  Future<String?> update({required String id, required String name, required String status}) async {
+    final r = await _api.put('/admin/accounts/$id', {'name': name, 'status': status});
+    if (r.ok) {
+      await load();
+      return null;
+    }
+    return r.message ?? 'Não foi possível salvar a empresa';
+  }
+
+  /// Exclui a empresa. Retorna null em sucesso, ou o erro.
+  Future<String?> remove(String id) async {
+    final r = await _api.delete('/admin/accounts/$id');
+    if (r.ok) {
+      await load();
+      return null;
+    }
+    return r.message ?? 'Não foi possível excluir a empresa';
+  }
 }

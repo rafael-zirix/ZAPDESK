@@ -61,12 +61,38 @@ class _ContactsScreenState extends State<ContactsScreen> {
       ),
       title: Text(ct.displayName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
       subtitle: Text(ct.prettyPhone, style: TextStyle(color: Colors.grey.shade600)),
-      trailing: IconButton(
-        icon: const Icon(Icons.edit_outlined),
-        tooltip: 'Editar',
-        onPressed: () => _openForm(c, edit: ct),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Editar', onPressed: () => _openForm(c, edit: ct)),
+          IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Excluir', onPressed: () => _confirmDelete(c, ct)),
+        ],
       ),
     );
+  }
+
+  Future<void> _confirmDelete(ContactsController c, Contact ct) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Excluir contato'),
+        content: Text('Excluir "${ct.displayName}"? As conversas dele também serão removidas.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final err = await c.remove(ct.id);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      }
+    }
   }
 
   Future<void> _openForm(ContactsController c, {Contact? edit}) async {

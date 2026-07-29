@@ -43,11 +43,11 @@ class _AccountsScreenState extends State<AccountsScreen> {
     }
     return ListView(
       padding: const EdgeInsets.all(20),
-      children: [for (final a in c.accounts) _card(a)],
+      children: [for (final a in c.accounts) _card(c, a)],
     );
   }
 
-  Widget _card(Account a) {
+  Widget _card(AccountsController c, Account a) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -79,6 +79,17 @@ class _AccountsScreenState extends State<AccountsScreen> {
             ),
           ),
           _statusChip(a.status),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Editar',
+            onPressed: () => _openEdit(c, a),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Excluir',
+            onPressed: () => _confirmDelete(c, a),
+          ),
         ],
       ),
     );
@@ -86,12 +97,17 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   Widget _statusChip(String status) {
     final active = status == 'active';
-    final color = active ? AppTheme.seed : Colors.grey;
+    final color = active ? AppTheme.seed : (status == 'suspended' ? Colors.orange.shade700 : Colors.grey);
+    final label = switch (status) {
+      'active' => 'ativa',
+      'suspended' => 'suspensa',
+      'canceled' => 'cancelada',
+      _ => status,
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
-      child: Text(active ? 'ativa' : status,
-          style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+      child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
 
@@ -107,6 +123,51 @@ class _AccountsScreenState extends State<AccountsScreen> {
       ],
       onSubmit: (v) => c.create(name: v['name']!, adminName: v['admin_name']!, adminEmail: v['admin_email']!),
     );
+  }
+
+  Future<void> _openEdit(AccountsController c, Account a) async {
+    await showEntityForm(
+      context,
+      title: 'Editar empresa',
+      submitLabel: 'Salvar',
+      fields: [
+        FieldSpec(key: 'name', label: 'Nome da empresa', initial: a.name),
+        FieldSpec(
+          key: 'status',
+          label: 'Situação',
+          initial: a.status,
+          options: const [('active', 'Ativa'), ('suspended', 'Suspensa'), ('canceled', 'Cancelada')],
+        ),
+      ],
+      onSubmit: (v) => c.update(id: a.id, name: v['name']!, status: v['status']!),
+    );
+  }
+
+  Future<void> _confirmDelete(AccountsController c, Account a) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Excluir empresa'),
+        content: Text(
+          'Excluir "${a.name}"? Os usuários dela perdem o acesso. '
+          'As conversas e contatos são preservados, mas a empresa some do painel.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final err = await c.remove(a.id);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      }
+    }
   }
 
   Widget _empty(IconData icon, String text, {Future<void> Function()? retry}) {
