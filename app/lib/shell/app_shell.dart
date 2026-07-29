@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../admin/accounts_screen.dart';
 import '../auth/auth_controller.dart';
+import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
 import '../models/app_user.dart';
+import '../users/users_screen.dart';
 
-/// Layout principal do painel: rail lateral + conteúdo.
+/// Layout principal do painel: rail lateral + conteúdo, montado conforme o papel.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -17,45 +20,41 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
+  List<_NavDest> _destinations(AppUser me) {
+    // Super-admin é o dono da plataforma: só gerencia empresas.
+    if (me.isSuperAdmin) {
+      return const [_NavDest(Icons.apartment_outlined, Icons.apartment, 'Empresas', AccountsScreen())];
+    }
+    final items = <_NavDest>[
+      const _NavDest(Icons.forum_outlined, Icons.forum, 'Atendimento', InboxScreen()),
+      const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()),
+    ];
+    if (me.isAdmin) {
+      items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
+    }
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthController>();
-    final me = auth.me;
+    final me = context.watch<AuthController>().me;
+    if (me == null) return const SizedBox.shrink();
 
-    final items = <_NavItem>[
-      _NavItem(Icons.forum_outlined, Icons.forum, 'Atendimento'),
-      _NavItem(Icons.settings_outlined, Icons.settings, 'Configurações'),
-      if (me?.isSuperAdmin ?? false) _NavItem(Icons.apartment_outlined, Icons.apartment, 'Empresas'),
-    ];
-    if (_index >= items.length) _index = 0;
-
-    final pages = <Widget>[
-      const InboxScreen(),
-      const _Placeholder(
-        icon: Icons.settings_outlined,
-        title: 'Configurações',
-        subtitle: 'Aqui você vai conectar o número de WhatsApp, gerir usuários e o seu perfil.',
-      ),
-      if (me?.isSuperAdmin ?? false)
-        const _Placeholder(
-          icon: Icons.apartment_outlined,
-          title: 'Empresas',
-          subtitle: 'Cadastro das empresas clientes da plataforma (super-admin).',
-        ),
-    ];
+    final dests = _destinations(me);
+    if (_index >= dests.length) _index = 0;
 
     return Scaffold(
       body: Row(
         children: [
-          _rail(items, me),
+          _rail(dests, me),
           const VerticalDivider(width: 1, thickness: 1),
-          Expanded(child: pages[_index]),
+          Expanded(child: dests[_index].page),
         ],
       ),
     );
   }
 
-  Widget _rail(List<_NavItem> items, AppUser? me) {
+  Widget _rail(List<_NavDest> dests, AppUser me) {
     return Container(
       width: 76,
       color: const Color(0xFF111B21),
@@ -69,21 +68,21 @@ class _AppShellState extends State<AppShell> {
             child: const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 24),
           ),
           const SizedBox(height: 24),
-          for (var i = 0; i < items.length; i++) _railButton(items[i], i),
+          for (var i = 0; i < dests.length; i++) _railButton(dests[i], i),
           const Spacer(),
-          if (me != null) _userMenu(me),
+          _userMenu(me),
           const SizedBox(height: 12),
         ],
       ),
     );
   }
 
-  Widget _railButton(_NavItem item, int i) {
+  Widget _railButton(_NavDest dest, int i) {
     final sel = _index == i;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
       child: Tooltip(
-        message: item.label,
+        message: dest.label,
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () => setState(() => _index = i),
@@ -93,7 +92,7 @@ class _AppShellState extends State<AppShell> {
               color: sel ? Colors.white.withValues(alpha: 0.12) : null,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(sel ? item.activeIcon : item.icon, color: sel ? Colors.white : Colors.white70, size: 24),
+            child: Icon(sel ? dest.activeIcon : dest.icon, color: sel ? Colors.white : Colors.white70, size: 24),
           ),
         ),
       ),
@@ -137,40 +136,10 @@ class _AppShellState extends State<AppShell> {
       };
 }
 
-class _NavItem {
-  _NavItem(this.icon, this.activeIcon, this.label);
+class _NavDest {
+  const _NavDest(this.icon, this.activeIcon, this.label, this.page);
   final IconData icon;
   final IconData activeIcon;
   final String label;
-}
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.icon, required this.title, required this.subtitle});
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: AppTheme.bg,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 64, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: 360,
-              child: Text(subtitle, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, height: 1.4)),
-            ),
-            const SizedBox(height: 16),
-            const Chip(label: Text('Em breve'), visualDensity: VisualDensity.compact),
-          ],
-        ),
-      ),
-    );
-  }
+  final Widget page;
 }

@@ -2,12 +2,32 @@ package services
 
 import (
 	"errors"
+	"regexp"
+
+	"github.com/lib/pq"
 
 	"zapdesk/internal/models"
 	"zapdesk/internal/repository"
 )
 
-var ErrTicketNotFound = errors.New("conversa não encontrada")
+var (
+	ErrTicketNotFound  = errors.New("conversa não encontrada")
+	ErrContactExists   = errors.New("já existe um contato com este telefone")
+	ErrContactNotFound = errors.New("contato não encontrado")
+)
+
+var nonDigits = regexp.MustCompile(`\D`)
+
+// normalizePhone deixa só os dígitos e assume o Brasil (+55) quando o número
+// vem só com DDD + número (10 ou 11 dígitos), como exige a API do WhatsApp.
+// Ex.: "+55 21 99333-9504" → "5521993339504"; "21 97777-1234" → "5521977771234".
+func normalizePhone(s string) string {
+	d := nonDigits.ReplaceAllString(s, "")
+	if len(d) == 10 || len(d) == 11 {
+		d = "55" + d
+	}
+	return d
+}
 
 // SupportService orquestra o inbox: recebe mensagens (webhook) e envia respostas.
 type SupportService struct {
@@ -104,4 +124,47 @@ func (s *SupportService) ListInbox(accountID string) ([]models.SupportTicketList
 // ListMessages devolve a thread de uma conversa.
 func (s *SupportService) ListMessages(accountID, ticketID string) ([]models.SupportMessage, error) {
 	return s.repo.ListMessages(accountID, ticketID)
+}
+
+// --- Contatos ---
+
+// ListContacts devolve os contatos da conta.
+func (s *SupportService) ListContacts(accountID string) ([]models.SupportContact, error) {
+	return s.repo.ListContacts(accountID)
+}
+
+// CreateContact cadastra um contato (telefone normalizado, único por conta).
+func (s *SupportService) CreateContact(accountID string, req models.CreateContactRequest) (*models.SupportContact, error) {
+	phone := normalizePhone(req.Phone)
+	name := req.Name
+	c, err := s.repo.CreateContact(accountID, phone, &name)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return nil, ErrContactExists
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
+// UpdateContact edita um contato existente.
+func (s *SupportService) UpdateContact(accountID, id string, req models.UpdateContactRequest) (*models.SupportContact, error) {
+	var phone *string
+	if req.Phone != nil {
+		p := normalizePhone(*req.Phone)
+		phone = &p
+	}
+	c, err := s.repo.UpdateContact(accountID, id, req.Name, phone)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return nil, ErrContactExists
+		}
+		return nil, err
+	}
+	if c == nil {
+		return nil, ErrContactNotFound
+	}
+	return c, nil
 }

@@ -88,3 +88,30 @@ func (m *SupportMessage) ToResponse() SupportMessageResponse {
 type SendMessageRequest struct {
 	Content string `json:"content" binding:"required,min=1"`
 }
+
+// --- Contatos (cadastro dos clientes finais) ---
+
+// ContactResponse é a representação pública de um contato.
+type ContactResponse struct {
+	ID        string    `json:"id"`
+	Phone     string    `json:"phone"`
+	Name      *string   `json:"name,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ToResponse converte o contato para a resposta pública.
+func (c *SupportContact) ToResponse() ContactResponse {
+	return ContactResponse{ID: c.ID, Phone: c.Phone, Name: c.Name, CreatedAt: c.CreatedAt}
+}
+
+// CreateContactRequest cadastra um contato manualmente.
+type CreateContactRequest struct {
+	Name  string `json:"name" binding:"required,min=1"`
+	Phone string `json:"phone" binding:"required,min=8"`
+}
+
+// UpdateContactRequest edita nome/telefone de um contato.
+type UpdateContactRequest struct {
+	Name  *string `json:"name" binding:"omitempty,min=1"`
+	Phone *string `json:"phone" binding:"omitempty,min=8"`
+}

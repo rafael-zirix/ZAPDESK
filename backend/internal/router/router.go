@@ -101,6 +101,14 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets/:id/messages", supportH.Reply)
 		}
 
+		// Contatos (clientes finais da empresa).
+		contacts := api.Group("/contacts")
+		{
+			contacts.GET("", supportH.ListContacts)
+			contacts.POST("", supportH.CreateContact)
+			contacts.PUT("/:id", supportH.UpdateContact)
+		}
+
 		// Área do CLIENTE: a própria empresa (admin) conecta os seus números.
 		// A conta vem do token — ninguém da plataforma toca no token.
 		settings := api.Group("/settings/whatsapp", middleware.RequireAdmin())

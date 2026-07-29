@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'admin/accounts_controller.dart';
 import 'auth/auth_controller.dart';
 import 'auth/login_screen.dart';
+import 'contacts/contacts_controller.dart';
 import 'core/config.dart';
 import 'core/theme.dart';
 import 'inbox/inbox_controller.dart';
 import 'shell/app_shell.dart';
+import 'users/users_controller.dart';
 
 void main() {
   runApp(const ZapdeskApp());
@@ -21,6 +24,9 @@ class ZapdeskApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthController()..bootstrap()),
         ChangeNotifierProvider(create: (_) => InboxController()),
+        ChangeNotifierProvider(create: (_) => ContactsController()),
+        ChangeNotifierProvider(create: (_) => AccountsController()),
+        ChangeNotifierProvider(create: (_) => UsersController()),
       ],
       child: MaterialApp(
         title: Config.appName,

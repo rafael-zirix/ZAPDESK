@@ -62,6 +62,7 @@ class ApiClient {
 
   Future<ApiResult> get(String path) => _send('GET', path);
   Future<ApiResult> post(String path, [Map<String, dynamic>? body]) => _send('POST', path, body);
+  Future<ApiResult> put(String path, [Map<String, dynamic>? body]) => _send('PUT', path, body);
   Future<ApiResult> delete(String path) => _send('DELETE', path);
 
   Future<ApiResult> _send(String method, String path, [Map<String, dynamic>? body, bool retry = true]) async {
@@ -82,6 +83,8 @@ class ApiClient {
     switch (method) {
       case 'POST':
         return http.post(u, headers: _headers, body: b);
+      case 'PUT':
+        return http.put(u, headers: _headers, body: b);
       case 'DELETE':
         return http.delete(u, headers: _headers);
       default:

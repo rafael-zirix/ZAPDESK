@@ -29,6 +29,59 @@ func (r *SupportRepository) FindOrCreateContact(accountID, phone string, name *s
 	return &c, err
 }
 
+// ListContacts devolve os contatos da conta (por nome, depois telefone).
+func (r *SupportRepository) ListContacts(accountID string) ([]models.SupportContact, error) {
+	rows, err := r.db.Query(`
+		SELECT id, account_id, phone, name, created_at, updated_at
+		FROM support_contacts WHERE account_id=$1
+		ORDER BY COALESCE(name,'~'), phone`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]models.SupportContact, 0)
+	for rows.Next() {
+		var c models.SupportContact
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Phone, &c.Name, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CreateContact insere um contato novo (telefone único por conta — o service
+// traduz a violação de unicidade).
+func (r *SupportRepository) CreateContact(accountID, phone string, name *string) (*models.SupportContact, error) {
+	now := time.Now().UTC()
+	var c models.SupportContact
+	err := r.db.QueryRow(`
+		INSERT INTO support_contacts (account_id, phone, name, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$4)
+		RETURNING id, account_id, phone, name, created_at, updated_at`,
+		accountID, phone, name, now).
+		Scan(&c.ID, &c.AccountID, &c.Phone, &c.Name, &c.CreatedAt, &c.UpdatedAt)
+	return &c, err
+}
+
+// UpdateContact edita nome e/ou telefone (escopado por conta).
+func (r *SupportRepository) UpdateContact(accountID, id string, name, phone *string) (*models.SupportContact, error) {
+	var c models.SupportContact
+	err := r.db.QueryRow(`
+		UPDATE support_contacts SET
+		  name  = COALESCE($3, name),
+		  phone = COALESCE($4, phone),
+		  updated_at = $5
+		WHERE id=$1 AND account_id=$2
+		RETURNING id, account_id, phone, name, created_at, updated_at`,
+		id, accountID, name, phone, time.Now().UTC()).
+		Scan(&c.ID, &c.AccountID, &c.Phone, &c.Name, &c.CreatedAt, &c.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &c, err
+}
+
 // nextProtocol gera o próximo protocolo sequencial da conta no ano (atômico).
 func (r *SupportRepository) nextProtocol(tx *sql.Tx, accountID string, year int) (string, error) {
 	var seq int

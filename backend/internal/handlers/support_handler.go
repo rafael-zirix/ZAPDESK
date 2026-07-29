@@ -60,3 +60,60 @@ func (h *SupportHandler) Reply(c *gin.Context) {
 	}
 	RespondSuccess(c, http.StatusCreated, "Enviada", msg.ToResponse())
 }
+
+// --- Contatos ---
+
+// ListContacts devolve os contatos da conta.
+func (h *SupportHandler) ListContacts(c *gin.Context) {
+	list, err := h.support.ListContacts(middleware.AccountID(c))
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao listar contatos", nil)
+		return
+	}
+	out := make([]models.ContactResponse, len(list))
+	for i := range list {
+		out[i] = list[i].ToResponse()
+	}
+	RespondSuccess(c, http.StatusOK, "Contatos", out)
+}
+
+// CreateContact cadastra um contato.
+func (h *SupportHandler) CreateContact(c *gin.Context) {
+	var req models.CreateContactRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	ct, err := h.support.CreateContact(middleware.AccountID(c), req)
+	if err != nil {
+		if errors.Is(err, services.ErrContactExists) {
+			RespondError(c, http.StatusConflict, ErrConflict, "Já existe um contato com este telefone", nil)
+			return
+		}
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao cadastrar o contato", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusCreated, "Contato cadastrado", ct.ToResponse())
+}
+
+// UpdateContact edita um contato.
+func (h *SupportHandler) UpdateContact(c *gin.Context) {
+	var req models.UpdateContactRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	ct, err := h.support.UpdateContact(middleware.AccountID(c), c.Param("id"), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrContactNotFound):
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Contato não encontrado", nil)
+		case errors.Is(err, services.ErrContactExists):
+			RespondError(c, http.StatusConflict, ErrConflict, "Já existe um contato com este telefone", nil)
+		default:
+			RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao editar o contato", err.Error())
+		}
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Contato atualizado", ct.ToResponse())
+}
