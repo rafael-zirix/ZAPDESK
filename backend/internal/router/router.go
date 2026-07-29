@@ -44,8 +44,18 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		log.Println("[aviso] ENCRYPTION_KEY ausente — administração de números desativada")
 	}
 
+	// E-mail do OTP: se o Resend estiver configurado, envia de verdade; senão,
+	// o código vai para o log (dev).
+	var mailer services.Mailer
+	if cfg.ResendAPIKey != "" && cfg.ResendFromEmail != "" {
+		mailer = services.NewResendMailer(cfg.ResendAPIKey, cfg.ResendFromEmail)
+		log.Println("[info] envio de OTP por e-mail (Resend) ativo")
+	} else {
+		log.Println("[aviso] Resend não configurado — OTP vai para o log")
+	}
+
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
-	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), nil)
+	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), mailer)
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
 	supportSvc := services.NewSupportService(supportRepo, metaClient)

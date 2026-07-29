@@ -66,10 +66,18 @@ func (s *AuthService) RequestOTP(identifier string) error {
 	if err := s.auth.CreateOTP(identifier, hashCode(code), time.Now().UTC().Add(otpTTL)); err != nil {
 		return err
 	}
-	if s.mailer != nil && !s.isDev {
-		return s.mailer.SendOTP(identifier, code)
+	if s.mailer != nil {
+		if err := s.mailer.SendOTP(identifier, code); err != nil {
+			slog.Error("falha ao enviar OTP por e-mail", "error", err)
+			if !s.isDev {
+				return err
+			}
+			// Em dev, não trava o teste: cai no log abaixo.
+		} else {
+			return nil
+		}
 	}
-	// Dev: sem provedor de e-mail, o código vai para o log (para testar E2E).
+	// Sem provedor (ou falha em dev): o código vai para o log, para testar E2E.
 	slog.Info("OTP (dev) gerado", "identifier", identifier, "code", code)
 	return nil
 }
