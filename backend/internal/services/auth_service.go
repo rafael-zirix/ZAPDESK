@@ -132,6 +132,19 @@ func (s *AuthService) userByID(userID string) (*models.User, error) {
 	return s.users.FindByIDGlobal(userID)
 }
 
+// Me devolve o usuário autenticado (para restaurar a sessão no front).
+func (s *AuthService) Me(userID string) (*models.UserResponse, error) {
+	user, err := s.users.FindByIDGlobal(userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrAuthUserNotFound
+	}
+	r := user.ToResponse()
+	return &r, nil
+}
+
 func randomCode() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {

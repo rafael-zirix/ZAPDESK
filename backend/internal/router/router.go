@@ -22,7 +22,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS())
 
 	// --- Wiring: repositórios → serviços → handlers ---
 	userRepo := repository.NewUserRepository(db)
@@ -82,6 +82,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	api := r.Group("")
 	api.Use(middleware.Auth(jwtSvc))
 	{
+		api.GET("/auth/me", authH.Me) // quem sou eu (restaura sessão no front)
+
 		users := api.Group("/users")
 		{
 			users.GET("", userH.List)

@@ -47,6 +47,16 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "Autenticado", res)
 }
 
+// Me devolve o usuário autenticado (restaura a sessão no front após reload).
+func (h *AuthHandler) Me(c *gin.Context) {
+	me, err := h.auth.Me(c.GetString("user_id"))
+	if err != nil {
+		RespondError(c, http.StatusUnauthorized, ErrUnauthorized, "Sessão inválida", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "OK", me)
+}
+
 // Refresh troca o refresh token por um novo par.
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req models.RefreshRequest
