@@ -8,6 +8,7 @@ import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
 import '../models/app_user.dart';
 import '../users/users_screen.dart';
+import '../whatsapp/whatsapp_screen.dart';
 
 /// Layout principal do painel: rail lateral + conteúdo, montado conforme o papel.
 class AppShell extends StatefulWidget {
@@ -31,6 +32,7 @@ class _AppShellState extends State<AppShell> {
     ];
     if (me.isAdmin) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
+      items.add(const _NavDest(Icons.chat_outlined, Icons.chat, 'WhatsApp', WhatsAppScreen()));
     }
     return items;
   }

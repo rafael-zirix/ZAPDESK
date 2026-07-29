@@ -10,6 +10,7 @@ import 'core/theme.dart';
 import 'inbox/inbox_controller.dart';
 import 'shell/app_shell.dart';
 import 'users/users_controller.dart';
+import 'whatsapp/whatsapp_controller.dart';
 
 void main() {
   runApp(const ZapdeskApp());
@@ -27,6 +28,7 @@ class ZapdeskApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ContactsController()),
         ChangeNotifierProvider(create: (_) => AccountsController()),
         ChangeNotifierProvider(create: (_) => UsersController()),
+        ChangeNotifierProvider(create: (_) => WhatsAppController()),
       ],
       child: MaterialApp(
         title: Config.appName,
