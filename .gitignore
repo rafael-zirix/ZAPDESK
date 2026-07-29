@@ -15,3 +15,9 @@ zapdesk-api
 **/build/
 **/.dart_tool/
 **/failures/
+
+# Deploy: segredos e artefatos de build (não versionar)
+deploy/.env
+deploy/zapdesk-api
+deploy/web/
+deploy/migrations/

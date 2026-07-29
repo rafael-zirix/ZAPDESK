@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -140,6 +143,29 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			admin.DELETE("/accounts/:id", adminH.DeleteAccount)
 			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
 		}
+	}
+
+	// Front (Flutter web) servido na mesma origem, quando WEB_DIR aponta para o
+	// build. Serve o arquivo pedido; se não existir, cai no index.html (SPA).
+	if cfg.WebDir != "" {
+		root := filepath.Clean(cfg.WebDir)
+		index := filepath.Join(root, "index.html")
+		r.NoRoute(func(c *gin.Context) {
+			if c.Request.Method != http.MethodGet {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			full := filepath.Join(root, filepath.Clean("/"+c.Request.URL.Path))
+			if !strings.HasPrefix(full, root) { // barra path traversal
+				c.Status(http.StatusNotFound)
+				return
+			}
+			if info, err := os.Stat(full); err == nil && !info.IsDir() {
+				c.File(full)
+				return
+			}
+			c.File(index)
+		})
 	}
 
 	// TODO (Fase 2): mídia (upload/download). (Fase 3): multi-número.

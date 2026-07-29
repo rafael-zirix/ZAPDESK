@@ -1,0 +1,40 @@
+# Stack de produção do zapdesk — ISOLADA das demais (CRM/Bama), co-hospedada na
+# mesma VM. O postgres fica só na rede interna; a api entra também na rede do
+# Caddy (tracked-deploy_default) com o alias "zapdesk-api", para o Caddy fazer
+# reverse_proxy zapdesk-api:8080 (mesmo padrão do Bama).
+name: zapdesk-deploy
+
+services:
+  zapdesk-postgres:
+    image: postgres:16-alpine
+    container_name: zapdesk-postgres
+    environment:
+      POSTGRES_USER: zapdesk
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: zapdesk
+    volumes: [ "zapdesk_pg:/var/lib/postgresql/data" ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zapdesk -d zapdesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  zapdesk-api:
+    image: zapdesk-api:arm64
+    container_name: zapdesk-api
+    depends_on:
+      zapdesk-postgres: { condition: service_healthy }
+    env_file: [ .env ]
+    networks: [ internal, tracked ]
+    restart: unless-stopped
+
+networks:
+  internal: {}
+  tracked:
+    external: true
+    name: tracked-deploy_default
+
+volumes:
+  zapdesk_pg: {}
