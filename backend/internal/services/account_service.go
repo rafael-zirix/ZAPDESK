@@ -28,9 +28,9 @@ func NewAccountService(accounts *repository.AccountRepository, wa *repository.Wh
 	return &AccountService{accounts: accounts, wa: wa, cipher: cipher}
 }
 
-// CreateAccount cadastra uma empresa e o seu primeiro administrador.
+// CreateAccount cadastra uma empresa (com a ficha) e o seu primeiro admin.
 func (s *AccountService) CreateAccount(req models.CreateAccountRequest) (*models.Account, error) {
-	return s.accounts.CreateWithAdmin(req.Name, req.Slug, req.AdminName, req.AdminEmail)
+	return s.accounts.CreateWithAdmin(&req)
 }
 
 // ListAccounts devolve as empresas cadastradas.
@@ -40,7 +40,7 @@ func (s *AccountService) ListAccounts() ([]models.AccountResponse, error) {
 
 // UpdateAccount edita a empresa (nome/situação).
 func (s *AccountService) UpdateAccount(id string, req models.UpdateAccountRequest) (*models.Account, error) {
-	a, err := s.accounts.Update(id, req.Name, req.Status)
+	a, err := s.accounts.Update(id, req.Name, req.Status, req.AccountDetails)
 	if err != nil {
 		return nil, err
 	}

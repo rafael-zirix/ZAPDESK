@@ -67,7 +67,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	authH := handlers.NewAuthHandler(authSvc)
 	userH := handlers.NewUserHandler(userSvc)
 	supportH := handlers.NewSupportHandler(supportSvc)
-	adminH := handlers.NewAdminHandler(accountSvc)
+	adminH := handlers.NewAdminHandler(accountSvc, userSvc)
 	waH := handlers.NewWhatsAppHandler(accountSvc)
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
 
@@ -142,6 +142,11 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			admin.PUT("/accounts/:id", adminH.UpdateAccount)
 			admin.DELETE("/accounts/:id", adminH.DeleteAccount)
 			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
+			// Usuários/perfis de cada empresa (super-admin).
+			admin.GET("/accounts/:id/users", adminH.ListAccountUsers)
+			admin.POST("/accounts/:id/users", adminH.CreateAccountUser)
+			admin.PUT("/accounts/:id/users/:uid", adminH.UpdateAccountUser)
+			admin.DELETE("/accounts/:id/users/:uid", adminH.DeleteAccountUser)
 		}
 	}
 

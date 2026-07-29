@@ -1,0 +1,13 @@
+ALTER TABLE accounts
+    DROP COLUMN IF EXISTS person_type,
+    DROP COLUMN IF EXISTS document,
+    DROP COLUMN IF EXISTS trade_name,
+    DROP COLUMN IF EXISTS email,
+    DROP COLUMN IF EXISTS phone,
+    DROP COLUMN IF EXISTS zip_code,
+    DROP COLUMN IF EXISTS street,
+    DROP COLUMN IF EXISTS number,
+    DROP COLUMN IF EXISTS complement,
+    DROP COLUMN IF EXISTS district,
+    DROP COLUMN IF EXISTS city,
+    DROP COLUMN IF EXISTS state;

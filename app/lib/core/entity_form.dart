@@ -13,6 +13,7 @@ class FieldSpec {
     this.enabled = true,
     this.hint,
     this.options,
+    this.section,
   });
 
   final String key;
@@ -25,6 +26,9 @@ class FieldSpec {
 
   /// Se preenchido, o campo vira um dropdown (value, rótulo).
   final List<(String, String)>? options;
+
+  /// Rótulo de seção exibido ACIMA deste campo (ex.: "Endereço"). Agrupa visualmente.
+  final String? section;
 }
 
 /// Mostra um formulário em diálogo. `onSubmit` recebe os valores e devolve uma
@@ -113,18 +117,21 @@ class _EntityFormDialogState extends State<_EntityFormDialog> {
     return AlertDialog(
       title: Text(widget.title),
       content: SizedBox(
-        width: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final f in widget.fields) ...[
-              _field(f),
-              const SizedBox(height: 14),
+        width: 400,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final f in widget.fields) ...[
+                if (f.section != null) _sectionLabel(f.section!),
+                _field(f),
+                const SizedBox(height: 14),
+              ],
+              if (_error != null)
+                Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
             ],
-            if (_error != null)
-              Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
-          ],
+          ),
         ),
       ),
       actions: [
@@ -139,6 +146,12 @@ class _EntityFormDialogState extends State<_EntityFormDialog> {
       ],
     );
   }
+
+  Widget _sectionLabel(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8, top: 4),
+        child: Text(text.toUpperCase(),
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.grey.shade500, letterSpacing: 0.5)),
+      );
 
   Widget _field(FieldSpec f) {
     if (f.options != null) {

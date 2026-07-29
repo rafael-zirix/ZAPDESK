@@ -25,12 +25,30 @@ class AccountsController extends ChangeNotifier {
   }
 
   /// Cria empresa + primeiro admin. Retorna null em sucesso, ou o erro.
-  Future<String?> create({required String name, required String adminName, required String adminEmail}) async {
-    final r = await _api.post('/admin/accounts', {
-      'name': name,
-      'admin_name': adminName,
-      'admin_email': adminEmail,
-    });
+  /// Campos da ficha (endereço/documento/contato) — só os preenchidos, para
+  /// não falhar validação (ex.: e-mail vazio) nem sobrescrever com vazio.
+  static const _detailKeys = [
+    'person_type', 'document', 'trade_name', 'email', 'phone',
+    'zip_code', 'street', 'number', 'complement', 'district', 'city', 'state',
+  ];
+  Map<String, dynamic> _details(Map<String, String> v) {
+    final m = <String, dynamic>{};
+    for (final k in _detailKeys) {
+      final x = (v[k] ?? '').trim();
+      if (x.isNotEmpty) m[k] = x;
+    }
+    return m;
+  }
+
+  /// Cria empresa + primeiro admin (com a ficha). Retorna null em sucesso.
+  Future<String?> create(Map<String, String> v) async {
+    final body = {
+      'name': v['name'],
+      'admin_name': v['admin_name'],
+      'admin_email': v['admin_email'],
+      ..._details(v),
+    };
+    final r = await _api.post('/admin/accounts', body);
     if (r.ok) {
       await load();
       return null;
@@ -38,9 +56,10 @@ class AccountsController extends ChangeNotifier {
     return r.message ?? 'Não foi possível criar a empresa';
   }
 
-  /// Edita nome e situação da empresa. Retorna null em sucesso, ou o erro.
-  Future<String?> update({required String id, required String name, required String status}) async {
-    final r = await _api.put('/admin/accounts/$id', {'name': name, 'status': status});
+  /// Edita situação + ficha da empresa. Retorna null em sucesso, ou o erro.
+  Future<String?> update(String id, Map<String, String> v) async {
+    final body = {'name': v['name'], 'status': v['status'], ..._details(v)};
+    final r = await _api.put('/admin/accounts/$id', body);
     if (r.ok) {
       await load();
       return null;
