@@ -48,6 +48,21 @@ class ConversationController extends ChangeNotifier {
     return false;
   }
 
+  /// Envia um modelo (template) aprovado. Retorna false em falha.
+  Future<bool> sendTemplate(String name, String language) async {
+    sending = true;
+    notifyListeners();
+    final r = await _api.post('/support/tickets/${ticket.id}/template', {'name': name, 'language': language});
+    sending = false;
+    if (r.ok && r.data != null) {
+      messages = [...messages, Message.fromJson(r.data as Map<String, dynamic>)];
+      notifyListeners();
+      return true;
+    }
+    notifyListeners();
+    return false;
+  }
+
   @override
   void dispose() {
     composer.dispose();

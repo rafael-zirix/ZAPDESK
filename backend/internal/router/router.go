@@ -61,7 +61,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), mailer)
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
-	supportSvc := services.NewSupportService(supportRepo, metaClient)
+	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, metaClient)
 	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher)
 
 	authH := handlers.NewAuthHandler(authSvc)
@@ -113,6 +113,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
+			support.POST("/tickets/:id/template", supportH.SendTemplate) // envia um modelo aprovado
+			support.GET("/templates", supportH.ListTemplates)           // modelos aprovados da conta
 		}
 
 		// Contatos (clientes finais da empresa).

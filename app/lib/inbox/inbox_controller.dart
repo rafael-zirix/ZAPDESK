@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
 import '../models/contact.dart';
+import '../models/message_template.dart';
 import '../models/support.dart';
 import 'conversation_controller.dart';
 
@@ -22,6 +23,9 @@ class InboxController extends ChangeNotifier {
   /// Conversas abertas (no máximo [paneCount]).
   final List<ConversationController> open = [];
 
+  // Modelos (templates) aprovados da conta — para iniciar/furar a janela de 24h.
+  List<MessageTemplate> templates = [];
+
   Future<void> loadTickets() async {
     loadingTickets = true;
     ticketsError = null;
@@ -34,6 +38,15 @@ class InboxController extends ChangeNotifier {
       ticketsError = r.message ?? 'Erro ao carregar conversas';
     }
     notifyListeners();
+    loadTemplates();
+  }
+
+  Future<void> loadTemplates() async {
+    final r = await _api.get('/support/templates');
+    if (r.ok && r.data is List) {
+      templates = (r.data as List).map((e) => MessageTemplate.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
   }
 
   // Contatos disponíveis para iniciar uma conversa nova.

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
 import '../models/contact.dart';
+import '../models/message_template.dart';
 import '../models/support.dart';
 import 'conversation_controller.dart';
 import 'inbox_controller.dart';
@@ -49,6 +50,7 @@ class _InboxScreenState extends State<InboxScreen> {
           : _ConversationPane(
               conv: inbox.open.first,
               onClose: inbox.closeAll,
+              templates: inbox.templates,
               showBack: true,
             );
     }
@@ -102,7 +104,7 @@ class _InboxScreenState extends State<InboxScreen> {
     final slots = <Widget>[
       for (var i = 0; i < inbox.paneCount; i++)
         i < inbox.open.length
-            ? _ConversationPane(conv: inbox.open[i], onClose: () => inbox.closePane(inbox.open[i]))
+            ? _ConversationPane(conv: inbox.open[i], onClose: () => inbox.closePane(inbox.open[i]), templates: inbox.templates)
             : _emptySlot(),
     ];
     return Container(color: AppTheme.bg, child: _grid(slots, inbox.paneCount));
@@ -278,10 +280,11 @@ class _InboxScreenState extends State<InboxScreen> {
 /// Um painel de conversa: escuta o seu [ConversationController] e se atualiza
 /// sozinho (independente dos outros painéis abertos).
 class _ConversationPane extends StatelessWidget {
-  const _ConversationPane({required this.conv, required this.onClose, this.showBack = false});
+  const _ConversationPane({required this.conv, required this.onClose, this.templates = const [], this.showBack = false});
 
   final ConversationController conv;
   final VoidCallback onClose;
+  final List<MessageTemplate> templates;
   final bool showBack;
 
   @override
@@ -294,11 +297,43 @@ class _ConversationPane extends StatelessWidget {
             _header(context),
             const Divider(height: 1),
             Expanded(child: _thread()),
+            _templatesBar(context),
             _composer(context),
           ],
         );
       },
     );
+  }
+
+  // Barra de modelos aprovados, acima do compositor.
+  Widget _templatesBar(BuildContext context) {
+    if (templates.isEmpty) return const SizedBox.shrink();
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: conv.sending ? null : () => _pickTemplate(context),
+          icon: const Icon(Icons.article_outlined, size: 18),
+          label: const Text('Modelos aprovados'),
+          style: TextButton.styleFrom(foregroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickTemplate(BuildContext context) async {
+    final picked = await showModalBottomSheet<MessageTemplate>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => _TemplateSheet(templates: templates),
+    );
+    if (picked == null || !context.mounted) return;
+    final sent = await conv.sendTemplate(picked.name, picked.language);
+    if (!sent && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível enviar o modelo')));
+    }
   }
 
   Widget _header(BuildContext context) {
@@ -385,8 +420,11 @@ class _ConversationPane extends StatelessWidget {
                 Text(DateFormat('HH:mm').format(m.createdAt), style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
                 if (out) ...[
                   const SizedBox(width: 4),
-                  Icon(m.status == 'failed' ? Icons.error_outline : Icons.done_all,
-                      size: 13, color: m.status == 'failed' ? Colors.red : AppTheme.seed),
+                  switch (m.status) {
+                    'failed' => const Icon(Icons.error_outline, size: 13, color: Colors.red),
+                    'pending' => Icon(Icons.schedule, size: 12, color: Colors.grey.shade500),
+                    _ => const Icon(Icons.done_all, size: 13, color: AppTheme.seed),
+                  },
                 ],
               ],
             ),
@@ -599,4 +637,54 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
           child: Text(text, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, height: 1.4)),
         ),
       );
+}
+
+/// Folha de seleção dos modelos aprovados. Toca no modelo (ou em "Enviar") para
+/// devolvê-lo a quem abriu — que dispara o envio.
+class _TemplateSheet extends StatelessWidget {
+  const _TemplateSheet({required this.templates});
+  final List<MessageTemplate> templates;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Modelos aprovados', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: templates.length,
+              separatorBuilder: (_, _) => const Divider(height: 1, indent: 16),
+              itemBuilder: (_, i) {
+                final t = templates[i];
+                return ListTile(
+                  title: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                    t.bodyText ?? '(sem prévia)',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.grey.shade600, height: 1.3),
+                  ),
+                  trailing: FilledButton(
+                    onPressed: () => Navigator.pop(context, t),
+                    style: FilledButton.styleFrom(backgroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
+                    child: const Text('Enviar'),
+                  ),
+                  onTap: () => Navigator.pop(context, t),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

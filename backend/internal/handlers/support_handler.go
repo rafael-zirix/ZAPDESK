@@ -82,6 +82,38 @@ func (h *SupportHandler) Reply(c *gin.Context) {
 	RespondSuccess(c, http.StatusCreated, "Enviada", msg.ToResponse())
 }
 
+// ListTemplates devolve os modelos (templates) aprovados da conta na Meta.
+func (h *SupportHandler) ListTemplates(c *gin.Context) {
+	list, err := h.support.ListTemplates(middleware.AccountID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadGateway, ErrInternal, "Erro ao carregar os modelos", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Modelos", list)
+}
+
+// SendTemplate envia um modelo (template) na conversa — fura a janela de 24h.
+func (h *SupportHandler) SendTemplate(c *gin.Context) {
+	var req struct {
+		Name     string `json:"name" binding:"required"`
+		Language string `json:"language"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	msg, err := h.support.SendTemplate(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Name, req.Language)
+	if err != nil {
+		if errors.Is(err, services.ErrTicketNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
+			return
+		}
+		RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível enviar o modelo", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusCreated, "Enviada", msg.ToResponse())
+}
+
 // --- Contatos ---
 
 // ListContacts devolve os contatos da conta.
