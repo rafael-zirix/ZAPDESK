@@ -148,6 +148,18 @@ func (s *SupportService) CreateContact(accountID string, req models.CreateContac
 	return c, nil
 }
 
+// DeleteContact remove um contato da conta.
+func (s *SupportService) DeleteContact(accountID, id string) error {
+	ok, err := s.repo.DeleteContact(id, accountID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrContactNotFound
+	}
+	return nil
+}
+
 // UpdateContact edita um contato existente.
 func (s *SupportService) UpdateContact(accountID, id string, req models.UpdateContactRequest) (*models.SupportContact, error) {
 	var phone *string

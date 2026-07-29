@@ -73,6 +73,12 @@ type CreateAccountRequest struct {
 	AdminEmail string  `json:"admin_email" binding:"required,email"`
 }
 
+// UpdateAccountRequest edita a empresa (nome e situação).
+type UpdateAccountRequest struct {
+	Name   *string `json:"name" binding:"omitempty,min=2"`
+	Status *string `json:"status" binding:"omitempty,oneof=active suspended canceled"`
+}
+
 // AddWhatsAppRequest inclui um número na empresa (dados vindos do painel da Meta).
 type AddWhatsAppRequest struct {
 	WabaID        string  `json:"waba_id" binding:"required"`

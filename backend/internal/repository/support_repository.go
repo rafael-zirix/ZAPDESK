@@ -82,6 +82,17 @@ func (r *SupportRepository) UpdateContact(accountID, id string, name, phone *str
 	return &c, err
 }
 
+// DeleteContact remove um contato (e, por cascata, suas conversas/mensagens).
+// Escopado por conta para evitar IDOR.
+func (r *SupportRepository) DeleteContact(id, accountID string) (bool, error) {
+	res, err := r.db.Exec(`DELETE FROM support_contacts WHERE id=$1 AND account_id=$2`, id, accountID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // nextProtocol gera o próximo protocolo sequencial da conta no ano (atômico).
 func (r *SupportRepository) nextProtocol(tx *sql.Tx, accountID string, year int) (string, error) {
 	var seq int

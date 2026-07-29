@@ -107,6 +107,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			contacts.GET("", supportH.ListContacts)
 			contacts.POST("", supportH.CreateContact)
 			contacts.PUT("/:id", supportH.UpdateContact)
+			contacts.DELETE("/:id", supportH.DeleteContact)
 		}
 
 		// Área do CLIENTE: a própria empresa (admin) conecta os seus números.
@@ -124,6 +125,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		{
 			admin.GET("/accounts", adminH.ListAccounts)
 			admin.POST("/accounts", adminH.CreateAccount)
+			admin.PUT("/accounts/:id", adminH.UpdateAccount)
+			admin.DELETE("/accounts/:id", adminH.DeleteAccount)
 			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
 		}
 	}

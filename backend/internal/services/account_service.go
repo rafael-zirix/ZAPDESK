@@ -38,6 +38,30 @@ func (s *AccountService) ListAccounts() ([]models.AccountResponse, error) {
 	return s.accounts.List()
 }
 
+// UpdateAccount edita a empresa (nome/situação).
+func (s *AccountService) UpdateAccount(id string, req models.UpdateAccountRequest) (*models.Account, error) {
+	a, err := s.accounts.Update(id, req.Name, req.Status)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrAccountNotFound
+	}
+	return a, nil
+}
+
+// DeleteAccount exclui a empresa (soft delete + desativa o acesso).
+func (s *AccountService) DeleteAccount(id string) error {
+	ok, err := s.accounts.SoftDelete(id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrAccountNotFound
+	}
+	return nil
+}
+
 // AddWhatsApp inclui um número na empresa, cifrando token e app secret. É o
 // mesmo caminho usado tanto pelo admin da empresa (conecta o próprio número)
 // quanto, no futuro, pelo retorno do Embedded Signup da Meta.

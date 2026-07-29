@@ -96,6 +96,20 @@ func (h *SupportHandler) CreateContact(c *gin.Context) {
 	RespondSuccess(c, http.StatusCreated, "Contato cadastrado", ct.ToResponse())
 }
 
+// DeleteContact remove um contato.
+func (h *SupportHandler) DeleteContact(c *gin.Context) {
+	err := h.support.DeleteContact(middleware.AccountID(c), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, services.ErrContactNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Contato não encontrado", nil)
+			return
+		}
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao excluir o contato", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Contato excluído", nil)
+}
+
 // UpdateContact edita um contato.
 func (h *SupportHandler) UpdateContact(c *gin.Context) {
 	var req models.UpdateContactRequest

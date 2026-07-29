@@ -62,3 +62,45 @@ func (r *AccountRepository) Exists(accountID string) (bool, error) {
 	err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM accounts WHERE id=$1 AND deleted_at IS NULL)`, accountID).Scan(&ok)
 	return ok, err
 }
+
+// Update edita nome e/ou situação da empresa. Devolve nil se não existir.
+func (r *AccountRepository) Update(id string, name, status *string) (*models.Account, error) {
+	var a models.Account
+	err := r.db.QueryRow(`
+		UPDATE accounts SET
+		  name   = COALESCE($2, name),
+		  status = COALESCE($3, status),
+		  updated_at = $4
+		WHERE id=$1 AND deleted_at IS NULL
+		RETURNING id, name, slug, status, created_at`,
+		id, name, status, time.Now().UTC()).
+		Scan(&a.ID, &a.Name, &a.Slug, &a.Status, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &a, err
+}
+
+// SoftDelete marca a empresa como excluída e desativa o acesso dos seus
+// usuários (numa transação). Dados de conversa/contatos ficam preservados.
+func (r *AccountRepository) SoftDelete(id string) (bool, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	res, err := tx.Exec(`UPDATE accounts SET deleted_at=$2, updated_at=$2 WHERE id=$1 AND deleted_at IS NULL`, id, now)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE users SET deleted_at=$2, updated_at=$2 WHERE account_id=$1 AND deleted_at IS NULL`, id, now); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}

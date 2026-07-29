@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -42,6 +43,41 @@ func (h *AdminHandler) CreateAccount(c *gin.Context) {
 	RespondSuccess(c, http.StatusCreated, "Empresa criada", gin.H{
 		"id": a.ID, "name": a.Name, "status": a.Status, "created_at": a.CreatedAt,
 	})
+}
+
+// UpdateAccount edita a empresa (nome/situação).
+func (h *AdminHandler) UpdateAccount(c *gin.Context) {
+	var req models.UpdateAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	a, err := h.accounts.UpdateAccount(c.Param("id"), req)
+	if err != nil {
+		if errors.Is(err, services.ErrAccountNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Empresa não encontrada", nil)
+			return
+		}
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao editar a empresa", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Empresa atualizada", gin.H{
+		"id": a.ID, "name": a.Name, "status": a.Status, "created_at": a.CreatedAt,
+	})
+}
+
+// DeleteAccount exclui a empresa (soft delete).
+func (h *AdminHandler) DeleteAccount(c *gin.Context) {
+	err := h.accounts.DeleteAccount(c.Param("id"))
+	if err != nil {
+		if errors.Is(err, services.ErrAccountNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Empresa não encontrada", nil)
+			return
+		}
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao excluir a empresa", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Empresa excluída", nil)
 }
 
 // ListWhatsApp lista os números de uma empresa (só metadados — o super-admin
