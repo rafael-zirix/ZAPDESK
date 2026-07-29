@@ -2,19 +2,24 @@ import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
 import '../models/support.dart';
+import 'conversation_controller.dart';
 
-/// Estado do inbox: lista de conversas + thread selecionada.
+/// Estado do inbox: a lista de conversas (esquerda) e os painéis abertos
+/// (direita). Suporta trabalhar com até 4 conversas simultâneas.
 class InboxController extends ChangeNotifier {
   final _api = ApiClient.instance;
+
+  static const int maxPanes = 4;
 
   List<TicketListItem> tickets = [];
   bool loadingTickets = false;
   String? ticketsError;
 
-  TicketListItem? selected;
-  List<Message> messages = [];
-  bool loadingMessages = false;
-  bool sending = false;
+  /// Quantos painéis o usuário quer ver ao mesmo tempo (1..4).
+  int paneCount = 1;
+
+  /// Conversas abertas (no máximo [paneCount]).
+  final List<ConversationController> open = [];
 
   Future<void> loadTickets() async {
     loadingTickets = true;
@@ -30,38 +35,51 @@ class InboxController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void deselect() {
-    selected = null;
-    messages = [];
-    notifyListeners();
-  }
+  bool isOpen(String ticketId) => open.any((c) => c.ticket.id == ticketId);
 
-  Future<void> select(TicketListItem t) async {
-    selected = t;
-    messages = [];
-    loadingMessages = true;
-    notifyListeners();
-    final r = await _api.get('/support/tickets/${t.id}/messages');
-    loadingMessages = false;
-    if (r.ok && r.data is List) {
-      messages = (r.data as List).map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+  /// Define quantos painéis exibir. Ao reduzir, fecha os excedentes.
+  void setPaneCount(int n) {
+    paneCount = n.clamp(1, maxPanes);
+    while (open.length > paneCount) {
+      open.removeLast().dispose();
     }
     notifyListeners();
   }
 
-  Future<bool> send(String text) async {
-    final t = selected;
-    if (t == null || text.trim().isEmpty) return false;
-    sending = true;
+  /// Abre uma conversa: usa um slot livre; se todos ocupados, substitui o
+  /// último. Se já estiver aberta, não faz nada (já visível).
+  void openTicket(TicketListItem t) {
+    if (isOpen(t.id)) return;
+    final conv = ConversationController(t);
+    if (open.length >= paneCount && open.isNotEmpty) {
+      open.removeLast().dispose();
+    }
+    open.add(conv);
     notifyListeners();
-    final r = await _api.post('/support/tickets/${t.id}/messages', {'content': text.trim()});
-    sending = false;
-    if (r.ok && r.data != null) {
-      messages = [...messages, Message.fromJson(r.data as Map<String, dynamic>)];
+  }
+
+  /// Fecha um painel específico.
+  void closePane(ConversationController c) {
+    if (open.remove(c)) {
+      c.dispose();
       notifyListeners();
-      return true;
     }
+  }
+
+  /// Fecha todos (usado ao voltar no mobile).
+  void closeAll() {
+    for (final c in open) {
+      c.dispose();
+    }
+    open.clear();
     notifyListeners();
-    return false;
+  }
+
+  @override
+  void dispose() {
+    for (final c in open) {
+      c.dispose();
+    }
+    super.dispose();
   }
 }
