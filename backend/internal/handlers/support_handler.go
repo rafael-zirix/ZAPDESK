@@ -27,6 +27,27 @@ func (h *SupportHandler) ListTickets(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "Conversas", list)
 }
 
+// StartConversation inicia (ou reabre) uma conversa com um contato.
+func (h *SupportHandler) StartConversation(c *gin.Context) {
+	var req struct {
+		ContactID string `json:"contact_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	item, err := h.support.StartConversation(middleware.AccountID(c), req.ContactID)
+	if err != nil {
+		if errors.Is(err, services.ErrContactNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Contato não encontrado", nil)
+			return
+		}
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao iniciar a conversa", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusCreated, "Conversa iniciada", item)
+}
+
 // ListMessages devolve a thread de uma conversa.
 func (h *SupportHandler) ListMessages(c *gin.Context) {
 	msgs, err := h.support.ListMessages(middleware.AccountID(c), c.Param("id"))

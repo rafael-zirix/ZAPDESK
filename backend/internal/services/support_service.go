@@ -121,6 +121,24 @@ func (s *SupportService) ListInbox(accountID string) ([]models.SupportTicketList
 	return s.repo.ListInbox(accountID)
 }
 
+// StartConversation abre (ou reusa) a conversa aberta de um contato e devolve
+// o item para o inbox. Usado quando o atendente inicia uma conversa a partir
+// de um contato cadastrado.
+func (s *SupportService) StartConversation(accountID, contactID string) (*models.SupportTicketListItem, error) {
+	ok, err := s.repo.ContactExists(accountID, contactID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrContactNotFound
+	}
+	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, contactID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.TicketListItem(accountID, ticket.ID)
+}
+
 // ListMessages devolve a thread de uma conversa.
 func (s *SupportService) ListMessages(accountID, ticketID string) ([]models.SupportMessage, error) {
 	return s.repo.ListMessages(accountID, ticketID)

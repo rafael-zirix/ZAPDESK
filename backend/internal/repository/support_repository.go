@@ -143,6 +143,27 @@ func (r *SupportRepository) FindOrCreateOpenTicket(accountID, contactID string) 
 	return &t, tx.Commit()
 }
 
+// ContactExists indica se o contato pertence à conta.
+func (r *SupportRepository) ContactExists(accountID, contactID string) (bool, error) {
+	var ok bool
+	err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM support_contacts WHERE id=$1 AND account_id=$2)`, contactID, accountID).Scan(&ok)
+	return ok, err
+}
+
+// TicketListItem devolve uma linha do inbox (com dados do contato) por ticket.
+func (r *SupportRepository) TicketListItem(accountID, ticketID string) (*models.SupportTicketListItem, error) {
+	var it models.SupportTicketListItem
+	err := r.db.QueryRow(`
+		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at
+		FROM support_tickets t JOIN support_contacts c ON c.id = t.contact_id
+		WHERE t.id=$1 AND t.account_id=$2`, ticketID, accountID).
+		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &it, err
+}
+
 // InsertMessage grava uma mensagem e atualiza o last_message_at da conversa.
 // Idempotente por (account_id, external_id).
 func (r *SupportRepository) InsertMessage(m *models.SupportMessage) (*models.SupportMessage, error) {

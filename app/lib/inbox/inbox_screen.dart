@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
+import '../models/contact.dart';
 import '../models/support.dart';
 import 'conversation_controller.dart';
 import 'inbox_controller.dart';
@@ -19,6 +20,21 @@ class _InboxScreenState extends State<InboxScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => context.read<InboxController>().loadTickets());
+  }
+
+  Future<void> _newConversation(InboxController inbox) async {
+    await inbox.loadContacts();
+    if (!mounted) return;
+    final picked = await showDialog<Contact>(
+      context: context,
+      builder: (_) => _ContactPickerDialog(contacts: inbox.contacts),
+    );
+    if (picked != null) {
+      final err = await inbox.startWith(picked);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      }
+    }
   }
 
   @override
@@ -130,9 +146,19 @@ class _InboxScreenState extends State<InboxScreen> {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            alignment: Alignment.centerLeft,
-            child: const Text('Conversas', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            padding: const EdgeInsets.fromLTRB(16, 12, 10, 8),
+            child: Row(
+              children: [
+                const Text('Conversas', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                IconButton.filled(
+                  onPressed: () => _newConversation(inbox),
+                  tooltip: 'Nova conversa',
+                  style: IconButton.styleFrom(backgroundColor: AppTheme.seed),
+                  icon: const Icon(Icons.add_comment_outlined, color: Colors.white, size: 20),
+                ),
+              ],
+            ),
           ),
           const Divider(height: 1),
           Expanded(child: _listBody(inbox)),
@@ -492,4 +518,85 @@ class _LayoutPicker extends StatelessWidget {
         );
     }
   }
+}
+
+/// Seletor de contato para iniciar uma nova conversa (com busca).
+class _ContactPickerDialog extends StatefulWidget {
+  const _ContactPickerDialog({required this.contacts});
+  final List<Contact> contacts;
+
+  @override
+  State<_ContactPickerDialog> createState() => _ContactPickerDialogState();
+}
+
+class _ContactPickerDialogState extends State<_ContactPickerDialog> {
+  String _q = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.contacts.where((c) {
+      if (_q.isEmpty) return true;
+      final q = _q.toLowerCase();
+      return c.displayName.toLowerCase().contains(q) || c.phone.contains(q);
+    }).toList();
+
+    return Dialog(
+      child: SizedBox(
+        width: 400,
+        height: 480,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+              child: Row(
+                children: [
+                  const Text('Nova conversa', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                autofocus: true,
+                onChanged: (v) => setState(() => _q = v),
+                decoration: const InputDecoration(hintText: 'Buscar contato…', prefixIcon: Icon(Icons.search)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: widget.contacts.isEmpty
+                  ? _empty('Nenhum contato cadastrado.\nCadastre em Contatos primeiro.')
+                  : filtered.isEmpty
+                      ? _empty('Nenhum contato encontrado.')
+                      : ListView.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
+                          itemBuilder: (_, i) {
+                            final c = filtered[i];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: AppTheme.seed.withValues(alpha: 0.15),
+                                child: Text(c.initials, style: const TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700)),
+                              ),
+                              title: Text(c.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                              subtitle: Text(c.prettyPhone),
+                              onTap: () => Navigator.pop(context, c),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _empty(String text) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(text, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, height: 1.4)),
+        ),
+      );
 }

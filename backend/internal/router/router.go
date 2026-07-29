@@ -107,6 +107,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		support := api.Group("/support")
 		{
 			support.GET("/tickets", supportH.ListTickets)
+			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
 		}

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
+import '../models/contact.dart';
 import '../models/support.dart';
 import 'conversation_controller.dart';
 
@@ -35,7 +36,40 @@ class InboxController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Contatos disponíveis para iniciar uma conversa nova.
+  List<Contact> contacts = [];
+  bool loadingContacts = false;
+
   bool isOpen(String ticketId) => open.any((c) => c.ticket.id == ticketId);
+
+  Future<void> loadContacts() async {
+    loadingContacts = true;
+    notifyListeners();
+    final r = await _api.get('/contacts');
+    loadingContacts = false;
+    if (r.ok && r.data is List) {
+      contacts = (r.data as List).map((e) => Contact.fromJson(e as Map<String, dynamic>)).toList();
+    }
+    notifyListeners();
+  }
+
+  /// Inicia (ou reabre) a conversa com um contato e a abre num painel.
+  /// Retorna null em sucesso, ou a mensagem de erro.
+  Future<String?> startWith(Contact contact) async {
+    final r = await _api.post('/support/tickets', {'contact_id': contact.id});
+    if (r.ok && r.data != null) {
+      final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
+      final idx = tickets.indexWhere((x) => x.id == t.id);
+      if (idx >= 0) {
+        tickets[idx] = t;
+      } else {
+        tickets.insert(0, t);
+      }
+      openTicket(t);
+      return null;
+    }
+    return r.message ?? 'Não foi possível iniciar a conversa';
+  }
 
   /// Define quantos painéis exibir. Ao reduzir, fecha os excedentes.
   void setPaneCount(int n) {
