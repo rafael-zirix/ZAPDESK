@@ -1,9 +1,9 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
+import '../core/file_pick.dart';
 import '../core/theme.dart';
 import '../models/contact.dart';
 import '../models/message_template.dart';
@@ -491,13 +491,12 @@ class _ConversationPane extends StatelessWidget {
     }
 
     Future<void> pickAttachment() async {
-      final res = await FilePicker.pickFiles(withData: true);
-      if (res == null || res.files.isEmpty) return;
-      final f = res.files.first;
-      if (f.bytes == null) return;
+      final f = await pickFile();
+      if (f == null) return;
       final ok = await conv.sendMedia(
-        bytes: f.bytes!,
+        bytes: f.bytes,
         filename: f.name,
+        mimeType: f.mimeType,
         caption: conv.composer.text.trim(),
       );
       if (ok) {
