@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
@@ -5,19 +7,34 @@ import '../models/support.dart';
 
 /// Estado de UMA conversa aberta num painel. Cada painel do inbox tem o seu,
 /// então atualizam de forma independente (uma pode carregar/enviar sem mexer
-/// nas outras).
+/// nas outras). Faz polling silencioso para trazer as respostas em tempo real.
 class ConversationController extends ChangeNotifier {
   ConversationController(this.ticket) {
     load();
+    _poll = Timer.periodic(const Duration(seconds: 6), (_) => _refresh());
   }
 
   final _api = ApiClient.instance;
   final TicketListItem ticket;
   final composer = TextEditingController();
+  Timer? _poll;
 
   List<Message> messages = [];
   bool loading = false;
   bool sending = false;
+
+  /// Recarrega as mensagens sem spinner; só notifica se mudou a quantidade.
+  Future<void> _refresh() async {
+    if (sending) return;
+    final r = await _api.get('/support/tickets/${ticket.id}/messages');
+    if (r.ok && r.data is List) {
+      final fresh = (r.data as List).map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+      if (fresh.length != messages.length) {
+        messages = fresh;
+        notifyListeners();
+      }
+    }
+  }
 
   Future<void> load() async {
     loading = true;
@@ -65,6 +82,7 @@ class ConversationController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _poll?.cancel();
     composer.dispose();
     super.dispose();
   }

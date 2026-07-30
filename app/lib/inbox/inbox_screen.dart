@@ -20,7 +20,11 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => context.read<InboxController>().loadTickets());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final inbox = context.read<InboxController>();
+      inbox.loadTickets();
+      inbox.startPolling();
+    });
   }
 
   Future<void> _newConversation(InboxController inbox) async {

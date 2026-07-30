@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
@@ -19,6 +21,22 @@ class InboxController extends ChangeNotifier {
 
   /// Quantos painéis o usuário quer ver ao mesmo tempo (1..4).
   int paneCount = 1;
+
+  Timer? _poll;
+
+  /// Liga o auto-refresh da lista de conversas (chamado quando a tela monta).
+  void startPolling() {
+    _poll ??= Timer.periodic(const Duration(seconds: 10), (_) => _refreshTickets());
+  }
+
+  /// Recarrega a lista sem spinner (para conversas novas aparecerem sozinhas).
+  Future<void> _refreshTickets() async {
+    final r = await _api.get('/support/tickets');
+    if (r.ok && r.data is List) {
+      tickets = (r.data as List).map((e) => TicketListItem.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
 
   /// Conversas abertas (no máximo [paneCount]).
   final List<ConversationController> open = [];
@@ -124,6 +142,7 @@ class InboxController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _poll?.cancel();
     for (final c in open) {
       c.dispose();
     }
