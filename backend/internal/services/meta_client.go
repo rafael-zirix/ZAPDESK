@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"time"
 )
@@ -162,4 +164,129 @@ func (c *MetaClient) SendTemplate(to, name, lang string) (string, error) {
 		return out.Messages[0].ID, nil
 	}
 	return "", nil
+}
+
+// --- Mídia (foto/documento/áudio/vídeo) ---
+
+// UploadMedia envia o arquivo para a Meta e devolve o media_id.
+func (c *MetaClient) UploadMedia(data []byte, filename, mimeType string) (string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("messaging_product", "whatsapp")
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+	h.Set("Content-Type", mimeType)
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", err
+	}
+	_ = w.Close()
+
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s/media", c.apiBase, c.phoneNumberID), &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("meta upload respondeu %d: %s", resp.StatusCode, string(b))
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(b, &out)
+	return out.ID, nil
+}
+
+// SendMedia envia uma mensagem com mídia (por media_id). kind = image|document|audio|video.
+func (c *MetaClient) SendMedia(to, kind, mediaID, filename, caption string) (string, error) {
+	media := map[string]any{"id": mediaID}
+	if caption != "" && (kind == "image" || kind == "document" || kind == "video") {
+		media["caption"] = caption
+	}
+	if kind == "document" && filename != "" {
+		media["filename"] = filename
+	}
+	body := map[string]any{
+		"messaging_product": "whatsapp",
+		"to":                to,
+		"type":              kind,
+		kind:                media,
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s/messages", c.apiBase, c.phoneNumberID), bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("meta respondeu %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+	}
+	_ = json.Unmarshal(data, &out)
+	if len(out.Messages) > 0 {
+		return out.Messages[0].ID, nil
+	}
+	return "", nil
+}
+
+// DownloadMedia baixa uma mídia recebida (resolve a URL pelo media_id e busca os
+// bytes). Devolve os bytes e o mime type.
+func (c *MetaClient) DownloadMedia(mediaID string) ([]byte, string, error) {
+	// 1) resolve a URL temporária
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", c.apiBase, mediaID), nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	var meta struct {
+		URL      string `json:"url"`
+		MimeType string `json:"mime_type"`
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("meta media respondeu %d: %s", resp.StatusCode, string(b))
+	}
+	_ = json.Unmarshal(b, &meta)
+	if meta.URL == "" {
+		return nil, "", fmt.Errorf("media sem url")
+	}
+	// 2) baixa os bytes (precisa do token)
+	req2, _ := http.NewRequest(http.MethodGet, meta.URL, nil)
+	req2.Header.Set("Authorization", "Bearer "+c.token)
+	resp2, err := c.http.Do(req2)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp2.Body.Close()
+	data, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp2.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("meta download respondeu %d", resp2.StatusCode)
+	}
+	return data, meta.MimeType, nil
 }

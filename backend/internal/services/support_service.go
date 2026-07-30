@@ -1,8 +1,14 @@
 package services
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"mime"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/lib/pq"
 
@@ -10,6 +16,36 @@ import (
 	"zapdesk/internal/models"
 	"zapdesk/internal/repository"
 )
+
+// kindFromMime mapeia o mime type para o tipo de mensagem do WhatsApp.
+func kindFromMime(m string) string {
+	switch {
+	case strings.HasPrefix(m, "image/"):
+		return "image"
+	case strings.HasPrefix(m, "audio/"):
+		return "audio"
+	case strings.HasPrefix(m, "video/"):
+		return "video"
+	default:
+		return "document"
+	}
+}
+
+func extFromMime(m, filename string) string {
+	if e := filepath.Ext(filename); e != "" {
+		return e
+	}
+	if exts, _ := mime.ExtensionsByType(m); len(exts) > 0 {
+		return exts[0]
+	}
+	return ""
+}
+
+func randomName(ext string) string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b) + ext
+}
 
 var (
 	ErrTicketNotFound  = errors.New("conversa não encontrada")
@@ -40,11 +76,12 @@ type SupportService struct {
 	cipher   *crypto.Cipher
 	apiBase  string
 	fallback *MetaClient
+	mediaDir string
 }
 
 func NewSupportService(repo *repository.SupportRepository, wa *repository.WhatsAppRepository,
-	cipher *crypto.Cipher, apiBase string, fallback *MetaClient) *SupportService {
-	return &SupportService{repo: repo, wa: wa, cipher: cipher, apiBase: apiBase, fallback: fallback}
+	cipher *crypto.Cipher, apiBase, mediaDir string, fallback *MetaClient) *SupportService {
+	return &SupportService{repo: repo, wa: wa, cipher: cipher, apiBase: apiBase, mediaDir: mediaDir, fallback: fallback}
 }
 
 // clientFor devolve o cliente Meta da conta (token do número conectado) e o
@@ -207,6 +244,124 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 	// UI), deixando claro que a mensagem ainda não saiu de fato pela Meta.
 	msg.Status = "pending"
 	return s.repo.InsertMessage(msg)
+}
+
+// saveMedia grava os bytes na pasta de mídia e devolve o nome do arquivo.
+func (s *SupportService) saveMedia(data []byte, ext string) (string, error) {
+	if err := os.MkdirAll(s.mediaDir, 0o755); err != nil {
+		return "", err
+	}
+	name := randomName(ext)
+	if err := os.WriteFile(filepath.Join(s.mediaDir, name), data, 0o644); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// MediaPath devolve o caminho absoluto de um arquivo de mídia (à prova de traversal).
+func (s *SupportService) MediaPath(name string) string {
+	return filepath.Join(s.mediaDir, filepath.Base(name))
+}
+
+// SendMedia sobe o arquivo à Meta, envia como mídia e grava a saída.
+func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []byte, filename, mimeType, caption string) (*models.SupportMessage, error) {
+	ticket, err := s.repo.GetTicket(accountID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if ticket == nil {
+		return nil, ErrTicketNotFound
+	}
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	kind := kindFromMime(mimeType)
+	name, err := s.saveMedia(data, extFromMime(mimeType, filename))
+	if err != nil {
+		return nil, err
+	}
+	mediaURL := "/media/" + name
+	sender := userID
+	var cap *string
+	if caption != "" {
+		cap = &caption
+	}
+	fn := filename
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
+		Type: kind, Content: cap, MediaURL: &mediaURL, MimeType: &mimeType, FileName: &fn,
+		Status: "pending", SenderID: &sender,
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		mediaID, upErr := client.UploadMedia(data, filename, mimeType)
+		if upErr != nil {
+			msg.Status = "failed"
+			saved, e := s.repo.InsertMessage(msg)
+			if e != nil {
+				return nil, e
+			}
+			return saved, upErr
+		}
+		wamid, sendErr := client.SendMedia(phone, kind, mediaID, filename, caption)
+		if sendErr != nil {
+			msg.Status = "failed"
+		} else {
+			msg.Status = "sent"
+			if wamid != "" {
+				msg.ExternalID = &wamid
+			}
+		}
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+	return s.repo.InsertMessage(msg)
+}
+
+// ProcessInboundMedia baixa a mídia recebida da Meta, salva local e grava a msg.
+func (s *SupportService) ProcessInboundMedia(accountID, phone string, profileName *string, wamid, mediaID, caption, filename string) error {
+	contact, err := s.repo.FindOrCreateContact(accountID, phone, profileName)
+	if err != nil {
+		return err
+	}
+	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, contact.ID)
+	if err != nil {
+		return err
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil || client == nil {
+		return err
+	}
+	data, mimeType, err := client.DownloadMedia(mediaID)
+	if err != nil {
+		return err
+	}
+	name, err := s.saveMedia(data, extFromMime(mimeType, filename))
+	if err != nil {
+		return err
+	}
+	mediaURL := "/media/" + name
+	extID := wamid
+	var cap, fn *string
+	if caption != "" {
+		cap = &caption
+	}
+	if filename != "" {
+		fn = &filename
+	}
+	_, err = s.repo.InsertMessage(&models.SupportMessage{
+		AccountID: accountID, TicketID: ticket.ID, Direction: models.DirectionIn,
+		Type: kindFromMime(mimeType), Content: cap, MediaURL: &mediaURL, MimeType: &mimeType, FileName: fn,
+		Status: "received", ExternalID: &extID,
+	})
+	return err
 }
 
 // AccountByPhoneNumberID resolve a empresa dona de um número (roteamento do

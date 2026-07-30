@@ -38,6 +38,14 @@ func (h *WebhookHandler) Verify(c *gin.Context) {
 	c.Status(http.StatusForbidden)
 }
 
+// mediaObj é o objeto de mídia de uma mensagem recebida (image/document/etc).
+type mediaObj struct {
+	ID       string `json:"id"`
+	MimeType string `json:"mime_type"`
+	Caption  string `json:"caption"`
+	Filename string `json:"filename"`
+}
+
 // metaPayload é o recorte do payload que nos interessa.
 type metaPayload struct {
 	Entry []struct {
@@ -59,6 +67,10 @@ type metaPayload struct {
 					Text struct {
 						Body string `json:"body"`
 					} `json:"text"`
+					Image    *mediaObj `json:"image"`
+					Document *mediaObj `json:"document"`
+					Audio    *mediaObj `json:"audio"`
+					Video    *mediaObj `json:"video"`
 				} `json:"messages"`
 			} `json:"value"`
 		} `json:"changes"`
@@ -94,15 +106,33 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 				}
 			}
 			for _, m := range v.Messages {
-				if m.Type != "text" {
-					continue // mídia: Fase 2
-				}
 				var name *string
 				if n, ok := names[m.From]; ok {
 					name = &n
 				}
-				if err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body); err != nil {
-					slog.Error("Falha ao processar mensagem recebida", "erro", err, "wamid", m.ID)
+				if m.Type == "text" {
+					if err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body); err != nil {
+						slog.Error("Falha ao processar mensagem recebida", "erro", err, "wamid", m.ID)
+					}
+					continue
+				}
+				// Mídia: pega o objeto do tipo correspondente e baixa da Meta.
+				var md *mediaObj
+				switch m.Type {
+				case "image":
+					md = m.Image
+				case "document":
+					md = m.Document
+				case "audio":
+					md = m.Audio
+				case "video":
+					md = m.Video
+				}
+				if md == nil || md.ID == "" {
+					continue // tipo não suportado (sticker, location, etc)
+				}
+				if err := h.support.ProcessInboundMedia(accountID, m.From, name, m.ID, md.ID, md.Caption, md.Filename); err != nil {
+					slog.Error("Falha ao processar mídia recebida", "erro", err, "wamid", m.ID)
 				}
 			}
 		}

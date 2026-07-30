@@ -43,24 +43,35 @@ class Message {
     required this.direction,
     required this.type,
     this.content,
+    this.mediaUrl,
+    this.mimeType,
+    this.fileName,
     required this.status,
     required this.createdAt,
   });
 
   final String id;
   final String direction; // in (cliente) | out (atendente)
-  final String type;
+  final String type; // text | image | document | audio | video | template
   final String? content;
+  final String? mediaUrl;
+  final String? mimeType;
+  final String? fileName;
   final String status;
   final DateTime createdAt;
 
   bool get isOutbound => direction == 'out';
+  bool get isImage => type == 'image';
+  bool get hasMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
 
   factory Message.fromJson(Map<String, dynamic> j) => Message(
         id: j['id'],
         direction: j['direction'] ?? 'in',
         type: j['type'] ?? 'text',
         content: j['content'],
+        mediaUrl: j['media_url'],
+        mimeType: j['mime_type'],
+        fileName: j['file_name'],
         status: j['status'] ?? '',
         createdAt: DateTime.tryParse(j['created_at'] ?? '')?.toLocal() ?? DateTime.now(),
       );

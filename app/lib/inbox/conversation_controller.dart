@@ -80,6 +80,27 @@ class ConversationController extends ChangeNotifier {
     return false;
   }
 
+  /// Envia um anexo (foto/documento). Retorna false em falha.
+  Future<bool> sendMedia({required List<int> bytes, required String filename, String? mimeType, String caption = ''}) async {
+    sending = true;
+    notifyListeners();
+    final r = await _api.uploadFile(
+      '/support/tickets/${ticket.id}/media',
+      bytes: bytes,
+      filename: filename,
+      contentType: mimeType,
+      fields: caption.isNotEmpty ? {'caption': caption} : null,
+    );
+    sending = false;
+    if (r.ok && r.data != null) {
+      messages = [...messages, Message.fromJson(r.data as Map<String, dynamic>)];
+      notifyListeners();
+      return true;
+    }
+    notifyListeners();
+    return false;
+  }
+
   @override
   void dispose() {
     _poll?.cancel();

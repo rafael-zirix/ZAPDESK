@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config.dart';
@@ -59,6 +60,31 @@ class ApiClient {
         'Content-Type': 'application/json',
         if (_accessToken != null) 'Authorization': 'Bearer $_accessToken',
       };
+
+  /// Upload multipart de um arquivo (campo "file") + campos extras.
+  Future<ApiResult> uploadFile(
+    String path, {
+    required List<int> bytes,
+    required String filename,
+    String? contentType,
+    Map<String, String>? fields,
+  }) async {
+    try {
+      final req = http.MultipartRequest('POST', _u(path));
+      if (_accessToken != null) req.headers['Authorization'] = 'Bearer $_accessToken';
+      fields?.forEach((k, v) => req.fields[k] = v);
+      req.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename,
+        contentType: contentType != null ? MediaType.parse(contentType) : null,
+      ));
+      final res = await http.Response.fromStream(await req.send());
+      return _parse(res);
+    } catch (e) {
+      return ApiResult(ok: false, message: 'Falha ao enviar o arquivo: $e');
+    }
+  }
 
   Future<ApiResult> get(String path) => _send('GET', path);
   Future<ApiResult> post(String path, [Map<String, dynamic>? body]) => _send('POST', path, body);

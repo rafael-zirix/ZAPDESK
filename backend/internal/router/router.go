@@ -61,7 +61,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), mailer)
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
-	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, metaClient)
+	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient)
 	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher)
 
 	authH := handlers.NewAuthHandler(authSvc)
@@ -91,6 +91,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		webhook.POST("", webhookH.Receive)
 	}
 
+	// Mídia (foto/anexo): rota pública, o nome do arquivo é aleatório (segredo).
+	r.GET("/media/:name", supportH.ServeMedia)
+
 	// Rotas autenticadas.
 	api := r.Group("")
 	api.Use(middleware.Auth(jwtSvc))
@@ -113,6 +116,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
+			support.POST("/tickets/:id/media", supportH.SendMedia)       // envia foto/anexo
 			support.POST("/tickets/:id/template", supportH.SendTemplate) // envia um modelo aprovado
 			support.GET("/templates", supportH.ListTemplates)           // modelos aprovados da conta
 		}

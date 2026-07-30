@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -80,6 +81,46 @@ func (h *SupportHandler) Reply(c *gin.Context) {
 		return
 	}
 	RespondSuccess(c, http.StatusCreated, "Enviada", msg.ToResponse())
+}
+
+// SendMedia envia um anexo (foto/documento) na conversa.
+func (h *SupportHandler) SendMedia(c *gin.Context) {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Nenhum arquivo enviado", nil)
+		return
+	}
+	f, err := fh.Open()
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao ler o arquivo", nil)
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao ler o arquivo", nil)
+		return
+	}
+	mimeType := fh.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	msg, err := h.support.SendMedia(middleware.AccountID(c), c.Param("id"), middleware.UserID(c),
+		data, fh.Filename, mimeType, c.PostForm("caption"))
+	if err != nil {
+		if errors.Is(err, services.ErrTicketNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
+			return
+		}
+		RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível enviar o anexo", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusCreated, "Enviada", msg.ToResponse())
+}
+
+// ServeMedia devolve o arquivo de mídia (rota pública; o nome é aleatório).
+func (h *SupportHandler) ServeMedia(c *gin.Context) {
+	c.File(h.support.MediaPath(c.Param("name")))
 }
 
 // ListTemplates devolve os modelos (templates) aprovados da conta na Meta.

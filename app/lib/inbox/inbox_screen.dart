@@ -1,7 +1,9 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../core/config.dart';
 import '../core/theme.dart';
 import '../models/contact.dart';
 import '../models/message_template.dart';
@@ -416,7 +418,9 @@ class _ConversationPane extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(m.content ?? '', style: const TextStyle(fontSize: 14, height: 1.3)),
+            if (m.hasMedia) _media(m),
+            if ((m.content ?? '').isNotEmpty)
+              Text(m.content!, style: const TextStyle(fontSize: 14, height: 1.3)),
             const SizedBox(height: 2),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -438,6 +442,46 @@ class _ConversationPane extends StatelessWidget {
     );
   }
 
+  Widget _media(Message m) {
+    final url = Config.apiBaseUrl + m.mediaUrl!;
+    if (m.isImage) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            url,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => _fileCard(m),
+            loadingBuilder: (c, w, p) => p == null
+                ? w
+                : Container(height: 140, width: 200, alignment: Alignment.center, child: const CircularProgressIndicator(strokeWidth: 2)),
+          ),
+        ),
+      );
+    }
+    return _fileCard(m);
+  }
+
+  Widget _fileCard(Message m) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(8)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.insert_drive_file_outlined, color: AppTheme.seed),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(m.fileName ?? 'arquivo',
+                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _composer(BuildContext context) {
     Future<void> doSend() async {
       final ok = await conv.send();
@@ -446,11 +490,33 @@ class _ConversationPane extends StatelessWidget {
       }
     }
 
+    Future<void> pickAttachment() async {
+      final res = await FilePicker.pickFiles(withData: true);
+      if (res == null || res.files.isEmpty) return;
+      final f = res.files.first;
+      if (f.bytes == null) return;
+      final ok = await conv.sendMedia(
+        bytes: f.bytes!,
+        filename: f.name,
+        caption: conv.composer.text.trim(),
+      );
+      if (ok) {
+        conv.composer.clear();
+      } else if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível enviar o anexo')));
+      }
+    }
+
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Row(
         children: [
+          IconButton(
+            onPressed: conv.sending ? null : pickAttachment,
+            tooltip: 'Anexar foto ou arquivo',
+            icon: Icon(Icons.attach_file, color: Colors.grey.shade600),
+          ),
           Expanded(
             child: TextField(
               controller: conv.composer,

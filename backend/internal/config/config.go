@@ -15,6 +15,7 @@ type Config struct {
 	JWTSecret     string
 	EncryptionKey string // 32 bytes em hex — cifra os tokens das empresas
 	WebDir        string // pasta do build Flutter web; vazio = não serve o front
+	MediaDir      string // pasta onde a mídia (fotos/anexos) é armazenada
 
 	// Meta WhatsApp — nesta fase, credenciais de UM número de teste (globais).
 	// Na fase multi-número virão da tabela whatsapp_accounts, por conta.
@@ -41,6 +42,7 @@ func Load() *Config {
 		JWTSecret:       getenv("JWT_SECRET", ""),
 		EncryptionKey:   os.Getenv("ENCRYPTION_KEY"),
 		WebDir:          os.Getenv("WEB_DIR"),
+		MediaDir:        getenv("MEDIA_DIR", "/app/media"),
 		MetaAppSecret:        os.Getenv("META_APP_SECRET"),
 		MetaVerifyToken:      os.Getenv("META_VERIFY_TOKEN"),
 		MetaAPIBase:          getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),

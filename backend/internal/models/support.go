@@ -67,6 +67,8 @@ type SupportMessageResponse struct {
 	Type      string    `json:"type"`
 	Content   *string   `json:"content,omitempty"`
 	MediaURL  *string   `json:"media_url,omitempty"`
+	MimeType  *string   `json:"mime_type,omitempty"`
+	FileName  *string   `json:"file_name,omitempty"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -79,6 +81,8 @@ func (m *SupportMessage) ToResponse() SupportMessageResponse {
 		Type:      m.Type,
 		Content:   m.Content,
 		MediaURL:  m.MediaURL,
+		MimeType:  m.MimeType,
+		FileName:  m.FileName,
 		Status:    m.Status,
 		CreatedAt: m.CreatedAt,
 	}

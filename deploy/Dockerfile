@@ -6,7 +6,9 @@ WORKDIR /app
 COPY zapdesk-api /app/zapdesk-api
 COPY migrations /app/migrations
 COPY web /app/web
+RUN mkdir -p /app/media && chown app /app/media
 ENV WEB_DIR=/app/web
+ENV MEDIA_DIR=/app/media
 USER app
 EXPOSE 8080
 ENTRYPOINT ["/app/zapdesk-api"]
