@@ -506,11 +506,31 @@ class _ConversationPane extends StatelessWidget {
       }
     }
 
+    void insertEmoji(String emoji) {
+      final t = conv.composer;
+      final sel = t.selection;
+      if (sel.isValid) {
+        t.text = t.text.replaceRange(sel.start, sel.end, emoji);
+        t.selection = TextSelection.collapsed(offset: sel.start + emoji.length);
+      } else {
+        t.text = t.text + emoji;
+      }
+    }
+
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Row(
         children: [
+          IconButton(
+            onPressed: () => showModalBottomSheet<void>(
+              context: context,
+              showDragHandle: true,
+              builder: (_) => _EmojiSheet(onPick: insertEmoji),
+            ),
+            tooltip: 'Emoji',
+            icon: Icon(Icons.emoji_emotions_outlined, color: Colors.grey.shade600),
+          ),
           IconButton(
             onPressed: conv.sending ? null : pickAttachment,
             tooltip: 'Anexar foto ou arquivo',
@@ -775,6 +795,53 @@ class _TemplateSheet extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Painel de emojis (mais usados no atendimento). Toca para inserir no texto;
+/// fica aberto para inserir vários.
+class _EmojiSheet extends StatelessWidget {
+  const _EmojiSheet({required this.onPick});
+  final void Function(String) onPick;
+
+  static const _emojis = [
+    '😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','🙃','😉','😌','😍','🥰',
+    '😘','😗','😙','😚','😋','😛','😜','🤪','😎','🤩','🥳','😏','😒','🙄','😔','😟',
+    '👍','👎','👌','🙏','💪','👏','🙌','🤝','👋','✌️','🤙','☝️','✋','🫡','🤗','🤔',
+    '❤️','🧡','💛','💚','💙','💜','🖤','🔥','⭐','✨','🎉','🎊','✅','❌','⚠️','❗',
+    '❓','💬','📞','📅','🗓️','📍','💰','💳','🧾','📄','📎','📷','🚗','🏍️','🚙','🛻',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SizedBox(
+        height: 280,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Emojis', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ),
+            Expanded(
+              child: GridView.count(
+                crossAxisCount: 8,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  for (final e in _emojis)
+                    InkWell(
+                      onTap: () => onPick(e),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Center(child: Text(e, style: const TextStyle(fontSize: 24))),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
