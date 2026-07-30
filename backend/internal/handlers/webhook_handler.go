@@ -43,6 +43,9 @@ type metaPayload struct {
 	Entry []struct {
 		Changes []struct {
 			Value struct {
+				Metadata struct {
+					PhoneNumberID string `json:"phone_number_id"`
+				} `json:"metadata"`
 				Contacts []struct {
 					Profile struct {
 						Name string `json:"name"`
@@ -77,6 +80,12 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 	for _, e := range p.Entry {
 		for _, ch := range e.Changes {
 			v := ch.Value
+			// Roteamento por número: a empresa dona é resolvida pelo
+			// phone_number_id do payload. Cai no default só se não achar.
+			accountID := h.defaultAccountID
+			if aid, err := h.support.AccountByPhoneNumberID(v.Metadata.PhoneNumberID); err == nil && aid != "" {
+				accountID = aid
+			}
 			// Mapa wa_id → nome do perfil.
 			names := map[string]string{}
 			for _, ct := range v.Contacts {
@@ -92,7 +101,7 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 				if n, ok := names[m.From]; ok {
 					name = &n
 				}
-				if err := h.support.ProcessInbound(h.defaultAccountID, m.From, name, m.ID, m.Text.Body); err != nil {
+				if err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body); err != nil {
 					slog.Error("Falha ao processar mensagem recebida", "erro", err, "wamid", m.ID)
 				}
 			}

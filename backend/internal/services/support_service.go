@@ -209,6 +209,19 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 	return s.repo.InsertMessage(msg)
 }
 
+// AccountByPhoneNumberID resolve a empresa dona de um número (roteamento do
+// webhook). Devolve "" quando não há número cadastrado com esse id.
+func (s *SupportService) AccountByPhoneNumberID(phoneNumberID string) (string, error) {
+	if s.wa == nil || phoneNumberID == "" {
+		return "", nil
+	}
+	w, err := s.wa.FindByPhoneNumberID(phoneNumberID)
+	if err != nil || w == nil {
+		return "", err
+	}
+	return w.AccountID, nil
+}
+
 // ListInbox devolve as conversas da conta.
 func (s *SupportService) ListInbox(accountID string) ([]models.SupportTicketListItem, error) {
 	return s.repo.ListInbox(accountID)
