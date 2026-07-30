@@ -665,20 +665,42 @@ class _TemplateSheet extends StatelessWidget {
               separatorBuilder: (_, _) => const Divider(height: 1, indent: 16),
               itemBuilder: (_, i) {
                 final t = templates[i];
-                return ListTile(
-                  title: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                    t.bodyText ?? '(sem prévia)',
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Colors.grey.shade600, height: 1.3),
-                  ),
-                  trailing: FilledButton(
-                    onPressed: () => Navigator.pop(context, t),
-                    style: FilledButton.styleFrom(backgroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
-                    child: const Text('Enviar'),
-                  ),
+                return InkWell(
                   onTap: () => Navigator.pop(context, t),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 3),
+                              Text(
+                                t.bodyText ?? '(sem prévia)',
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: Colors.grey.shade600, height: 1.3, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(context, t),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTheme.seed,
+                            // reseta o "full-width" herdado do tema, p/ o botão ficar compacto
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                          ),
+                          child: const Text('Enviar'),
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               },
             ),
