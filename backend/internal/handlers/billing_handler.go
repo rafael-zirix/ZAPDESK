@@ -69,6 +69,45 @@ func (h *BillingHandler) OrderStatus(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "Status", gin.H{"status": status, "credited": credited})
 }
 
+// CardCheckout abre um Checkout Pro (PIX + cartão + parcelas) e devolve a
+// init_point para o app redirecionar.
+func (h *BillingHandler) CardCheckout(c *gin.Context) {
+	var req struct {
+		AmountBRL float64 `json:"amount_brl" binding:"required"`
+		Email     string  `json:"email" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Informe valor e e-mail", err.Error())
+		return
+	}
+	url, err := h.billing.CreateCardCheckout(middleware.AccountID(c), strings.TrimSpace(req.Email), req.AmountBRL)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBillingUnavailable):
+			RespondError(c, http.StatusServiceUnavailable, ErrInternal, "Pagamento indisponível no momento", nil)
+		case errors.Is(err, services.ErrPriceUnset):
+			RespondError(c, http.StatusConflict, ErrValidation, "A plataforma ainda não definiu o preço dos tokens", nil)
+		default:
+			RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível abrir o checkout", err.Error())
+		}
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Checkout criado", gin.H{"init_point": url})
+}
+
+// Plans devolve o preço por 1.000 tokens e os pacotes (para o app montar os planos).
+func (h *BillingHandler) Plans(c *gin.Context) {
+	per1k, pkgs, err := h.billing.Plans()
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao carregar os planos", nil)
+		return
+	}
+	if pkgs == nil {
+		pkgs = []float64{}
+	}
+	RespondSuccess(c, http.StatusOK, "Planos", gin.H{"price_1k_tokens": per1k, "packages": pkgs})
+}
+
 // Subscribe cria a assinatura de recarga automática e devolve o init_point (o app
 // abre para o cliente autorizar o cartão uma vez no Mercado Pago).
 func (h *BillingHandler) Subscribe(c *gin.Context) {

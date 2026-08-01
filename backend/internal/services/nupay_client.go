@@ -56,7 +56,7 @@ func (c *NuPayClient) CreatePayment(referenceID, orderRef, description string, v
 	body := map[string]any{
 		"merchantOrderReference": orderRef,
 		"referenceId":            referenceID,
-		"merchantName":           "zapdesk",
+		"merchantName":           "HotZap",
 		"amount":                 map[string]any{"value": valueBRL, "currency": "BRL"},
 		"items": []any{map[string]any{
 			"id": "tokens", "description": description, "value": valueBRL, "quantity": 1,

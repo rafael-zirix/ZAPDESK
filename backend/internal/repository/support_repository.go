@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"zapdesk/internal/models"
@@ -228,6 +229,39 @@ func (r *SupportRepository) SetPricing(conversation, per1kTokens float64) error 
 		INSERT INTO platform_settings (key, value) VALUES ('price_conversation',$1),('price_1k_tokens',$2)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
 		strconv.FormatFloat(conversation, 'f', -1, 64), strconv.FormatFloat(per1kTokens, 'f', -1, 64))
+	return err
+}
+
+// GetPackages lê os pacotes de recarga (valores em R$) que o cliente pode comprar.
+func (r *SupportRepository) GetPackages() ([]float64, error) {
+	var v string
+	err := r.db.QueryRow(`SELECT value FROM platform_settings WHERE key='token_packages'`).Scan(&v)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []float64
+	for _, p := range strings.Split(v, ",") {
+		if f, e := strconv.ParseFloat(strings.TrimSpace(p), 64); e == nil && f > 0 {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
+// SetPackages grava os pacotes (CSV de valores em R$).
+func (r *SupportRepository) SetPackages(pkgs []float64) error {
+	parts := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		if p > 0 {
+			parts = append(parts, strconv.FormatFloat(p, 'f', -1, 64))
+		}
+	}
+	_, err := r.db.Exec(`
+		INSERT INTO platform_settings (key, value) VALUES ('token_packages',$1)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, strings.Join(parts, ","))
 	return err
 }
 

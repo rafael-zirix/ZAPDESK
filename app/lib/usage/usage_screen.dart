@@ -231,22 +231,31 @@ class _PricingCard extends StatefulWidget {
 class _PricingCardState extends State<_PricingCard> {
   late final TextEditingController _conv = TextEditingController(text: _init(widget.c.pricing.conversation));
   late final TextEditingController _tok = TextEditingController(text: _init(widget.c.pricing.per1kTokens));
+  late final TextEditingController _pkgs = TextEditingController(
+      text: widget.c.pricing.packages.map(_num).join(', '));
 
-  String _init(double v) => v == 0 ? '' : (v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString());
+  String _init(double v) => v == 0 ? '' : _num(v);
+  String _num(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
   @override
   void dispose() {
     _conv.dispose();
     _tok.dispose();
+    _pkgs.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     final conv = double.tryParse(_conv.text.trim().replaceAll(',', '.')) ?? 0;
     final tok = double.tryParse(_tok.text.trim().replaceAll(',', '.')) ?? 0;
-    final err = await widget.c.savePricing(conv, tok);
+    final pkgs = _pkgs.text
+        .split(',')
+        .map((s) => double.tryParse(s.trim().replaceAll(',', '.')) ?? 0)
+        .where((v) => v > 0)
+        .toList();
+    final err = await widget.c.savePricing(conv, tok, pkgs);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err ?? 'Preços salvos e valores recalculados')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err ?? 'Preços e planos salvos')));
   }
 
   @override
@@ -290,6 +299,16 @@ class _PricingCardState extends State<_PricingCard> {
                   controller: _tok,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: 'por 1.000 tokens de IA', prefixText: 'R\$ '),
+                ),
+              ),
+              SizedBox(
+                width: 320,
+                child: TextField(
+                  controller: _pkgs,
+                  decoration: const InputDecoration(
+                    labelText: 'planos de recarga (R\$, vírgula)',
+                    hintText: '25, 50, 100, 200',
+                  ),
                 ),
               ),
               FilledButton(

@@ -109,7 +109,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 	// Health.
 	r.GET("/health", func(c *gin.Context) {
-		handlers.RespondSuccess(c, http.StatusOK, "ok", gin.H{"service": "zapdesk", "env": cfg.Env})
+		handlers.RespondSuccess(c, http.StatusOK, "ok", gin.H{"service": "hotzap", "env": cfg.Env})
 	})
 
 	// Autenticação (público).
@@ -223,7 +223,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.POST("/import-url", aiH.ImportURL)
 			ai.DELETE("/context/:id", aiH.DeleteContext)
 			ai.GET("/ledger", aiH.Ledger)
+			ai.GET("/plans", billingH.Plans)                       // planos/pacotes + preço p/ o cliente
 			ai.POST("/recharge/checkout", billingH.Checkout)       // gera o PIX (Mercado Pago)
+			ai.POST("/recharge/preference", billingH.CardCheckout) // Checkout Pro (PIX + cartão hospedado)
 			ai.GET("/recharge/order/:ref", billingH.OrderStatus)   // polling do pedido até creditar
 			ai.POST("/subscription", billingH.Subscribe)           // recarga automática (assinatura MP)
 			ai.GET("/subscription", billingH.Subscription)         // estado da assinatura

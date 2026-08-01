@@ -203,8 +203,9 @@ type CompanyUsage struct {
 
 // Pricing são os preços da plataforma (super-admin cobra pelo uso).
 type Pricing struct {
-	Conversation float64 `json:"price_conversation"` // R$ por conversa WhatsApp
-	Per1kTokens  float64 `json:"price_1k_tokens"`    // R$ por 1.000 tokens de IA
+	Conversation float64   `json:"price_conversation"` // R$ por conversa WhatsApp
+	Per1kTokens  float64   `json:"price_1k_tokens"`    // R$ por 1.000 tokens de IA
+	Packages     []float64 `json:"packages"`           // valores R$ dos planos de recarga
 }
 
 // applyPricing preenche os valores em R$ de uma empresa a partir dos preços.
@@ -265,15 +266,24 @@ func (s *SupportService) AdminUsage(from, to time.Time) ([]CompanyUsage, error) 
 	return out, nil
 }
 
-// Pricing lê os preços da plataforma.
+// Pricing lê os preços da plataforma (+ pacotes de recarga).
 func (s *SupportService) Pricing() (Pricing, error) {
 	conv, per1k, err := s.repo.GetPricing()
-	return Pricing{Conversation: conv, Per1kTokens: per1k}, err
+	pkgs, _ := s.repo.GetPackages()
+	return Pricing{Conversation: conv, Per1kTokens: per1k, Packages: pkgs}, err
 }
 
-// SetPricing grava os preços da plataforma.
+// SetPricing grava os preços da plataforma (+ pacotes).
 func (s *SupportService) SetPricing(p Pricing) error {
-	return s.repo.SetPricing(p.Conversation, p.Per1kTokens)
+	if err := s.repo.SetPricing(p.Conversation, p.Per1kTokens); err != nil {
+		return err
+	}
+	return s.repo.SetPackages(p.Packages)
+}
+
+// Packages devolve os pacotes de recarga (para o app do cliente montar os planos).
+func (s *SupportService) Packages() ([]float64, error) {
+	return s.repo.GetPackages()
 }
 
 // MyUsage devolve o consumo + valores da própria empresa (para o admin dela).

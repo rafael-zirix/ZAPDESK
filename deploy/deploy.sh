@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VM="opc@167.126.11.122"
 KEY="$HOME/.ssh/oracle_ubuntu"
-URL="https://zapdesk.167-126-11-122.sslip.io"
+URL="https://hotzap.com.br"
 
 echo "==> build backend (linux/arm64)"
 ( cd "$ROOT/backend" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o "$ROOT/deploy/zapdesk-api" ./cmd/api )

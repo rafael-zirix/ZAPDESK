@@ -103,6 +103,26 @@ func (r *TokenOrderRepository) CreateForSubscription(accountID, chargeID string,
 	return true, nil
 }
 
+// ClaimForCreditByRef é como ClaimForCredit, mas casa pelo NOSSO reference_id
+// (external_reference no MP) — serve ao Checkout Pro, onde o id do pagamento só
+// existe quando o cliente paga. Atômico e idempotente.
+func (r *TokenOrderRepository) ClaimForCreditByRef(referenceID string) (*models.TokenOrder, error) {
+	var o models.TokenOrder
+	err := r.db.QueryRow(`
+		UPDATE token_orders SET status='paid', credited=true, updated_at=$2
+		WHERE reference_id=$1 AND credited=false
+		RETURNING id, account_id, reference_id, tokens, amount_brl`,
+		referenceID, time.Now().UTC()).
+		Scan(&o.ID, &o.AccountID, &o.ReferenceID, &o.Tokens, &o.AmountBRL)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
 // SetStatus atualiza o status de um pedido (ex.: failed/canceled) sem creditar.
 func (r *TokenOrderRepository) SetStatus(pspRef, status string) error {
 	_, err := r.db.Exec(`UPDATE token_orders SET status=$2, updated_at=$3 WHERE psp_reference_id=$1`,

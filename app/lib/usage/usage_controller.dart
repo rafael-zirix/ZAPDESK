@@ -7,7 +7,7 @@ class UsageController extends ChangeNotifier {
   final _api = ApiClient.instance;
 
   List<CompanyUsage> companies = [];
-  Pricing pricing = Pricing(conversation: 0, per1kTokens: 0);
+  Pricing pricing = Pricing(conversation: 0, per1kTokens: 0, packages: const []);
   bool loading = false;
   bool savingPricing = false;
   String? error;
@@ -40,11 +40,11 @@ class UsageController extends ChangeNotifier {
   }
 
   /// Salva os preços da plataforma e recarrega (recalcula os valores). Retorna erro.
-  Future<String?> savePricing(double conversation, double per1kTokens) async {
+  Future<String?> savePricing(double conversation, double per1kTokens, List<double> packages) async {
     savingPricing = true;
     notifyListeners();
     final r = await _api.put('/admin/pricing',
-        {'price_conversation': conversation, 'price_1k_tokens': per1kTokens});
+        {'price_conversation': conversation, 'price_1k_tokens': per1kTokens, 'packages': packages});
     savingPricing = false;
     if (!r.ok) {
       notifyListeners();

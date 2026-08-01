@@ -1,11 +1,11 @@
 {
-    "name": "Zapdesk",
-    "short_name": "Zapdesk",
+    "name": "HotZap",
+    "short_name": "HotZap",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0E9384",
     "theme_color": "#0E9384",
-    "description": "Zapdesk — atendimento por WhatsApp para empresas.",
+    "description": "HotZap — atendimento por WhatsApp para empresas.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

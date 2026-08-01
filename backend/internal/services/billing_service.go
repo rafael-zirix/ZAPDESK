@@ -65,7 +65,7 @@ func (s *BillingService) CreateRecharge(accountID string, amountBRL float64, sho
 	if err != nil {
 		return nil, err
 	}
-	desc := fmt.Sprintf("Recarga de %d tokens de IA (zapdesk)", tokens)
+	desc := fmt.Sprintf("Recarga de %d tokens de IA (HotZap)", tokens)
 	charge, err := s.mp.CreatePix(order.ReferenceID, desc, amountBRL, shopper, s.publicURL+"/webhook/mercadopago")
 	if err != nil {
 		// a cobrança não chegou a existir no MP; o pedido fica pending (órfão,
@@ -87,38 +87,86 @@ func (s *BillingService) CreateRecharge(accountID string, amountBRL float64, sho
 	}, nil
 }
 
-// HandleWebhook processa uma notificação do Mercado Pago: re-consulta o status
-// (nunca confia no corpo) e, se aprovado, credita os tokens uma única vez.
+// HandleWebhook processa a notificação de um pagamento avulso (PIX ou cartão via
+// Checkout Pro): re-consulta o pagamento (nunca confia no corpo) e, se aprovado,
+// credita os tokens uma única vez. Casa o pedido pelo external_reference (vale para
+// PIX e cartão); cai no id do pagamento como reserva (PIX in-app antigo).
 func (s *BillingService) HandleWebhook(paymentID string) error {
 	if paymentID == "" || !s.Configured() {
 		return nil
 	}
-	status, err := s.mp.GetStatus(paymentID)
+	pay, err := s.mp.GetPayment(paymentID)
 	if err != nil {
 		return err
 	}
-	if !MercadoPagoPago(status) {
-		switch status {
-		case "cancelled", "rejected", "refunded", "charged_back":
-			_ = s.orders.SetStatus(paymentID, "failed")
-		}
-		slog.Info("mercadopago: webhook sem pagamento", "psp", paymentID, "status", status)
+	if !MercadoPagoPago(pay.Status) {
+		slog.Info("mercadopago: webhook sem pagamento", "payment", paymentID, "status", pay.Status)
 		return nil
 	}
-	order, err := s.orders.ClaimForCredit(paymentID)
+	order, err := s.orders.ClaimForCreditByRef(pay.ExternalReference)
 	if err != nil {
 		return err
+	}
+	if order == nil {
+		if order, err = s.orders.ClaimForCredit(paymentID); err != nil {
+			return err
+		}
 	}
 	if order == nil {
 		return nil // já creditado (webhook repetido) ou pedido desconhecido
 	}
 	if _, err := s.ai.AddTokens(order.AccountID, order.Tokens, "purchase", "Recarga Mercado Pago "+paymentID); err != nil {
-		// credited=true já foi marcado: loga para reconciliação manual
-		slog.Error("mercadopago: pago mas falhou ao creditar tokens", "conta", order.AccountID, "tokens", order.Tokens, "psp", paymentID, "erro", err)
+		slog.Error("mercadopago: pago mas falhou ao creditar tokens", "conta", order.AccountID, "tokens", order.Tokens, "payment", paymentID, "erro", err)
 		return err
 	}
-	slog.Info("mercadopago: pagamento confirmado, tokens creditados", "conta", order.AccountID, "tokens", order.Tokens, "psp", paymentID)
+	slog.Info("mercadopago: pagamento confirmado, tokens creditados", "conta", order.AccountID, "tokens", order.Tokens, "payment", paymentID)
 	return nil
+}
+
+// CreateCardCheckout abre um Checkout Pro (página hospedada do MP com PIX + cartão
+// + parcelas) para o valor do plano e devolve a init_point (o app redireciona).
+func (s *BillingService) CreateCardCheckout(accountID, email string, amountBRL float64) (string, error) {
+	if !s.Configured() {
+		return "", ErrBillingUnavailable
+	}
+	if amountBRL <= 0 || email == "" {
+		return "", errors.New("valor e e-mail são obrigatórios")
+	}
+	_, per1k, err := s.support.GetPricing()
+	if err != nil {
+		return "", err
+	}
+	if per1k <= 0 {
+		return "", ErrPriceUnset
+	}
+	tokens := int64(amountBRL / per1k * 1000)
+	if tokens <= 0 {
+		return "", errors.New("valor abaixo do mínimo para 1 token")
+	}
+	order, err := s.orders.Create(accountID, amountBRL, tokens)
+	if err != nil {
+		return "", err
+	}
+	title := fmt.Sprintf("Recarga de %d tokens de IA (HotZap)", tokens)
+	pref, err := s.mp.CreatePreference(order.ReferenceID, title, amountBRL, email, s.publicURL, s.publicURL+"/webhook/mercadopago")
+	if err != nil {
+		slog.Warn("mercadopago: falha ao criar checkout", "conta", accountID, "erro", err)
+		return "", err
+	}
+	_ = s.orders.SetPsp(order.ReferenceID, pref.ID, pref.InitPoint)
+	slog.Info("mercadopago: checkout criado", "conta", accountID, "reais", amountBRL, "tokens", tokens, "pref", pref.ID)
+	return pref.InitPoint, nil
+}
+
+// Plans devolve o preço por 1.000 tokens e os pacotes (R$) para o app montar os
+// planos (o cliente vê quantos tokens cada valor rende).
+func (s *BillingService) Plans() (per1k float64, packages []float64, err error) {
+	_, per1k, err = s.support.GetPricing()
+	if err != nil {
+		return 0, nil, err
+	}
+	packages, _ = s.support.GetPackages()
+	return per1k, packages, nil
 }
 
 // OrderStatus devolve o status atual de um pedido (o app faz polling até creditar).
@@ -163,7 +211,7 @@ func (s *BillingService) CreateSubscription(accountID, email string, amountBRL f
 	if err != nil {
 		return nil, err
 	}
-	reason := fmt.Sprintf("Recarga automática de %d tokens de IA (zapdesk)", tokens)
+	reason := fmt.Sprintf("Recarga automática de %d tokens de IA (HotZap)", tokens)
 	pa, err := s.mp.CreatePreapproval(sub.ExternalRef, reason, email, s.publicURL, amountBRL, frequency, frequencyType)
 	if err != nil {
 		slog.Warn("mercadopago: falha ao criar assinatura", "conta", accountID, "erro", err)

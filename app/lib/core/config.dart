@@ -6,5 +6,5 @@ class Config {
     defaultValue: 'http://localhost:8082',
   );
 
-  static const appName = 'Zapdesk';
+  static const appName = 'HotZap';
 }

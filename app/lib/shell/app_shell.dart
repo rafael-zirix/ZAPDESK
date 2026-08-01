@@ -12,6 +12,7 @@ import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
 import '../models/app_user.dart';
+import '../plans/plans_screen.dart';
 import '../settings/settings_screen.dart';
 import '../templates/templates_screen.dart';
 import '../usage/my_usage_screen.dart';
@@ -104,6 +105,7 @@ class _AppShellState extends State<AppShell> {
       items.add(const _NavDest(Icons.chat_outlined, Icons.chat, 'WhatsApp', WhatsAppScreen()));
       items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Modelos', TemplatesScreen()));
       items.add(const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen()));
+      items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
       items.add(const _NavDest(Icons.settings_outlined, Icons.settings, 'Configurações', SettingsScreen()));
     }

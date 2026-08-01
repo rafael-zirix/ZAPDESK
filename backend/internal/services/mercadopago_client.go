@@ -137,6 +137,85 @@ func (c *MercadoPagoClient) GetStatus(paymentID string) (string, error) {
 	return out.Status, nil
 }
 
+// Preference é o recorte da criação de um checkout (Checkout Pro).
+type Preference struct {
+	ID        string
+	InitPoint string // página hospedada do MP (PIX + cartão + parcelas)
+}
+
+// CreatePreference cria um checkout hospedado (Checkout Pro): o cliente escolhe
+// PIX ou cartão na página do MP. `ref` é o nosso id do pedido (external_reference,
+// usado na conferência do webhook). Não tocamos no cartão.
+func (c *MercadoPagoClient) CreatePreference(ref, title string, amountBRL float64, payerEmail, backURL, notifURL string) (*Preference, error) {
+	body := map[string]any{
+		"items": []any{map[string]any{
+			"title": title, "quantity": 1, "unit_price": amountBRL, "currency_id": "BRL",
+		}},
+		"external_reference": ref,
+		"payer":              map[string]any{"email": payerEmail},
+	}
+	if notifURL != "" {
+		body["notification_url"] = notifURL
+	}
+	if backURL != "" {
+		body["back_urls"] = map[string]string{"success": backURL, "failure": backURL, "pending": backURL}
+		body["auto_return"] = "approved"
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequest(http.MethodPost, c.base+"/checkout/preferences", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	c.auth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mercadopago preference %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		ID        string `json:"id"`
+		InitPoint string `json:"init_point"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("mercadopago preference resposta inesperada: %w", err)
+	}
+	return &Preference{ID: out.ID, InitPoint: out.InitPoint}, nil
+}
+
+// PaymentInfo é o recorte de um pagamento (status + nosso external_reference).
+type PaymentInfo struct {
+	Status            string
+	ExternalReference string
+}
+
+// GetPayment consulta um pagamento pelo id do MP — devolve o status e o nosso
+// external_reference (usado para achar o pedido, tanto no PIX quanto no cartão).
+func (c *MercadoPagoClient) GetPayment(paymentID string) (*PaymentInfo, error) {
+	req, _ := http.NewRequest(http.MethodGet, c.base+"/v1/payments/"+paymentID, nil)
+	c.auth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mercadopago get payment %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		Status            string `json:"status"`
+		ExternalReference string `json:"external_reference"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return &PaymentInfo{Status: out.Status, ExternalReference: out.ExternalReference}, nil
+}
+
 // Preapproval é o recorte da resposta de criação/consulta de assinatura.
 type Preapproval struct {
 	ID        string

@@ -150,7 +150,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 34),
         ),
         const SizedBox(height: 12),
-        const Text('Zapdesk', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+        const Text('HotZap', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
       ],
     );
   }

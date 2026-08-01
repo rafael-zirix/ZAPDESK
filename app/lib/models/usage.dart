@@ -75,12 +75,16 @@ class CompanyUsage {
 
 /// Preços da plataforma (super-admin cobra pelo uso).
 class Pricing {
-  Pricing({required this.conversation, required this.per1kTokens});
+  Pricing({required this.conversation, required this.per1kTokens, this.packages = const []});
   final double conversation; // R$ por conversa WhatsApp
   final double per1kTokens; // R$ por 1.000 tokens de IA
+  final List<double> packages; // valores R$ dos planos de recarga
 
   factory Pricing.fromJson(Map<String, dynamic>? j) => Pricing(
         conversation: (j?['price_conversation'] as num?)?.toDouble() ?? 0,
         per1kTokens: (j?['price_1k_tokens'] as num?)?.toDouble() ?? 0,
+        packages: ((j?['packages'] as List?) ?? const [])
+            .map((e) => (e as num).toDouble())
+            .toList(),
       );
 }
