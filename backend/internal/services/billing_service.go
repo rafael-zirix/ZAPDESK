@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"zapdesk/internal/models"
 	"zapdesk/internal/repository"
 )
 
@@ -14,13 +15,14 @@ import (
 type BillingService struct {
 	mp        *MercadoPagoClient
 	orders    *repository.TokenOrderRepository
+	subs      *repository.TokenSubscriptionRepository
 	ai        *repository.AIRepository
 	support   *repository.SupportRepository // preço por 1k tokens (platform_settings)
 	publicURL string
 }
 
-func NewBillingService(mp *MercadoPagoClient, orders *repository.TokenOrderRepository, ai *repository.AIRepository, support *repository.SupportRepository, publicURL string) *BillingService {
-	return &BillingService{mp: mp, orders: orders, ai: ai, support: support, publicURL: publicURL}
+func NewBillingService(mp *MercadoPagoClient, orders *repository.TokenOrderRepository, subs *repository.TokenSubscriptionRepository, ai *repository.AIRepository, support *repository.SupportRepository, publicURL string) *BillingService {
+	return &BillingService{mp: mp, orders: orders, subs: subs, ai: ai, support: support, publicURL: publicURL}
 }
 
 // Configured indica se a cobrança está habilitada (credencial do Mercado Pago).
@@ -126,4 +128,115 @@ func (s *BillingService) OrderStatus(accountID, referenceID string) (status stri
 		return "", false, err
 	}
 	return o.Status, o.Credited, nil
+}
+
+// ---- Recarga automática (assinatura / Preapproval do Mercado Pago) ----
+
+// CreateSubscription cria a assinatura de recarga automática: o cliente autoriza o
+// cartão uma vez no MP (init_point) e o crédito entra a cada período. Converte
+// reais → tokens pelo preço da plataforma. Devolve a assinatura com o init_point.
+func (s *BillingService) CreateSubscription(accountID, email string, amountBRL float64, frequency int64, frequencyType string) (*models.TokenSubscription, error) {
+	if !s.Configured() {
+		return nil, ErrBillingUnavailable
+	}
+	if amountBRL <= 0 || email == "" {
+		return nil, errors.New("valor e e-mail são obrigatórios")
+	}
+	if frequency <= 0 {
+		frequency = 1
+	}
+	if frequencyType != "days" {
+		frequencyType = "months"
+	}
+	_, per1k, err := s.support.GetPricing()
+	if err != nil {
+		return nil, err
+	}
+	if per1k <= 0 {
+		return nil, ErrPriceUnset
+	}
+	tokens := int64(amountBRL / per1k * 1000)
+	if tokens <= 0 {
+		return nil, errors.New("valor abaixo do mínimo para 1 token")
+	}
+	sub, err := s.subs.Create(accountID, amountBRL, tokens, frequency, frequencyType)
+	if err != nil {
+		return nil, err
+	}
+	reason := fmt.Sprintf("Recarga automática de %d tokens de IA (zapdesk)", tokens)
+	pa, err := s.mp.CreatePreapproval(sub.ExternalRef, reason, email, s.publicURL, amountBRL, frequency, frequencyType)
+	if err != nil {
+		slog.Warn("mercadopago: falha ao criar assinatura", "conta", accountID, "erro", err)
+		return nil, err
+	}
+	if err := s.subs.SetPreapproval(sub.ExternalRef, pa.ID, pa.InitPoint, pa.Status); err != nil {
+		return nil, err
+	}
+	sub.PreapprovalID, sub.InitPoint, sub.Status = pa.ID, pa.InitPoint, pa.Status
+	slog.Info("mercadopago: assinatura criada", "conta", accountID, "reais", amountBRL, "tokens", tokens, "preapproval", pa.ID)
+	return sub, nil
+}
+
+// GetSubscription devolve a assinatura da conta (para a tela mostrar o estado).
+func (s *BillingService) GetSubscription(accountID string) (*models.TokenSubscription, error) {
+	return s.subs.GetByAccount(accountID)
+}
+
+// CancelSubscription desliga a recarga automática no MP e marca como cancelada.
+func (s *BillingService) CancelSubscription(accountID string) error {
+	sub, err := s.subs.GetByAccount(accountID)
+	if err != nil || sub == nil {
+		return err
+	}
+	if sub.PreapprovalID != "" && s.Configured() {
+		if err := s.mp.CancelPreapproval(sub.PreapprovalID); err != nil {
+			return err
+		}
+	}
+	return s.subs.SetStatus(sub.PreapprovalID, "cancelled")
+}
+
+// HandleSubscriptionStatus atualiza o estado da assinatura (webhook de mudança).
+func (s *BillingService) HandleSubscriptionStatus(preapprovalID string) error {
+	if preapprovalID == "" || !s.Configured() {
+		return nil
+	}
+	pa, err := s.mp.GetPreapproval(preapprovalID)
+	if err != nil {
+		return err
+	}
+	return s.subs.SetStatus(preapprovalID, pa.Status)
+}
+
+// HandleAuthorizedPayment credita os tokens de UMA cobrança recorrente da
+// assinatura, idempotente pelo id da cobrança (retry do webhook não duplica).
+func (s *BillingService) HandleAuthorizedPayment(authPaymentID string) error {
+	if authPaymentID == "" || !s.Configured() {
+		return nil
+	}
+	ap, err := s.mp.GetAuthorizedPayment(authPaymentID)
+	if err != nil {
+		return err
+	}
+	if ap.PaymentStatus != "approved" {
+		slog.Info("mercadopago: cobrança de assinatura sem pagamento", "auth_payment", authPaymentID, "status", ap.PaymentStatus)
+		return nil
+	}
+	sub, err := s.subs.GetByPreapproval(ap.PreapprovalID)
+	if err != nil || sub == nil {
+		return err
+	}
+	created, err := s.orders.CreateForSubscription(sub.AccountID, authPaymentID, sub.AmountBRL, sub.Tokens)
+	if err != nil {
+		return err
+	}
+	if !created {
+		return nil // já creditada (retry)
+	}
+	if _, err := s.ai.AddTokens(sub.AccountID, sub.Tokens, "autorecharge", "Assinatura Mercado Pago "+authPaymentID); err != nil {
+		slog.Error("mercadopago: cobrança paga mas falhou ao creditar", "conta", sub.AccountID, "tokens", sub.Tokens, "auth_payment", authPaymentID, "erro", err)
+		return err
+	}
+	slog.Info("mercadopago: assinatura cobrada, tokens creditados", "conta", sub.AccountID, "tokens", sub.Tokens, "auth_payment", authPaymentID)
+	return nil
 }

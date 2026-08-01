@@ -82,6 +82,27 @@ func (r *TokenOrderRepository) ClaimForCredit(pspRef string) (*models.TokenOrder
 	return &o, nil
 }
 
+// CreateForSubscription registra a cobrança de uma assinatura já paga, usando o id
+// da cobrança do MP como reference_id (UNIQUE) — o próprio banco garante a
+// idempotência: devolve created=true só na 1ª vez; em retry do webhook, false.
+func (r *TokenOrderRepository) CreateForSubscription(accountID, chargeID string, amountBRL float64, tokens int64) (bool, error) {
+	now := time.Now().UTC()
+	var id string
+	err := r.db.QueryRow(`
+		INSERT INTO token_orders (account_id, reference_id, psp_reference_id, amount_brl, tokens, status, credited, created_at, updated_at)
+		VALUES ($1, $2, $2, $3, $4, 'paid', true, $5, $5)
+		ON CONFLICT (reference_id) DO NOTHING
+		RETURNING id`,
+		accountID, chargeID, amountBRL, tokens, now).Scan(&id)
+	if err == sql.ErrNoRows {
+		return false, nil // já registrada (retry do webhook)
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SetStatus atualiza o status de um pedido (ex.: failed/canceled) sem creditar.
 func (r *TokenOrderRepository) SetStatus(pspRef, status string) error {
 	_, err := r.db.Exec(`UPDATE token_orders SET status=$2, updated_at=$3 WHERE psp_reference_id=$1`,

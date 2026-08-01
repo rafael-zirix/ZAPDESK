@@ -69,6 +69,53 @@ func (h *BillingHandler) OrderStatus(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "Status", gin.H{"status": status, "credited": credited})
 }
 
+// Subscribe cria a assinatura de recarga automática e devolve o init_point (o app
+// abre para o cliente autorizar o cartão uma vez no Mercado Pago).
+func (h *BillingHandler) Subscribe(c *gin.Context) {
+	var req struct {
+		AmountBRL     float64 `json:"amount_brl" binding:"required"`
+		Email         string  `json:"email" binding:"required"`
+		Frequency     int64   `json:"frequency"`
+		FrequencyType string  `json:"frequency_type"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Informe valor e e-mail", err.Error())
+		return
+	}
+	sub, err := h.billing.CreateSubscription(middleware.AccountID(c), strings.TrimSpace(req.Email), req.AmountBRL, req.Frequency, req.FrequencyType)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBillingUnavailable):
+			RespondError(c, http.StatusServiceUnavailable, ErrInternal, "Pagamento indisponível no momento", nil)
+		case errors.Is(err, services.ErrPriceUnset):
+			RespondError(c, http.StatusConflict, ErrValidation, "A plataforma ainda não definiu o preço dos tokens", nil)
+		default:
+			RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível criar a recarga automática", err.Error())
+		}
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Recarga automática criada", sub)
+}
+
+// Subscription devolve a assinatura atual da empresa (ou vazio).
+func (h *BillingHandler) Subscription(c *gin.Context) {
+	sub, err := h.billing.GetSubscription(middleware.AccountID(c))
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao consultar a assinatura", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Assinatura", sub)
+}
+
+// Unsubscribe cancela a recarga automática.
+func (h *BillingHandler) Unsubscribe(c *gin.Context) {
+	if err := h.billing.CancelSubscription(middleware.AccountID(c)); err != nil {
+		RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível cancelar", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Recarga automática cancelada", nil)
+}
+
 // Webhook recebe as notificações do Mercado Pago (público). NÃO confia no corpo:
 // extrai só o id do pagamento e re-consulta o status autenticado antes de creditar.
 // O MP manda o id na query (?type=payment&data.id=... ou ?topic=payment&id=...) e/ou
@@ -92,16 +139,25 @@ func (h *BillingHandler) Webhook(c *gin.Context) {
 			paymentID = idToStr(p.Data.ID)
 		}
 	}
-	// só nos interessam eventos de pagamento
-	if topic != "" && topic != "payment" {
-		c.Status(http.StatusOK)
-		return
-	}
 	if paymentID == "" {
 		c.Status(http.StatusOK)
 		return
 	}
-	if err := h.billing.HandleWebhook(paymentID); err != nil {
+	// Roteia por tópico: pagamento avulso (PIX), cobrança recorrente da assinatura,
+	// ou mudança de status da assinatura. Topic vazio = tratamos como pagamento.
+	var err error
+	switch topic {
+	case "", "payment":
+		err = h.billing.HandleWebhook(paymentID)
+	case "subscription_authorized_payment":
+		err = h.billing.HandleAuthorizedPayment(paymentID)
+	case "subscription_preapproval", "preapproval":
+		err = h.billing.HandleSubscriptionStatus(paymentID)
+	default:
+		c.Status(http.StatusOK) // tópico que não tratamos
+		return
+	}
+	if err != nil {
 		c.Status(http.StatusInternalServerError) // transitório: MP reenvia
 		return
 	}

@@ -137,6 +137,134 @@ func (c *MercadoPagoClient) GetStatus(paymentID string) (string, error) {
 	return out.Status, nil
 }
 
+// Preapproval é o recorte da resposta de criação/consulta de assinatura.
+type Preapproval struct {
+	ID        string
+	Status    string
+	InitPoint string // URL do MP onde o cliente autoriza e salva o cartão
+}
+
+// CreatePreapproval cria uma assinatura SEM plano (recarga automática). Sem
+// card_token_id, o MP devolve `init_point` — a página onde o cliente autoriza o
+// cartão (que fica salvo lá; nosso app não toca no cartão). Cobra `amountBRL` a
+// cada `frequency` × `frequencyType` (ex.: 1 months).
+func (c *MercadoPagoClient) CreatePreapproval(externalRef, reason, payerEmail, backURL string, amountBRL float64, frequency int64, frequencyType string) (*Preapproval, error) {
+	body := map[string]any{
+		"reason":             reason,
+		"external_reference": externalRef,
+		"payer_email":        payerEmail,
+		"back_url":           backURL,
+		"status":             "pending",
+		"auto_recurring": map[string]any{
+			"frequency":          frequency,
+			"frequency_type":     frequencyType,
+			"transaction_amount": amountBRL,
+			"currency_id":        "BRL",
+		},
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequest(http.MethodPost, c.base+"/preapproval", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	c.auth(req)
+	req.Header.Set("X-Idempotency-Key", externalRef)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mercadopago preapproval %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		InitPoint string `json:"init_point"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("mercadopago preapproval resposta inesperada: %w", err)
+	}
+	return &Preapproval{ID: out.ID, Status: out.Status, InitPoint: out.InitPoint}, nil
+}
+
+// GetPreapproval consulta o status de uma assinatura.
+func (c *MercadoPagoClient) GetPreapproval(preapprovalID string) (*Preapproval, error) {
+	req, _ := http.NewRequest(http.MethodGet, c.base+"/preapproval/"+preapprovalID, nil)
+	c.auth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mercadopago get preapproval %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		InitPoint string `json:"init_point"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return &Preapproval{ID: out.ID, Status: out.Status, InitPoint: out.InitPoint}, nil
+}
+
+// CancelPreapproval cancela a assinatura (o cliente desliga a recarga automática).
+func (c *MercadoPagoClient) CancelPreapproval(preapprovalID string) error {
+	raw, _ := json.Marshal(map[string]any{"status": "cancelled"})
+	req, _ := http.NewRequest(http.MethodPut, c.base+"/preapproval/"+preapprovalID, bytes.NewReader(raw))
+	c.auth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("mercadopago cancel preapproval %d: %s", resp.StatusCode, string(data))
+	}
+	return nil
+}
+
+// AuthorizedPayment é o recorte de uma cobrança gerada por uma assinatura.
+type AuthorizedPayment struct {
+	Status        string // processed | recycling | ...
+	PreapprovalID string
+	PaymentStatus string // approved quando a parcela foi paga
+}
+
+// GetAuthorizedPayment consulta uma cobrança recorrente da assinatura (para
+// resolver a que assinatura pertence e se foi paga). ⚠️ validar o shape quando o
+// MP estiver ligado (topic subscription_authorized_payment).
+func (c *MercadoPagoClient) GetAuthorizedPayment(id string) (*AuthorizedPayment, error) {
+	req, _ := http.NewRequest(http.MethodGet, c.base+"/authorized_payments/"+id, nil)
+	c.auth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mercadopago authorized_payment %d: %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		Status        string `json:"status"`
+		PreapprovalID string `json:"preapproval_id"`
+		Payment       struct {
+			Status string `json:"status"`
+		} `json:"payment"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return &AuthorizedPayment{Status: out.Status, PreapprovalID: out.PreapprovalID, PaymentStatus: out.Payment.Status}, nil
+}
+
 func (c *MercadoPagoClient) auth(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")

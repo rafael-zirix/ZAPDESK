@@ -77,8 +77,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 	// Cobrança de tokens via Mercado Pago (PIX QR). Dormente sem credencial.
 	tokenOrderRepo := repository.NewTokenOrderRepository(db)
+	tokenSubRepo := repository.NewTokenSubscriptionRepository(db)
 	mpClient := services.NewMercadoPagoClient(cfg.MercadoPagoBaseURL, cfg.MercadoPagoAccessToken)
-	billingSvc := services.NewBillingService(mpClient, tokenOrderRepo, aiRepo, supportRepo, cfg.PublicURL)
+	billingSvc := services.NewBillingService(mpClient, tokenOrderRepo, tokenSubRepo, aiRepo, supportRepo, cfg.PublicURL)
 	if cfg.MercadoPagoConfigured() {
 		log.Println("[info] Compra de tokens via Mercado Pago (PIX) ativa")
 	}
@@ -224,6 +225,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.GET("/ledger", aiH.Ledger)
 			ai.POST("/recharge/checkout", billingH.Checkout)       // gera o PIX (Mercado Pago)
 			ai.GET("/recharge/order/:ref", billingH.OrderStatus)   // polling do pedido até creditar
+			ai.POST("/subscription", billingH.Subscribe)           // recarga automática (assinatura MP)
+			ai.GET("/subscription", billingH.Subscription)         // estado da assinatura
+			ai.DELETE("/subscription", billingH.Unsubscribe)       // cancela a recarga automática
 		}
 
 		// Administração da PLATAFORMA (super-admin): cria e enxerga empresas.
