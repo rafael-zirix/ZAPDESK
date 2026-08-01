@@ -13,14 +13,15 @@ func NewAccountRepository(db *sql.DB) *AccountRepository { return &AccountReposi
 
 // Colunas da empresa (na ordem usada por scanAccount).
 const accountCols = `id, name, slug, status, person_type, document, trade_name,
-	email, phone, zip_code, street, number, complement, district, city, state, created_at`
+	email, phone, zip_code, street, number, complement, district, city, state, created_at,
+	otp_whatsapp_enabled, otp_email_enabled`
 
 func scanAccount(row interface{ Scan(...any) error }) (*models.Account, error) {
 	var a models.Account
 	err := row.Scan(&a.ID, &a.Name, &a.Slug, &a.Status,
 		&a.PersonType, &a.Document, &a.TradeName, &a.Email, &a.Phone,
 		&a.ZipCode, &a.Street, &a.Number, &a.Complement, &a.District, &a.City, &a.State,
-		&a.CreatedAt)
+		&a.CreatedAt, &a.OTPWhatsAppEnabled, &a.OTPEmailEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +61,7 @@ func (r *AccountRepository) List() ([]models.AccountResponse, error) {
 	rows, err := r.db.Query(`
 		SELECT a.id, a.name, a.slug, a.status, a.person_type, a.document, a.trade_name,
 		       a.email, a.phone, a.zip_code, a.street, a.number, a.complement, a.district,
-		       a.city, a.state, a.created_at,
+		       a.city, a.state, a.created_at, a.otp_whatsapp_enabled, a.otp_email_enabled,
 		       (SELECT COUNT(*) FROM whatsapp_accounts w WHERE w.account_id = a.id)
 		FROM accounts a WHERE a.deleted_at IS NULL ORDER BY a.created_at DESC`)
 	if err != nil {
@@ -73,7 +74,7 @@ func (r *AccountRepository) List() ([]models.AccountResponse, error) {
 		if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Status,
 			&a.PersonType, &a.Document, &a.TradeName, &a.Email, &a.Phone,
 			&a.ZipCode, &a.Street, &a.Number, &a.Complement, &a.District, &a.City, &a.State,
-			&a.CreatedAt, &a.NumbersCount); err != nil {
+			&a.CreatedAt, &a.OTPWhatsAppEnabled, &a.OTPEmailEnabled, &a.NumbersCount); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -88,9 +89,10 @@ func (r *AccountRepository) Exists(accountID string) (bool, error) {
 	return ok, err
 }
 
-// Update edita situação e a ficha da empresa. COALESCE mantém o valor atual
-// quando o campo vem nulo (não informado). Devolve nil se não existir.
-func (r *AccountRepository) Update(id string, name, status *string, d models.AccountDetails) (*models.Account, error) {
+// Update edita situação e a ficha da empresa (e as chaves de OTP). COALESCE
+// mantém o valor atual quando o campo vem nulo (não informado). Devolve nil se
+// não existir.
+func (r *AccountRepository) Update(id string, name, status *string, d models.AccountDetails, otpWhats, otpEmail *bool) (*models.Account, error) {
 	a, err := scanAccount(r.db.QueryRow(`
 		UPDATE accounts SET
 		  name        = COALESCE($2, name),
@@ -107,16 +109,37 @@ func (r *AccountRepository) Update(id string, name, status *string, d models.Acc
 		  district    = COALESCE($13, district),
 		  city        = COALESCE($14, city),
 		  state       = COALESCE($15, state),
+		  otp_whatsapp_enabled = COALESCE($17, otp_whatsapp_enabled),
+		  otp_email_enabled    = COALESCE($18, otp_email_enabled),
 		  updated_at  = $16
 		WHERE id=$1 AND deleted_at IS NULL
 		RETURNING `+accountCols,
 		id, name, status, d.PersonType, d.Document, d.TradeName, d.Email, d.Phone,
 		d.ZipCode, d.Street, d.Number, d.Complement, d.District, d.City, d.State,
-		time.Now().UTC()))
+		time.Now().UTC(), otpWhats, otpEmail))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return a, err
+}
+
+// GetOTPChannels devolve os canais de OTP permitidos pela empresa (WhatsApp,
+// e-mail). Se a conta não existir, não trava o login (devolve ambos ligados).
+func (r *AccountRepository) GetOTPChannels(accountID string) (bool, bool, error) {
+	var whats, email bool
+	err := r.db.QueryRow(`SELECT otp_whatsapp_enabled, otp_email_enabled
+		FROM accounts WHERE id=$1 AND deleted_at IS NULL`, accountID).Scan(&whats, &email)
+	if err == sql.ErrNoRows {
+		return true, true, nil
+	}
+	return whats, email, err
+}
+
+// SetOTPChannels liga/desliga os canais de OTP da empresa.
+func (r *AccountRepository) SetOTPChannels(accountID string, whats, email bool) error {
+	_, err := r.db.Exec(`UPDATE accounts SET otp_whatsapp_enabled=$2, otp_email_enabled=$3, updated_at=$4
+		WHERE id=$1 AND deleted_at IS NULL`, accountID, whats, email, time.Now().UTC())
+	return err
 }
 
 // SoftDelete marca a empresa como excluída e desativa o acesso dos seus

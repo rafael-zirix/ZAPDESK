@@ -13,12 +13,26 @@ echo "==> build backend (linux/arm64)"
 ( cd "$ROOT/backend" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o "$ROOT/deploy/zapdesk-api" ./cmd/api )
 
 echo "==> build web (Flutter)"
-( cd "$ROOT/app" && flutter build web --release --dart-define=API_BASE_URL="$URL" >/dev/null )
+( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --dart-define=API_BASE_URL="$URL" >/dev/null )
 
 echo "==> empacota"
 rm -rf "$ROOT/deploy/migrations" "$ROOT/deploy/web"
 cp -r "$ROOT/backend/migrations" "$ROOT/deploy/migrations"
 cp -r "$ROOT/app/build/web" "$ROOT/deploy/web"
+# SW de "auto-destruição": o build usa --pwa-strategy=none (sem SW novo), mas o SW
+# ANTIGO já registrado nos navegadores continua servindo a versão velha em cache.
+# Este arquivo substitui o flutter_service_worker.js antigo: ao atualizar, ele
+# limpa todos os caches, se desregistra e recarrega a aba — matando o cache.
+cat > "$ROOT/deploy/web/flutter_service_worker.js" <<'SW'
+self.addEventListener('install', function () { self.skipWaiting(); });
+self.addEventListener('activate', function (e) {
+  e.waitUntil((async function () {
+    try { for (const k of await caches.keys()) await caches.delete(k); } catch (_) {}
+    try { await self.registration.unregister(); } catch (_) {}
+    try { for (const c of await self.clients.matchAll()) c.navigate(c.url); } catch (_) {}
+  })());
+});
+SW
 tar czf /tmp/zapdesk-deploy.tgz -C "$ROOT/deploy" Dockerfile docker-compose.prod.yml .env zapdesk-api migrations web 2>/dev/null
 
 echo "==> envia e sobe (build da imagem + force-recreate)"

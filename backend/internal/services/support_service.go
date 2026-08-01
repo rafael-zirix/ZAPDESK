@@ -4,11 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log/slog"
 	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 
@@ -77,11 +80,20 @@ type SupportService struct {
 	apiBase  string
 	fallback *MetaClient
 	mediaDir string
+	// Atendente IA (opcional). Nil = desligado.
+	ai     *AIClient
+	aiRepo *repository.AIRepository
 }
 
 func NewSupportService(repo *repository.SupportRepository, wa *repository.WhatsAppRepository,
 	cipher *crypto.Cipher, apiBase, mediaDir string, fallback *MetaClient) *SupportService {
 	return &SupportService{repo: repo, wa: wa, cipher: cipher, apiBase: apiBase, mediaDir: mediaDir, fallback: fallback}
+}
+
+// WithAI liga o Atendente IA (motor + repositório de IA).
+func (s *SupportService) WithAI(ai *AIClient, aiRepo *repository.AIRepository) *SupportService {
+	s.ai, s.aiRepo = ai, aiRepo
+	return s
 }
 
 // clientFor devolve o cliente Meta da conta (token do número conectado) e o
@@ -110,7 +122,8 @@ func (s *SupportService) clientFor(accountID string) (*MetaClient, string, error
 	return nil, "", nil
 }
 
-// ListTemplates devolve os templates aprovados do número da conta.
+// ListTemplates devolve os templates do número da conta, marcando em cada um se
+// está habilitado na barra de mensagens prontas (preferência da empresa).
 func (s *SupportService) ListTemplates(accountID string) ([]TemplateInfo, error) {
 	client, wabaID, err := s.clientFor(accountID)
 	if err != nil {
@@ -119,11 +132,178 @@ func (s *SupportService) ListTemplates(accountID string) ([]TemplateInfo, error)
 	if client == nil || wabaID == "" {
 		return []TemplateInfo{}, nil
 	}
-	return client.ListTemplates(wabaID)
+	tpls, err := client.ListTemplates(wabaID)
+	if err != nil {
+		return nil, err
+	}
+	disabled, err := s.repo.DisabledTemplateNames(accountID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tpls {
+		tpls[i].Enabled = !disabled[tpls[i].Name]
+	}
+	return tpls, nil
 }
 
-// SendTemplate envia um template na conversa e grava a saída.
-func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang string) (*models.SupportMessage, error) {
+// SetTemplateEnabled liga/desliga um modelo na barra de mensagens prontas.
+func (s *SupportService) SetTemplateEnabled(accountID, name string, enabled bool) error {
+	return s.repo.SetTemplateEnabled(accountID, name, enabled)
+}
+
+// CreateTemplate cria um modelo na conta (vai para aprovação da Meta). Devolve o
+// status inicial (normalmente PENDING).
+func (s *SupportService) CreateTemplate(accountID, name, language, category, body string) (string, error) {
+	client, wabaID, err := s.clientFor(accountID)
+	if err != nil {
+		return "", err
+	}
+	if client == nil || wabaID == "" {
+		return "", errors.New("conecte o número do WhatsApp antes de criar modelos")
+	}
+	if language == "" {
+		language = "pt_BR"
+	}
+	// Template de AUTENTICAÇÃO (OTP de login): corpo padronizado pela Meta.
+	if strings.EqualFold(category, "AUTHENTICATION") {
+		return client.CreateAuthTemplate(wabaID, name, language, 10)
+	}
+	if category == "" {
+		category = "UTILITY"
+	}
+	return client.CreateTemplate(wabaID, name, language, category, body)
+}
+
+// --- Consumo (super-admin) ---
+
+// NumberUsage é o consumo de um número, com o custo da Meta quando disponível.
+type NumberUsage struct {
+	DisplayPhone  string  `json:"display_phone"`
+	WabaID        string  `json:"waba_id"`
+	MetaConvs     int     `json:"meta_conversations"`
+	MetaCost      float64 `json:"meta_cost"`
+	CostAvailable bool    `json:"cost_available"`
+}
+
+// CompanyUsage é o consumo de uma empresa no período.
+type CompanyUsage struct {
+	AccountID     string        `json:"account_id"`
+	Name          string        `json:"name"`
+	MessagesOut   int           `json:"messages_out"`
+	MessagesIn    int           `json:"messages_in"`
+	Templates     int           `json:"templates"`
+	Media         int           `json:"media"`
+	Conversations int           `json:"conversations"`
+	AITokens      int64         `json:"ai_tokens"`      // tokens de IA consumidos no período
+	ValueWhatsApp float64       `json:"value_whatsapp"` // R$ = conversas × preço/conversa
+	ValueAI       float64       `json:"value_ai"`       // R$ = tokens/1000 × preço/1k
+	ValueTotal    float64       `json:"value_total"`    // R$ = WhatsApp + IA
+	Numbers       []NumberUsage `json:"numbers"`
+}
+
+// Pricing são os preços da plataforma (super-admin cobra pelo uso).
+type Pricing struct {
+	Conversation float64 `json:"price_conversation"` // R$ por conversa WhatsApp
+	Per1kTokens  float64 `json:"price_1k_tokens"`    // R$ por 1.000 tokens de IA
+}
+
+// applyPricing preenche os valores em R$ de uma empresa a partir dos preços.
+func applyPricing(cu *CompanyUsage, p Pricing) {
+	cu.ValueWhatsApp = float64(cu.Conversations) * p.Conversation
+	cu.ValueAI = float64(cu.AITokens) / 1000.0 * p.Per1kTokens
+	cu.ValueTotal = cu.ValueWhatsApp + cu.ValueAI
+}
+
+// AdminUsage monta o consumo por empresa (do banco) e o custo da Meta por número
+// conectado (best-effort). Alimenta o painel do super-admin.
+func (s *SupportService) AdminUsage(from, to time.Time) ([]CompanyUsage, error) {
+	rows, err := s.repo.UsageByAccount(from, to)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CompanyUsage, 0, len(rows))
+	for _, r := range rows {
+		cu := CompanyUsage{
+			AccountID: r.AccountID, Name: r.AccountName,
+			MessagesOut: r.MessagesOut, MessagesIn: r.MessagesIn,
+			Templates: r.Templates, Media: r.Media, Conversations: r.Conversations,
+			Numbers: []NumberUsage{},
+		}
+		if s.wa != nil && s.cipher != nil {
+			nums, _ := s.wa.ListByAccount(r.AccountID)
+			for _, w := range nums {
+				phone := ""
+				if w.DisplayPhone != nil {
+					phone = *w.DisplayPhone
+				}
+				nu := NumberUsage{DisplayPhone: phone, WabaID: w.WabaID}
+				if w.Status == "connected" {
+					if token, e := s.cipher.Decrypt(w.AccessTokenEnc); e == nil {
+						client := NewMetaClient(s.apiBase, token, w.PhoneNumberID)
+						if convs, cost, e2 := client.ConversationAnalytics(w.WabaID, from.Unix(), to.Unix()); e2 == nil {
+							nu.MetaConvs = convs
+							nu.MetaCost = cost
+							nu.CostAvailable = true
+						}
+					}
+				}
+				cu.Numbers = append(cu.Numbers, nu)
+			}
+		}
+		out = append(out, cu)
+	}
+	// Preços da plataforma + tokens de IA consumidos → valores em R$ por empresa.
+	p, _ := s.Pricing()
+	var tok map[string]int64
+	if s.aiRepo != nil {
+		tok, _ = s.aiRepo.TokensConsumedByAccount(from, to)
+	}
+	for i := range out {
+		out[i].AITokens = tok[out[i].AccountID]
+		applyPricing(&out[i], p)
+	}
+	return out, nil
+}
+
+// Pricing lê os preços da plataforma.
+func (s *SupportService) Pricing() (Pricing, error) {
+	conv, per1k, err := s.repo.GetPricing()
+	return Pricing{Conversation: conv, Per1kTokens: per1k}, err
+}
+
+// SetPricing grava os preços da plataforma.
+func (s *SupportService) SetPricing(p Pricing) error {
+	return s.repo.SetPricing(p.Conversation, p.Per1kTokens)
+}
+
+// MyUsage devolve o consumo + valores da própria empresa (para o admin dela).
+func (s *SupportService) MyUsage(accountID string, from, to time.Time) (*CompanyUsage, error) {
+	rows, err := s.repo.UsageByAccount(from, to)
+	if err != nil {
+		return nil, err
+	}
+	cu := CompanyUsage{AccountID: accountID, Numbers: []NumberUsage{}}
+	for _, r := range rows {
+		if r.AccountID == accountID {
+			cu.Name = r.AccountName
+			cu.MessagesOut, cu.MessagesIn = r.MessagesOut, r.MessagesIn
+			cu.Templates, cu.Media, cu.Conversations = r.Templates, r.Media, r.Conversations
+			break
+		}
+	}
+	if s.aiRepo != nil {
+		if t, e := s.aiRepo.TokensConsumedByAccount(from, to); e == nil {
+			cu.AITokens = t[accountID]
+		}
+	}
+	p, _ := s.Pricing()
+	applyPricing(&cu, p)
+	return &cu, nil
+}
+
+// SendTemplate envia um template na conversa e grava a saída. `body` é o texto
+// do modelo (para a bolha mostrar a mensagem real, não o nome técnico).
+func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang, body string) (*models.SupportMessage, error) {
 	ticket, err := s.repo.GetTicket(accountID, ticketID)
 	if err != nil {
 		return nil, err
@@ -139,7 +319,10 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang st
 	if err != nil {
 		return nil, err
 	}
-	content := "[modelo] " + name
+	content := body
+	if content == "" {
+		content = name
+	}
 	sender := userID
 	msg := &models.SupportMessage{
 		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
@@ -148,6 +331,7 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang st
 	if client != nil {
 		wamid, sendErr := client.SendTemplate(phone, name, lang)
 		if sendErr != nil {
+			slog.Error("envio à Meta falhou", "op", "template", "conta", accountID, "ticket", ticketID, "template", name, "erro", sendErr)
 			msg.Status = "failed"
 		} else {
 			msg.Status = "sent"
@@ -165,15 +349,16 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang st
 }
 
 // ProcessInbound registra uma mensagem recebida: acha/cria o contato e a
-// conversa aberta, e grava a mensagem (idempotente por wamid).
-func (s *SupportService) ProcessInbound(accountID, phone string, name *string, wamid, text string) error {
+// conversa aberta, e grava a mensagem (idempotente por wamid). Devolve o id da
+// conversa (para o webhook disparar o Atendente IA).
+func (s *SupportService) ProcessInbound(accountID, phone string, name *string, wamid, text string) (string, error) {
 	contact, err := s.repo.FindOrCreateContact(accountID, phone, name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, contact.ID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	content := text
 	extID := wamid
@@ -186,7 +371,492 @@ func (s *SupportService) ProcessInbound(accountID, phone string, name *string, w
 		Status:     "received",
 		ExternalID: &extID,
 	})
-	return err
+	return ticket.ID, err
+}
+
+// TriggerAIReply gera e envia uma resposta automática do Atendente IA para a
+// última mensagem da conversa, se: a IA está ligada na empresa, há saldo de
+// tokens, e a conversa não está pausada (humano assumiu). Best-effort (roda em
+// goroutine no webhook); desconta os tokens usados do saldo.
+func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
+	if s.ai == nil || !s.ai.Configured() || s.aiRepo == nil {
+		return
+	}
+	cfg, err := s.aiRepo.GetConfig(accountID)
+	if err != nil || cfg == nil || !cfg.Enabled || cfg.TokenBalance <= 0 {
+		return
+	}
+	if paused, err := s.aiRepo.TicketAIPaused(ticketID); err != nil || paused {
+		return
+	}
+	system := s.buildAISystemPrompt(accountID, cfg.Instructions)
+	msgs, err := s.repo.ListMessages(accountID, ticketID)
+	if err != nil {
+		return
+	}
+	chat := []AIChatMessage{{Role: "system", Content: system}}
+	start := 0
+	if len(msgs) > 12 {
+		start = len(msgs) - 12
+	}
+	for _, m := range msgs[start:] {
+		if m.Content == nil || *m.Content == "" {
+			continue
+		}
+		role := "user"
+		if m.Direction == models.DirectionOut {
+			role = "assistant"
+		}
+		chat = append(chat, AIChatMessage{Role: role, Content: *m.Content})
+	}
+	// Só responde se a última mensagem for do cliente.
+	if len(chat) < 2 || chat[len(chat)-1].Role != "user" {
+		return
+	}
+	reply, tokens, err := s.ai.Complete(chat, 500)
+	if err != nil || strings.TrimSpace(reply) == "" {
+		slog.Error("Atendente IA falhou", "erro", err, "ticket", ticketID)
+		return
+	}
+	if _, err := s.sendAIReply(accountID, ticketID, reply); err != nil {
+		slog.Error("Falha ao enviar resposta da IA", "erro", err, "ticket", ticketID)
+		return
+	}
+	newBal, _ := s.aiRepo.ConsumeTokens(accountID, int64(tokens), ticketID)
+	if cfg.AutoEnabled && newBal <= cfg.AutoThreshold {
+		s.maybeAutoRecharge(accountID, cfg)
+	}
+}
+
+// buildAISystemPrompt monta as instruções do sistema: guardrails + instruções da
+// empresa + base de conhecimento (com orçamento de caracteres).
+func (s *SupportService) buildAISystemPrompt(accountID, instructions string) string {
+	var b strings.Builder
+	b.WriteString("Você é o atendente virtual de uma empresa, atendendo clientes pelo WhatsApp. ")
+	b.WriteString("Responda em português do Brasil, de forma curta, cordial e objetiva. ")
+	b.WriteString("Use APENAS as informações fornecidas abaixo. Se não souber, se o assunto fugir do escopo, ")
+	b.WriteString("ou se o cliente pedir para falar com uma pessoa, diga que vai chamar um atendente humano — nunca invente. ")
+	b.WriteString("Não prometa nada que não esteja nas informações.\n\n")
+	if strings.TrimSpace(instructions) != "" {
+		b.WriteString("# Instruções da empresa\n" + instructions + "\n\n")
+	}
+	if items, err := s.aiRepo.ListContext(accountID); err == nil && len(items) > 0 {
+		b.WriteString("# Base de conhecimento\n")
+		const budget = 12000
+		for _, it := range items {
+			chunk := "## " + it.Title + "\n" + it.Content + "\n\n"
+			if b.Len()+len(chunk) > budget {
+				break
+			}
+			b.WriteString(chunk)
+		}
+	}
+	return b.String()
+}
+
+// sendAIReply envia uma resposta gerada pela IA (sem atendente humano) e grava a
+// saída na conversa.
+func (s *SupportService) sendAIReply(accountID, ticketID, text string) (*models.SupportMessage, error) {
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	content := text
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
+		Type: "text", Content: &content, Status: "pending",
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		wamid, sendErr := client.SendText(phone, text)
+		applySendResult(msg, wamid, sendErr)
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+	return s.repo.InsertMessage(msg)
+}
+
+// maybeAutoRecharge tenta a recompra automática quando o saldo cai abaixo do
+// limite. DORMENTE: sem gateway de pagamento, apenas o gancho — NÃO credita sem
+// cobrança. Quando houver gateway: cobrar cfg.AutoAmount via ai_payment_ref e,
+// em caso de sucesso, chamar s.aiRepo.AddTokens(accountID, cfg.AutoAmount, "autorecharge", ...).
+func (s *SupportService) maybeAutoRecharge(accountID string, cfg *models.AIConfig) {
+	if !cfg.AutoEnabled || cfg.AutoAmount <= 0 || !cfg.HasPayment {
+		return
+	}
+	slog.Info("recompra automática pendente (gateway não configurado)", "conta", accountID, "tokens", cfg.AutoAmount)
+}
+
+// AIRepo expõe o repositório de IA para os handlers (config/contexto/extrato).
+func (s *SupportService) AIRepo() *repository.AIRepository { return s.aiRepo }
+
+// ProcessStatus aplica um status de entrega recebido no webhook da Meta
+// (sent/delivered/read/failed) à mensagem de saída identificada pelo wamid.
+func (s *SupportService) ProcessStatus(accountID, externalID, status string) error {
+	if externalID == "" || status == "" {
+		return nil
+	}
+	return s.repo.UpdateMessageStatusByExternalID(accountID, externalID, status)
+}
+
+// applySendResult marca a mensagem conforme o resultado do envio pela Meta.
+func applySendResult(msg *models.SupportMessage, wamid string, sendErr error) {
+	if sendErr != nil {
+		slog.Error("envio à Meta falhou", "conta", msg.AccountID, "ticket", msg.TicketID, "tipo", msg.Type, "erro", sendErr)
+		msg.Status = "failed"
+		return
+	}
+	msg.Status = "sent"
+	if wamid != "" {
+		msg.ExternalID = &wamid
+	}
+}
+
+// SendLocation envia uma localização (pino) na conversa e grava a saída.
+func (s *SupportService) SendLocation(accountID, ticketID, userID string, lat, lng float64, name, address string) (*models.SupportMessage, error) {
+	ticket, err := s.repo.GetTicket(accountID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if ticket == nil {
+		return nil, ErrTicketNotFound
+	}
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	// Guarda o link do Google Maps no conteúdo para a bolha abrir o mapa.
+	mapURL := fmt.Sprintf("https://www.google.com/maps?q=%.6f,%.6f", lat, lng)
+	label := "Localização"
+	if name != "" {
+		label = name
+	}
+	content := "📍 " + label + "\n" + mapURL
+	sender := userID
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
+		Type: "text", Content: &content, Status: "pending", SenderID: &sender,
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		wamid, sendErr := client.SendLocation(phone, lat, lng, name, address)
+		applySendResult(msg, wamid, sendErr)
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+	return s.repo.InsertMessage(msg)
+}
+
+// SendContact envia um cartão de contato (nome + telefone) na conversa.
+func (s *SupportService) SendContact(accountID, ticketID, userID, name, phone string) (*models.SupportMessage, error) {
+	ticket, err := s.repo.GetTicket(accountID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if ticket == nil {
+		return nil, ErrTicketNotFound
+	}
+	toPhone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	content := "👤 " + name
+	if phone != "" {
+		content += " (" + phone + ")"
+	}
+	sender := userID
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
+		Type: "text", Content: &content, Status: "pending", SenderID: &sender,
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		wamid, sendErr := client.SendContact(toPhone, name, normalizePhone(phone))
+		applySendResult(msg, wamid, sendErr)
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+	return s.repo.InsertMessage(msg)
+}
+
+// SendButtons envia botões de resposta rápida e grava a saída. Para a bolha do
+// nosso painel mostrar o que foi enviado, grava como texto (o CHECK só aceita
+// text/mídia/template) com o corpo + as opções listadas.
+func (s *SupportService) SendButtons(accountID, ticketID, userID, body string, buttons []InteractiveButton) (*models.SupportMessage, error) {
+	ticket, err := s.repo.GetTicket(accountID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if ticket == nil {
+		return nil, ErrTicketNotFound
+	}
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	content := body
+	for i := range buttons {
+		if buttons[i].ID == "" {
+			buttons[i].ID = fmt.Sprintf("btn_%d", i+1)
+		}
+		content += "\n▸ " + buttons[i].Title
+	}
+	sender := userID
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
+		Type: "text", Content: &content, Status: "pending", SenderID: &sender,
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		wamid, sendErr := client.SendButtons(phone, body, buttons)
+		applySendResult(msg, wamid, sendErr)
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+	return s.repo.InsertMessage(msg)
+}
+
+// SendList envia um menu de lista e grava a saída (como texto, com as opções).
+func (s *SupportService) SendList(accountID, ticketID, userID, body, buttonLabel, sectionTitle string, rows []ListRow) (*models.SupportMessage, error) {
+	ticket, err := s.repo.GetTicket(accountID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if ticket == nil {
+		return nil, ErrTicketNotFound
+	}
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	content := body
+	for i := range rows {
+		if rows[i].ID == "" {
+			rows[i].ID = fmt.Sprintf("row_%d", i+1)
+		}
+		content += "\n▸ " + rows[i].Title
+	}
+	sender := userID
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
+		Type: "text", Content: &content, Status: "pending", SenderID: &sender,
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		wamid, sendErr := client.SendList(phone, body, buttonLabel, sectionTitle, rows)
+		applySendResult(msg, wamid, sendErr)
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+	return s.repo.InsertMessage(msg)
+}
+
+// MarkRead marca a última mensagem recebida da conversa como lida (✓✓ azul) e,
+// opcionalmente, mostra "digitando…". Best-effort: no-op silencioso se não houver
+// mensagem recebida ou envio configurado.
+func (s *SupportService) MarkRead(accountID, ticketID string, typing bool) error {
+	// O atendente abriu/está lendo a conversa → zera o badge de não lidas.
+	_ = s.repo.ResetUnread(accountID, ticketID)
+	extID, err := s.repo.LastInboundExternalID(accountID, ticketID)
+	if err != nil || extID == "" {
+		return err
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil || client == nil {
+		return err
+	}
+	return client.MarkRead(extID, typing)
+}
+
+// RetryMessage re-tenta o envio de uma mensagem de saída que havia falhado.
+func (s *SupportService) RetryMessage(accountID, ticketID, msgID string) (*models.SupportMessage, error) {
+	msg, err := s.repo.GetMessage(accountID, msgID)
+	if err != nil {
+		return nil, err
+	}
+	if msg == nil || msg.TicketID != ticketID {
+		return nil, ErrTicketNotFound
+	}
+	if msg.Direction != models.DirectionOut {
+		return msg, nil
+	}
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return msg, nil
+	}
+
+	var wamid string
+	var sendErr error
+	switch msg.Type {
+	case "image", "document", "audio", "video":
+		if msg.MediaURL == nil {
+			return msg, nil
+		}
+		data, rErr := os.ReadFile(s.MediaPath(filepath.Base(*msg.MediaURL)))
+		if rErr != nil {
+			return msg, rErr
+		}
+		fn, mt, caption := "", "application/octet-stream", ""
+		if msg.FileName != nil {
+			fn = *msg.FileName
+		}
+		if msg.MimeType != nil {
+			mt = *msg.MimeType
+		}
+		if msg.Content != nil {
+			caption = *msg.Content
+		}
+		mediaID, upErr := client.UploadMedia(data, fn, mt)
+		if upErr != nil {
+			sendErr = upErr
+		} else {
+			wamid, sendErr = client.SendMedia(phone, msg.Type, mediaID, fn, caption)
+		}
+	default: // text
+		body := ""
+		if msg.Content != nil {
+			body = *msg.Content
+		}
+		wamid, sendErr = client.SendText(phone, body)
+	}
+
+	newStatus := "sent"
+	if sendErr != nil {
+		slog.Error("reenvio à Meta falhou", "op", "retry", "conta", accountID, "ticket", ticketID, "tipo", msg.Type, "erro", sendErr)
+		newStatus = "failed"
+	}
+	var extID *string
+	if wamid != "" {
+		extID = &wamid
+	}
+	if e := s.repo.SetMessageStatusAndExtID(msgID, newStatus, extID); e != nil {
+		return nil, e
+	}
+	msg.Status = newStatus
+	if extID != nil {
+		msg.ExternalID = extID
+	}
+	return msg, sendErr
+}
+
+// ForwardMessage encaminha uma mensagem existente para a conversa de outro
+// contato: reenvia o conteúdo (texto/mídia/áudio/localização) e grava uma nova
+// mensagem de saída na conversa de destino.
+func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destContactID string) (*models.SupportMessage, error) {
+	src, err := s.repo.GetMessage(accountID, sourceMsgID)
+	if err != nil {
+		return nil, err
+	}
+	if src == nil {
+		return nil, ErrTicketNotFound
+	}
+	ok, err := s.repo.ContactExists(accountID, destContactID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrContactNotFound
+	}
+	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, destContactID)
+	if err != nil {
+		return nil, err
+	}
+	phone, err := s.repo.ContactPhone(ticket.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	sender := userID
+	msg := &models.SupportMessage{
+		AccountID: accountID, TicketID: ticket.ID, Direction: models.DirectionOut,
+		Type: src.Type, Content: src.Content, MediaURL: src.MediaURL, MimeType: src.MimeType, FileName: src.FileName,
+		Status: "pending", SenderID: &sender,
+	}
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return s.repo.InsertMessage(msg)
+	}
+
+	var wamid string
+	var sendErr error
+	switch src.Type {
+	case "image", "document", "audio", "video":
+		if src.MediaURL == nil {
+			return nil, ErrTicketNotFound
+		}
+		data, rErr := os.ReadFile(s.MediaPath(filepath.Base(*src.MediaURL)))
+		if rErr != nil {
+			return nil, rErr
+		}
+		fn, mt, caption := "", "application/octet-stream", ""
+		if src.FileName != nil {
+			fn = *src.FileName
+		}
+		if src.MimeType != nil {
+			mt = *src.MimeType
+		}
+		if src.Content != nil {
+			caption = *src.Content
+		}
+		mediaID, upErr := client.UploadMedia(data, fn, mt)
+		if upErr != nil {
+			sendErr = upErr
+		} else {
+			wamid, sendErr = client.SendMedia(phone, src.Type, mediaID, fn, caption)
+		}
+	default: // text (inclui localização, gravada como texto com o link)
+		body := ""
+		if src.Content != nil {
+			body = *src.Content
+		}
+		wamid, sendErr = client.SendText(phone, body)
+	}
+	applySendResult(msg, wamid, sendErr)
+	saved, e := s.repo.InsertMessage(msg)
+	if e != nil {
+		return nil, e
+	}
+	return saved, sendErr
 }
 
 // Reply envia uma resposta de texto do atendente pela conversa e grava a saída.
@@ -197,6 +867,10 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 	}
 	if ticket == nil {
 		return nil, ErrTicketNotFound
+	}
+	// Um humano assumiu esta conversa → pausa o Atendente IA nela (handoff).
+	if s.aiRepo != nil {
+		_ = s.aiRepo.SetTicketAIPaused(accountID, ticketID, true)
 	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
@@ -223,6 +897,7 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 	if client != nil {
 		wamid, sendErr := client.SendText(phone, text)
 		if sendErr != nil {
+			slog.Error("envio à Meta falhou", "op", "reply", "conta", accountID, "ticket", ticketID, "erro", sendErr)
 			msg.Status = "failed"
 		} else {
 			msg.Status = "sent"
@@ -263,6 +938,27 @@ func (s *SupportService) MediaPath(name string) string {
 	return filepath.Join(s.mediaDir, filepath.Base(name))
 }
 
+// SetWhatsAppPhoto salva a foto (avatar) do número e atualiza o registro.
+// Devolve a URL local da imagem.
+func (s *SupportService) SetWhatsAppPhoto(accountID, waID string, data []byte, filename, mimeType string) (string, error) {
+	if s.wa == nil {
+		return "", errors.New("recurso indisponível")
+	}
+	name, err := s.saveMedia(data, extFromMime(mimeType, filename))
+	if err != nil {
+		return "", err
+	}
+	url := "/media/" + name
+	ok, err := s.wa.SetPhoto(waID, accountID, url)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errors.New("número não encontrado")
+	}
+	return url, nil
+}
+
 // SendMedia sobe o arquivo à Meta, envia como mídia e grava a saída.
 func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []byte, filename, mimeType, caption string) (*models.SupportMessage, error) {
 	ticket, err := s.repo.GetTicket(accountID, ticketID)
@@ -277,6 +973,13 @@ func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []by
 		return nil, err
 	}
 	kind := kindFromMime(mimeType)
+	// Áudio do navegador vem em webm/opus; a Meta só aceita ogg/opus como
+	// mensagem de voz. Converte quando dá (ffmpeg); se não der, segue como veio.
+	if kind == "audio" && !strings.Contains(mimeType, "ogg") {
+		if ogg, terr := transcodeToOggOpus(data); terr == nil {
+			data, mimeType, filename = ogg, "audio/ogg", "audio.ogg"
+		}
+	}
 	name, err := s.saveMedia(data, extFromMime(mimeType, filename))
 	if err != nil {
 		return nil, err
@@ -377,9 +1080,76 @@ func (s *SupportService) AccountByPhoneNumberID(phoneNumberID string) (string, e
 	return w.AccountID, nil
 }
 
+// AppSecretForPhoneNumberID devolve o App Secret (decifrado) da empresa dona do
+// número, para validar a assinatura do webhook quando o número está sob o app
+// PRÓPRIO do cliente (não o da plataforma). Devolve ("", false) quando não há
+// número, não há secret por-conta, ou a decifragem falha — o chamador cai no
+// secret global.
+func (s *SupportService) AppSecretForPhoneNumberID(phoneNumberID string) (string, bool) {
+	if s.wa == nil || s.cipher == nil || phoneNumberID == "" {
+		return "", false
+	}
+	w, err := s.wa.FindByPhoneNumberID(phoneNumberID)
+	if err != nil || w == nil || w.AppSecretEnc == nil || *w.AppSecretEnc == "" {
+		return "", false
+	}
+	secret, err := s.cipher.Decrypt(*w.AppSecretEnc)
+	if err != nil || secret == "" {
+		return "", false
+	}
+	return secret, true
+}
+
+// AppSecretForWabaID é o irmão de AppSecretForPhoneNumberID para eventos do
+// webhook que não trazem número (status de template/conta): resolve a empresa
+// pela WABA e devolve o App Secret por-conta decifrado.
+func (s *SupportService) AppSecretForWabaID(wabaID string) (string, bool) {
+	if s.wa == nil || s.cipher == nil || wabaID == "" {
+		return "", false
+	}
+	w, err := s.wa.FindByWabaID(wabaID)
+	if err != nil || w == nil || w.AppSecretEnc == nil || *w.AppSecretEnc == "" {
+		return "", false
+	}
+	secret, err := s.cipher.Decrypt(*w.AppSecretEnc)
+	if err != nil || secret == "" {
+		return "", false
+	}
+	return secret, true
+}
+
 // ListInbox devolve as conversas da conta.
 func (s *SupportService) ListInbox(accountID string) ([]models.SupportTicketListItem, error) {
 	return s.repo.ListInbox(accountID)
+}
+
+// SetTicketAIPaused liga/pausa o Atendente IA nesta conversa (controle manual do
+// atendente na própria janela). Ao RETOMAR (paused=false), dispara uma resposta
+// se a última mensagem for do cliente — assim a IA "assume de volta" na hora.
+func (s *SupportService) SetTicketAIPaused(accountID, ticketID string, paused bool) error {
+	if s.aiRepo == nil {
+		return nil
+	}
+	if err := s.aiRepo.SetTicketAIPaused(accountID, ticketID, paused); err != nil {
+		return err
+	}
+	if !paused {
+		go s.TriggerAIReply(accountID, ticketID)
+	}
+	return nil
+}
+
+// AIAccountState informa, para o inbox, se o Atendente IA está ligado na empresa
+// e se o provedor (motor) está configurado — controla a exibição do toggle de IA
+// na janela da conversa.
+func (s *SupportService) AIAccountState(accountID string) (enabled, providerReady bool) {
+	providerReady = s.ai != nil && s.ai.Configured()
+	if s.aiRepo != nil {
+		if cfg, err := s.aiRepo.GetConfig(accountID); err == nil && cfg != nil {
+			enabled = cfg.Enabled
+		}
+	}
+	return enabled, providerReady
 }
 
 // StartConversation abre (ou reusa) a conversa aberta de um contato e devolve
@@ -408,15 +1178,15 @@ func (s *SupportService) ListMessages(accountID, ticketID string) ([]models.Supp
 // --- Contatos ---
 
 // ListContacts devolve os contatos da conta.
-func (s *SupportService) ListContacts(accountID string) ([]models.SupportContact, error) {
-	return s.repo.ListContacts(accountID)
+func (s *SupportService) ListContacts(accountID, userID string) ([]models.SupportContact, error) {
+	return s.repo.ListContacts(accountID, userID)
 }
 
 // CreateContact cadastra um contato (telefone normalizado, único por conta).
-func (s *SupportService) CreateContact(accountID string, req models.CreateContactRequest) (*models.SupportContact, error) {
+func (s *SupportService) CreateContact(accountID, ownerUserID string, req models.CreateContactRequest) (*models.SupportContact, error) {
 	phone := normalizePhone(req.Phone)
 	name := req.Name
-	c, err := s.repo.CreateContact(accountID, phone, &name)
+	c, err := s.repo.CreateContact(accountID, ownerUserID, phone, &name)
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {

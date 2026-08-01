@@ -25,8 +25,8 @@ class UsersController extends ChangeNotifier {
   }
 
   /// Cria (POST) ou edita (PUT). Retorna null em sucesso, ou o erro.
-  Future<String?> save({String? id, required String fullName, required String email, required String role}) async {
-    final body = {'full_name': fullName, 'email': email, 'role': role};
+  Future<String?> save({String? id, required String fullName, required String email, String? phone, required String role}) async {
+    final body = {'full_name': fullName, 'email': email, 'role': role, 'phone': phone ?? ''};
     final r = id == null ? await _api.post('/users', body) : await _api.put('/users/$id', body);
     if (r.ok) {
       await load();

@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Guia — Conecte seu WhatsApp</title>
+<style>
+  :root{
+    --teal:#0E9384; --teal-d:#0B7166; --teal-l:#E7F6F4;
+    --ink:#1B2733; --muted:#5B6B7B; --line:#E3E8EC; --bg:#FFFFFF;
+    --meta-bg:#F0F2F5; --meta-blue:#0A7CFF; --meta-card:#FFFFFF; --meta-line:#DCE0E5;
+    --red:#D03530; --red-l:#FDECEB; --amber:#FEF6E7; --amber-b:#F5C86B;
+    --green:#1F9D57;
+  }
+  *{box-sizing:border-box;}
+  @page{ size:A4; margin:14mm 14mm 16mm 14mm; }
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); font-size:11.2px; line-height:1.5;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  h1,h2,h3{margin:0; line-height:1.22;}
+  p{margin:0 0 8px;}
+  .muted{color:var(--muted);}
+  .small{font-size:10px;}
+  .section{ break-before:page; padding-top:2px; }
+
+  /* ---------- CAPA ---------- */
+  .cover{
+    break-after:page; height:262mm; position:relative;
+    background:linear-gradient(160deg,var(--teal) 0%, var(--teal-d) 100%);
+    color:#fff; border-radius:16px; padding:44px 40px; overflow:hidden;
+  }
+  .cover .glow{position:absolute; border-radius:50%; background:rgba(255,255,255,.08);}
+  .cover .g1{width:520px;height:520px; right:-180px; top:-160px;}
+  .cover .g2{width:360px;height:360px; left:-140px; bottom:-150px; background:rgba(255,255,255,.06);}
+  .brandrow{display:flex; align-items:center; gap:12px; position:relative;}
+  .logo{width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.16);
+        display:flex;align-items:center;justify-content:center;}
+  .logo svg{width:26px;height:26px;}
+  .brandrow .nm{font-weight:700;font-size:15px;letter-spacing:.2px;}
+  .brandrow .tg{font-size:10.5px;opacity:.82;}
+  .cover h1{font-size:41px; font-weight:800; letter-spacing:-.6px; margin-top:118px; position:relative;}
+  .cover .sub{font-size:15px; opacity:.94; margin-top:14px; max-width:430px; position:relative; line-height:1.55;}
+  .keys{position:relative; margin-top:40px; display:flex; gap:10px;}
+  .keychip{background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.25);
+    border-radius:10px; padding:11px 14px; min-width:120px;}
+  .keychip .k{font-size:9.5px; text-transform:uppercase; letter-spacing:.7px; opacity:.8;}
+  .keychip .v{font-size:12.5px; font-weight:700; margin-top:3px;}
+  .cover .foot{position:absolute; left:40px; right:40px; bottom:34px; font-size:10.5px; opacity:.85;
+    border-top:1px solid rgba(255,255,255,.22); padding-top:12px; display:flex; justify-content:space-between;}
+
+  /* ---------- BLOCOS ---------- */
+  .kicker{color:var(--teal); font-weight:800; font-size:10.5px; letter-spacing:1.4px; text-transform:uppercase;}
+  h2.title{font-size:22px; font-weight:800; letter-spacing:-.3px; margin:5px 0 4px;}
+  .lead{color:var(--muted); font-size:12px; max-width:560px; margin-bottom:14px;}
+
+  .step-head{display:flex; align-items:center; gap:12px; margin:0 0 10px;}
+  .step-num{width:30px;height:30px;border-radius:50%;background:var(--teal); color:#fff;
+    font-weight:800; font-size:14px; display:flex;align-items:center;justify-content:center; flex:0 0 auto;}
+  .step-head h3{font-size:16.5px; font-weight:800;}
+  .step-head .est{margin-left:auto; font-size:10px; color:var(--muted); background:#F4F6F7; border:1px solid var(--line);
+    padding:3px 9px; border-radius:20px; white-space:nowrap;}
+
+  ol.steps{margin:2px 0 6px; padding-left:20px;}
+  ol.steps li{margin:0 0 5px;}
+  .path{background:#F4F6F7; border:1px solid var(--line); border-radius:5px; padding:1px 6px;
+        font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10px; color:var(--teal-d); white-space:nowrap;}
+
+  .card{border:1px solid var(--line); border-radius:12px; padding:16px 18px; background:#fff;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  .req li{margin-bottom:6px;}
+  .callout{border-radius:10px; padding:11px 13px; font-size:10.6px; display:flex; gap:9px; align-items:flex-start;}
+  .callout .ic{flex:0 0 auto; font-weight:800;}
+  .c-warn{background:var(--amber); border:1px solid var(--amber-b);}
+  .c-tip{background:var(--teal-l); border:1px solid #BFE6E1;}
+  .c-info{background:#EEF4FF; border:1px solid #CFE0FB;}
+
+  /* ---------- "PRINT" DA META ---------- */
+  .browser{border:1px solid var(--meta-line); border-radius:11px; overflow:hidden; box-shadow:0 6px 20px rgba(20,40,60,.10);}
+  .bbar{background:#E9ECF0; padding:8px 12px; display:flex; align-items:center; gap:7px; border-bottom:1px solid var(--meta-line);}
+  .dot{width:10px;height:10px;border-radius:50%;}
+  .url{margin-left:10px; background:#fff; border:1px solid var(--meta-line); border-radius:14px;
+    padding:3px 12px; font-size:9.5px; color:#67707A; flex:1;}
+  .meta{display:flex; background:var(--meta-bg);}
+  .msidebar{width:150px; flex:0 0 150px; background:#fff; border-right:1px solid var(--meta-line); padding:12px 10px; font-size:10px;}
+  .msidebar .drop{border:1px solid var(--meta-line); border-radius:7px; padding:6px 8px; display:flex; align-items:center; gap:6px; font-weight:700; margin-bottom:10px;}
+  .msidebar .grp{font-weight:800; color:#344; margin:9px 0 5px; font-size:10px;}
+  .msidebar .it{padding:4px 6px; border-radius:6px; color:#4a5560; margin-bottom:1px;}
+  .msidebar .it.active{background:#E9F1FF; color:#0a5; color:var(--meta-blue); font-weight:700;}
+  .mmain{flex:1; padding:16px 18px;}
+  .mmain h4{font-size:14px; font-weight:800; margin-bottom:3px;}
+  .mmain .msub{color:#67707A; font-size:10px; margin-bottom:12px;}
+  .wa-num{border:1px solid var(--meta-line); border-radius:10px; padding:13px 14px; background:#fff;}
+  .wa-label{font-size:9.5px; color:#7A828B; font-weight:700; text-transform:uppercase; letter-spacing:.4px; margin-bottom:7px;}
+  .wa-phone{display:flex; align-items:center; gap:9px; font-size:15px; font-weight:800; margin-bottom:11px;}
+  .wa-phone .wc{width:22px;height:22px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;}
+  .wa-phone .wc svg{width:13px;height:13px;}
+  .idrow{display:flex; gap:26px; flex-wrap:wrap;}
+  .iditem .lb{font-size:9.5px; color:#7A828B; font-weight:600;}
+  .iditem .vl{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; font-weight:700; color:#1B2733; display:flex; align-items:center; gap:6px;}
+  .copy{width:13px;height:13px;opacity:.5;}
+  .tokrow{margin-top:12px;}
+  .tokbox{display:flex; gap:8px; align-items:center;}
+  .tokfield{flex:1; background:#F0F2F5; border:1px solid var(--meta-line); border-radius:7px; padding:7px 10px; color:#8A929B; font-size:10px;}
+  .btn-blue{background:var(--meta-blue); color:#fff; border-radius:7px; padding:7px 14px; font-size:10.5px; font-weight:700; white-space:nowrap;}
+  .mstep{display:flex; align-items:center; gap:10px; padding:11px 4px; border-bottom:1px solid var(--meta-line); font-size:11px;}
+  .mstep:last-child{border-bottom:0;}
+  .chk{width:17px;height:17px;border-radius:50%;background:var(--green);flex:0 0 auto; display:flex;align-items:center;justify-content:center;}
+  .chk svg{width:10px;height:10px;}
+  .mstep .t{font-weight:700;}
+  .mstep .d{color:#7A828B; font-size:9.5px;}
+
+  /* destaque vermelho sobre um trecho */
+  .hl{position:relative; outline:2px dashed var(--red); outline-offset:3px; border-radius:4px; background:rgba(208,53,48,.06);}
+  .anno{margin-top:12px; display:flex; flex-direction:column; gap:7px;}
+  .anno .row{display:flex; align-items:center; gap:9px; font-size:10.6px;}
+  .pill{display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:9.5px; color:#fff; background:var(--red);
+    border-radius:20px; padding:3px 9px; white-space:nowrap;}
+  .pill.teal{background:var(--teal);}
+  .arrow{color:var(--red); font-weight:800;}
+
+  /* ---------- FORM ZAPDESK ---------- */
+  .zform{max-width:340px; border:1px solid var(--line); border-radius:12px; box-shadow:0 6px 20px rgba(20,40,60,.08); overflow:hidden;}
+  .zform .zhead{background:var(--teal); color:#fff; padding:12px 16px; font-weight:800; font-size:13px; display:flex; align-items:center; gap:8px;}
+  .zform .zbody{padding:14px 16px;}
+  .zfield{margin-bottom:10px;}
+  .zfield .fl{font-size:9.8px; color:var(--muted); font-weight:700; margin-bottom:3px;}
+  .zfield .fi{border:1px solid var(--line); border-radius:7px; padding:7px 9px; font-size:10.5px; color:#98A2AD; background:#FAFBFC;}
+  .zfield .fi.filled{color:#1B2733; font-family:ui-monospace,Menlo,Consolas,monospace; font-weight:600;}
+  .zsubmit{background:var(--teal); color:#fff; text-align:center; border-radius:8px; padding:9px; font-weight:800; font-size:11.5px; margin-top:4px;}
+  .maprow{display:flex; align-items:center; gap:10px;}
+
+  table.map{width:100%; border-collapse:collapse; font-size:10.6px; margin-top:6px;}
+  table.map th{background:var(--teal); color:#fff; text-align:left; padding:8px 10px; font-size:10px;}
+  table.map th:first-child{border-radius:8px 0 0 0;}
+  table.map th:last-child{border-radius:0 8px 0 0;}
+  table.map td{border-bottom:1px solid var(--line); padding:8px 10px; vertical-align:top;}
+  table.map tr:last-child td{border-bottom:0;}
+  table.map .meta-c{font-weight:700; color:var(--teal-d);}
+  table.map code{background:#F4F6F7; border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:9.6px;}
+
+  .faq{margin-top:4px;}
+  .faq .q{font-weight:800; margin:12px 0 3px; display:flex; gap:8px; align-items:baseline;}
+  .faq .q .b{color:var(--red); font-weight:800;}
+  .faq .a{color:#3a4753; margin:0 0 2px 18px;}
+
+  .endnote{margin-top:18px; background:var(--teal-l); border:1px solid #BFE6E1; border-radius:12px; padding:16px 18px; display:flex; gap:14px; align-items:center;}
+  .endnote .big{font-size:15px; font-weight:800; color:var(--teal-d);}
+</style>
+</head>
+<body>
+
+<!-- ========================= CAPA ========================= -->
+<section class="cover">
+  <div class="glow g1"></div><div class="glow g2"></div>
+  <div class="brandrow">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M12 3C7 3 3 6.6 3 11c0 2.4 1.2 4.5 3.1 6L5 21l4.3-1.6c.85.2 1.75.3 2.7.3 5 0 9-3.6 9-8s-4-8-9-8z" fill="#fff"/></svg>
+    </div>
+    <div>
+      <div class="nm">Central de Atendimento</div>
+      <div class="tg">WhatsApp Business • Guia de configuração</div>
+    </div>
+  </div>
+
+  <h1>Conecte o<br>seu WhatsApp</h1>
+  <div class="sub">Passo a passo para registrar o seu número no WhatsApp da Meta e ativá-lo na sua Central de Atendimento — com as telas reais e onde encontrar cada dado.</div>
+
+  <div class="keys">
+    <div class="keychip"><div class="k">Você vai obter</div><div class="v">WABA ID</div></div>
+    <div class="keychip"><div class="k">e o</div><div class="v">ID do número</div></div>
+    <div class="keychip"><div class="k">e o</div><div class="v">Token de acesso</div></div>
+  </div>
+
+  <div class="foot">
+    <span>Tempo estimado: ~15 minutos</span>
+    <span>Tudo sai do Painel de Desenvolvedores da Meta</span>
+  </div>
+</section>
+
+<!-- ========================= ANTES DE COMEÇAR ========================= -->
+<section>
+  <div class="kicker">Antes de começar</div>
+  <h2 class="title">O que você vai precisar</h2>
+  <p class="lead">Separe estes itens antes de abrir o painel da Meta. Assim você faz tudo de uma vez, sem travar no meio.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3 style="font-size:13px;margin-bottom:9px;">✅ Pré-requisitos</h3>
+      <ul class="req" style="margin:0;padding-left:16px;">
+        <li><b>Um número de telefone</b> (fixo ou celular) que possa receber um <b>SMS</b> ou uma <b>ligação</b> de verificação.</li>
+        <li>Uma conta no <b>Facebook</b> e um <b>portfólio empresarial</b> (Meta Business) — se não tiver, você cria na hora, é grátis.</li>
+        <li>Ser <b>administrador</b> dessa conta comercial.</li>
+        <li>Um <b>cartão</b> (a Meta cobra por conversa; há uma cota inicial gratuita).</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="font-size:13px;margin-bottom:9px;">🎯 O que vamos coletar</h3>
+      <p class="small muted" style="margin-bottom:8px;">Guarde estes 3 dados — é só isso que a Central precisa:</p>
+      <div style="display:flex;flex-direction:column;gap:7px;">
+        <div class="maprow"><span class="pill teal">1</span> <b>ID da conta do WhatsApp Business</b> <span class="muted">(WABA&nbsp;ID)</span></div>
+        <div class="maprow"><span class="pill teal">2</span> <b>ID do número de telefone</b> <span class="muted">(phone_number_id)</span></div>
+        <div class="maprow"><span class="pill teal">3</span> <b>Token de acesso</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout c-warn" style="margin-top:14px;">
+    <span class="ic">⚠️</span>
+    <div><b>Atenção ao número:</b> ele <b>não pode estar ativo</b> no aplicativo WhatsApp comum (ou WhatsApp Business) com esse mesmo número. Se estiver, <b>apague a conta do WhatsApp desse número no celular</b> antes de registrá-lo na Meta — senão a verificação falha.</div>
+  </div>
+
+  <div class="callout c-info" style="margin-top:10px;">
+    <span class="ic">ℹ️</span>
+    <div>Os três dados saem <b>do mesmo lugar</b>: o Painel de Desenvolvedores da Meta (<span class="path">developers.facebook.com</span>). É o que vamos abrir agora.</div>
+  </div>
+</section>
+
+<!-- ========================= PASSO 1 e 2 ========================= -->
+<section class="section">
+  <div class="kicker">Criando o aplicativo na Meta</div>
+  <h2 class="title">Passos 1 e 2 — Criar o app e adicionar o WhatsApp</h2>
+  <p class="lead">O "app" é só o cadastro técnico que liga o seu número à Central. Você cria uma vez.</p>
+
+  <div class="step-head">
+    <div class="step-num">1</div>
+    <h3>Criar o aplicativo</h3>
+    <span class="est">~3 min</span>
+  </div>
+  <ol class="steps">
+    <li>Acesse <span class="path">developers.facebook.com</span> e entre com sua conta do Facebook.</li>
+    <li>No topo, clique em <b>Meus Apps</b> e depois em <b>Criar aplicativo</b>.</li>
+    <li>Em "De qual caso de uso…", escolha <b>Outro</b> → tipo <b>Empresa</b>.</li>
+    <li>Dê um nome (ex.: <i>Atendimento Minha Empresa</i>), vincule ao seu portfólio empresarial e confirme.</li>
+  </ol>
+
+  <div class="browser" style="margin:10px 0 20px;">
+    <div class="bbar"><span class="dot" style="background:#FF5F57;"></span><span class="dot" style="background:#FEBC2E;"></span><span class="dot" style="background:#28C840;"></span>
+      <span class="url">developers.facebook.com/apps/create</span></div>
+    <div style="background:var(--meta-bg); padding:18px;">
+      <div class="card" style="max-width:520px;margin:0 auto;">
+        <h4 style="font-size:13px;margin-bottom:3px;">Adicionar casos de uso</h4>
+        <p class="small muted" style="margin-bottom:10px;">Selecione o que o app vai fazer.</p>
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1;border:1px solid var(--meta-line);border-radius:8px;padding:10px;background:#fff;">💬 <b>Outro</b><div class="small muted">Começar do zero</div></div>
+          <div style="flex:1;border:2px solid var(--meta-blue);border-radius:8px;padding:10px;background:#F5F9FF;">🏢 <b>Empresa</b><div class="small muted">Tipo recomendado</div></div>
+        </div>
+        <div class="btn-blue" style="display:inline-block;margin-top:12px;">Avançar</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-head">
+    <div class="step-num">2</div>
+    <h3>Adicionar o produto WhatsApp</h3>
+    <span class="est">~2 min</span>
+  </div>
+  <ol class="steps">
+    <li>Já dentro do app, procure o bloco <b>WhatsApp</b> e clique em <b>Configurar</b>.</li>
+    <li>Vincule (ou crie) a sua <b>conta comercial do WhatsApp</b> quando for pedido.</li>
+    <li>Pronto — no menu da esquerda aparece o WhatsApp com as <b>Etapas 1, 2 e 3</b>. É onde vamos trabalhar nos próximos passos.</li>
+  </ol>
+  <div class="callout c-tip" style="margin-top:6px;">
+    <span class="ic">💡</span>
+    <div>Se o painel abrir em inglês, dá para trocar o idioma no rodapé da página. Os nomes dos campos que usamos aqui (<i>Phone Number ID</i>, <i>WhatsApp Business Account ID</i>) costumam ficar em inglês mesmo em português — é normal.</div>
+  </div>
+</section>
+
+<!-- ========================= PASSO 3 — ONDE ESTÃO OS IDs ========================= -->
+<section class="section">
+  <div class="kicker">O passo mais importante</div>
+  <h2 class="title">Passo 3 — Onde encontrar os números</h2>
+  <p class="lead">No menu da esquerda: <b>WhatsApp → Configuração básica → Etapa 1. Experimente</b>. É aqui que ficam os dois IDs e o token. Esta é a tela que você vai consultar sempre.</p>
+
+  <div class="browser">
+    <div class="bbar"><span class="dot" style="background:#FF5F57;"></span><span class="dot" style="background:#FEBC2E;"></span><span class="dot" style="background:#28C840;"></span>
+      <span class="url">developers.facebook.com › Meu app › WhatsApp</span></div>
+    <div class="meta">
+      <div class="msidebar">
+        <div class="drop">💬 Conectar no WhatsApp ▾</div>
+        <div class="it">Visão geral</div>
+        <div class="grp">Configuração básica ▴</div>
+        <div class="it active">Etapa 1. Experimente</div>
+        <div class="it">Etapa 2. Configuração da produção</div>
+        <div class="it">Etapa 3. Verificação da empresa</div>
+        <div class="it">Próximas etapas</div>
+      </div>
+      <div class="mmain">
+        <h4>Etapa 1. Experimente</h4>
+        <div class="msub">Envie uma mensagem do seu número de teste para entender como a API funciona.</div>
+        <div class="wa-num">
+          <div class="wa-label">Número de teste</div>
+          <div class="wa-phone"><span class="wc"><svg viewBox="0 0 24 24"><path d="M12 3C7 3 3 6.6 3 11c0 2.4 1.2 4.5 3.1 6L5 21l4.3-1.6c.85.2 1.75.3 2.7.3 5 0 9-3.6 9-8s-4-8-9-8z" fill="#fff"/></svg></span> +1 (555) 664-5005</div>
+          <div class="idrow">
+            <div class="iditem hl">
+              <div class="lb">Phone Number ID</div>
+              <div class="vl">1046XXXXXXXXXXX <svg class="copy" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></div>
+            </div>
+            <div class="iditem hl">
+              <div class="lb">WhatsApp Business Account ID</div>
+              <div class="vl">8809XXXXXXXXXX <svg class="copy" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></div>
+            </div>
+          </div>
+          <div class="tokrow">
+            <div class="wa-label">Token de acesso</div>
+            <div class="tokbox">
+              <div class="tokfield hl">•••••••••••••••••••••••••••••</div>
+              <div class="btn-blue">Gerar token</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="anno">
+    <div class="row"><span class="pill">Phone Number ID</span><span class="arrow">➜</span> na Central vira o campo <b>“ID do número (phone_number_id)”</b>.</div>
+    <div class="row"><span class="pill">WhatsApp Business Account ID</span><span class="arrow">➜</span> na Central vira o campo <b>“WABA ID”</b>.</div>
+    <div class="row"><span class="pill">Token de acesso</span><span class="arrow">➜</span> clique em <b>Gerar token</b> (veja o Passo 5) e cole no campo <b>“Token de acesso”</b>.</div>
+  </div>
+
+  <div class="callout c-info" style="margin-top:13px;">
+    <span class="ic">ℹ️</span>
+    <div>O número <b>+1 (555)…</b> é apenas de <b>teste</b>, para você experimentar. Para atender seus clientes de verdade, registre o <b>seu número</b> no Passo 4 — os campos <i>Phone Number ID</i> e <i>WABA ID</i> aparecem exatamente no mesmo lugar, já com os valores do seu número.</div>
+  </div>
+</section>
+
+<!-- ========================= PASSO 4 — REGISTRAR SEU NÚMERO ========================= -->
+<section class="section">
+  <div class="kicker">Colocando o seu número</div>
+  <h2 class="title">Passo 4 — Registrar o SEU número</h2>
+  <p class="lead">No menu: <b>Etapa 2. Configuração da produção</b>. São 4 tarefas rápidas, em ordem.</p>
+
+  <div class="browser" style="margin-bottom:16px;">
+    <div class="bbar"><span class="dot" style="background:#FF5F57;"></span><span class="dot" style="background:#FEBC2E;"></span><span class="dot" style="background:#28C840;"></span>
+      <span class="url">developers.facebook.com › WhatsApp › Etapa 2</span></div>
+    <div style="background:var(--meta-bg);padding:16px;">
+      <div class="card" style="padding:6px 16px;">
+        <div class="mstep"><span class="chk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>
+          <div><div class="t">Configurar webhooks</div><div class="d">Onde a Central recebe as mensagens</div></div></div>
+        <div class="mstep"><span class="chk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>
+          <div><div class="t">Registre seu número de telefone do WhatsApp</div><div class="d">Verificação por SMS ou ligação</div></div></div>
+        <div class="mstep"><span class="chk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>
+          <div><div class="t">Adicione uma forma de pagamento</div><div class="d">Cartão para as conversas</div></div></div>
+        <div class="mstep"><span class="chk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>
+          <div><div class="t">Enviar mensagem</div><div class="d">Teste final</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-head" style="margin-top:4px;"><div class="step-num" style="width:24px;height:24px;font-size:11px;">A</div><h3 style="font-size:13.5px;">Configurar webhooks</h3></div>
+  <p style="margin:0 0 10px 36px;">A Central já tem o endereço de recebimento. <b>Nós te passamos a URL do webhook e o token de verificação</b> — você cola nos dois campos e salva. (Se preferir, deixe este passo com a nossa equipe.)</p>
+
+  <div class="step-head"><div class="step-num" style="width:24px;height:24px;font-size:11px;">B</div><h3 style="font-size:13.5px;">Registrar o número</h3></div>
+  <ol class="steps" style="margin-left:16px;">
+    <li>Clique em <b>Registre seu número de telefone</b> e informe o <b>seu número</b> (com DDD e país, ex.: +55 21 …).</li>
+    <li>Escolha receber o código por <b>SMS</b> ou <b>ligação</b> e digite o código recebido.</li>
+    <li>Defina um <b>PIN de 6 dígitos</b> (guarde-o — a Meta pede em manutenções futuras).</li>
+  </ol>
+
+  <div class="step-head"><div class="step-num" style="width:24px;height:24px;font-size:11px;">C</div><h3 style="font-size:13.5px;">Forma de pagamento</h3></div>
+  <p style="margin:0 0 10px 36px;">Em <b>Configurações do Negócio › Pagamentos</b>, cadastre um cartão. A Meta oferece uma cota inicial de conversas gratuitas por mês; acima disso, cobra por conversa.</p>
+
+  <div class="callout c-tip">
+    <span class="ic">✅</span>
+    <div>Depois de registrar, volte à <b>Etapa 1</b>: o <b>Phone Number ID</b> e o <b>WABA ID</b> agora são os do <b>seu</b> número. São esses que você vai copiar.</div>
+  </div>
+</section>
+
+<!-- ========================= PASSO 5 — TOKEN ========================= -->
+<section class="section">
+  <div class="kicker">A chave de acesso</div>
+  <h2 class="title">Passo 5 — Gerar o Token de acesso</h2>
+  <p class="lead">O token é a "senha" que autoriza a Central a enviar pelo seu número. Há duas formas — recomendamos a definitiva.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3 style="font-size:13px;margin-bottom:4px;">🚀 Rápido — para testar</h3>
+      <p class="small muted" style="margin-bottom:8px;">Vale ~24 horas.</p>
+      <ol class="steps" style="padding-left:16px;">
+        <li>Na <b>Etapa 1</b>, clique em <b>Gerar token</b>.</li>
+        <li>Copie o texto gerado.</li>
+      </ol>
+      <p class="small muted">Ótimo para o primeiro teste, mas <b>expira</b> — não deixe assim em produção.</p>
+    </div>
+    <div class="card" style="border-color:var(--teal);">
+      <h3 style="font-size:13px;margin-bottom:4px;color:var(--teal-d);">🔒 Definitivo — recomendado</h3>
+      <p class="small muted" style="margin-bottom:8px;">Não expira (Usuário do Sistema).</p>
+      <ol class="steps" style="padding-left:16px;">
+        <li>Abra <span class="path">business.facebook.com</span> → <b>Configurações do Negócio</b>.</li>
+        <li><b>Usuários → Usuários do sistema → Adicionar</b> (função <b>Administrador</b>).</li>
+        <li>Clique em <b>Gerar novo token</b> e selecione o <b>seu app</b>.</li>
+        <li>Marque as permissões:<br>
+            <span class="path">whatsapp_business_messaging</span><br>
+            <span class="path">whatsapp_business_management</span></li>
+        <li><b>Copie e guarde</b> o token — ele só aparece <b>uma vez</b>.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="callout c-warn" style="margin-top:14px;">
+    <span class="ic">⚠️</span>
+    <div><b>Trate o token como uma senha.</b> Não mande por grupos ou e-mails abertos. Ao colar na Central, ele é <b>guardado de forma criptografada</b> e nunca mais é exibido.</div>
+  </div>
+</section>
+
+<!-- ========================= PASSO 6 — CONECTAR NA CENTRAL ========================= -->
+<section class="section">
+  <div class="kicker">A reta final</div>
+  <h2 class="title">Passo 6 — Ativar na sua Central</h2>
+  <p class="lead">Na Central, vá em <b>WhatsApp → Conectar número</b> e preencha com o que você copiou da Meta.</p>
+
+  <div style="display:flex; gap:22px; align-items:flex-start;">
+    <div class="zform">
+      <div class="zhead">💬 Conectar número</div>
+      <div class="zbody">
+        <div class="zfield"><div class="fl">Nome da empresa (exibido)</div><div class="fi">ex.: Minha Empresa</div></div>
+        <div class="zfield"><div class="fl">Telefone (ex.: +55 21 99999-9999)</div><div class="fi">+55 21 99999-9999</div></div>
+        <div class="zfield"><div class="fl">WABA ID</div><div class="fi filled">8809XXXXXXXXXX</div></div>
+        <div class="zfield"><div class="fl">ID do número (phone_number_id)</div><div class="fi filled">1046XXXXXXXXXXX</div></div>
+        <div class="zfield"><div class="fl">Token de acesso</div><div class="fi filled">EAAG••••••••••••••••</div></div>
+        <div class="zsubmit">Conectar</div>
+      </div>
+    </div>
+
+    <div style="flex:1;">
+      <h3 style="font-size:12.5px;margin-bottom:4px;">De onde vem cada campo</h3>
+      <table class="map">
+        <tr><th>Campo na Central</th><th>Cole o que a Meta chama de…</th></tr>
+        <tr><td><b>Nome da empresa (exibido)</b></td><td>Livre — o nome que aparece para a sua equipe</td></tr>
+        <tr><td><b>Telefone</b></td><td>O seu número, ex.: <code>+55 21 99999-9999</code></td></tr>
+        <tr><td><b>WABA ID</b></td><td class="meta-c">WhatsApp Business Account ID</td></tr>
+        <tr><td><b>ID do número</b></td><td class="meta-c">Phone Number ID</td></tr>
+        <tr><td><b>Token de acesso</b></td><td class="meta-c">O token gerado no Passo 5</td></tr>
+      </table>
+      <div class="callout c-tip" style="margin-top:12px;">
+        <span class="ic">🎉</span>
+        <div>Clicou em <b>Conectar</b> e ficou "conectado"? Está pronto: sua empresa já <b>envia e recebe</b> pela Central. Faça um teste enviando uma mensagem para o seu próprio celular.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= DICAS / ERROS ========================= -->
+<section class="section">
+  <div class="kicker">Para não travar</div>
+  <h2 class="title">Dúvidas e erros comuns</h2>
+
+  <div class="faq">
+    <div class="q"><span class="b">1.</span> "Deu erro dizendo que o objeto não existe."</div>
+    <div class="a">Você provavelmente <b>trocou os dois IDs</b>. Confira: <b>Phone Number ID</b> é do número; <b>WhatsApp Business Account ID (WABA)</b> é da conta. São diferentes e vão em campos diferentes.</div>
+
+    <div class="q"><span class="b">2.</span> "Mandei a primeira mensagem e o cliente não recebeu."</div>
+    <div class="a">Regra do WhatsApp: se o cliente <b>ainda não te escreveu</b> (ou faz mais de 24 h), só é possível iniciar com um <b>modelo aprovado</b> pela Meta. Depois que ele responde, a conversa fica <b>livre por 24 horas</b>. A Central mostra os modelos aprovados acima do campo de envio.</div>
+
+    <div class="q"><span class="b">3.</span> "A verificação do número falha."</div>
+    <div class="a">Quase sempre é porque o número <b>ainda está ativo no WhatsApp comum</b>. Apague a conta do WhatsApp desse número no celular e tente de novo. Números fixos funcionam (escolha a opção <b>ligação</b>).</div>
+
+    <div class="q"><span class="b">4.</span> "Funcionava e parou de enviar sozinho."</div>
+    <div class="a">Se você usou o <b>token de 24 h</b> (opção rápida), ele expirou. Gere o <b>token definitivo</b> (Passo 5, opção recomendada) e reconecte o número na Central.</div>
+
+    <div class="q"><span class="b">5.</span> "Apareceu 'Verificação da empresa' pendente."</div>
+    <div class="a">Para volumes maiores, a Meta pede a <b>Etapa 3 — Verificação da empresa</b> (envio de CNPJ e documentos). Dá para começar a usar antes disso; faça a verificação quando a Meta solicitar, para liberar limites maiores.</div>
+  </div>
+
+  <div class="endnote">
+    <div class="big">Travou em algum passo?</div>
+    <div>Chame o nosso suporte com um print da tela onde parou — a gente configura junto com você em poucos minutos. Guarde o <b>PIN de 6 dígitos</b> e o <b>token</b> em local seguro; você vai precisar deles em manutenções.</div>
+  </div>
+</section>
+
+</body>
+</html>

@@ -31,26 +31,60 @@ const (
 type AuthService struct {
 	users    *repository.UserRepository
 	auth     *repository.AuthRepository
+	accounts *repository.AccountRepository // canais de OTP permitidos por empresa
 	jwt      *JWTService
 	isDev    bool
-	mailer   Mailer // envio de e-mail (pode ser nil em dev)
+	mailer   Mailer         // envio de e-mail (canal reserva; pode ser nil)
+	whatsapp WhatsAppSender // envio por WhatsApp (canal principal; pode ser nil)
 }
 
-// Mailer envia o código OTP (implementado por um provedor, ex.: Resend).
+// Mailer envia o código OTP por e-mail (implementado por um provedor, ex.: Resend).
 type Mailer interface {
 	SendOTP(toEmail, code string) error
 }
 
-func NewAuthService(users *repository.UserRepository, auth *repository.AuthRepository,
-	jwt *JWTService, isDev bool, mailer Mailer) *AuthService {
-	return &AuthService{users: users, auth: auth, jwt: jwt, isDev: isDev, mailer: mailer}
+// WhatsAppSender envia o código OTP por WhatsApp (para telefones).
+type WhatsAppSender interface {
+	SendOTP(phone, code string) error
+	Configured() bool
 }
 
-// RequestOTP gera e "envia" um código para o identificador (e-mail). Não revela
-// se o usuário existe (resposta é sempre de sucesso); só envia se existir.
+func NewAuthService(users *repository.UserRepository, auth *repository.AuthRepository,
+	accounts *repository.AccountRepository, jwt *JWTService, isDev bool, mailer Mailer, whatsapp WhatsAppSender) *AuthService {
+	return &AuthService{users: users, auth: auth, accounts: accounts, jwt: jwt, isDev: isDev, mailer: mailer, whatsapp: whatsapp}
+}
+
+// isPhoneIdentifier diz se o identificador é telefone (sem @). O login aceita
+// e-mail OU telefone; telefone recebe o código por WhatsApp.
+func isPhoneIdentifier(identifier string) bool {
+	return !strings.Contains(identifier, "@")
+}
+
+// normalizeIdentifier padroniza o identificador para casar request/verify:
+// e-mail vira minúsculo; telefone vira só dígitos (+55 auto).
+func normalizeIdentifier(identifier string) string {
+	identifier = strings.TrimSpace(identifier)
+	if strings.Contains(identifier, "@") {
+		return strings.ToLower(identifier)
+	}
+	return normalizePhone(identifier)
+}
+
+// findUserByIdentifier busca o usuário por e-mail ou telefone.
+func (s *AuthService) findUserByIdentifier(identifier string) (*models.User, error) {
+	if isPhoneIdentifier(identifier) {
+		return s.users.FindByPhoneGlobal(identifier)
+	}
+	return s.users.FindByEmailGlobal(identifier)
+}
+
+// RequestOTP gera e "envia" um código para o identificador (telefone → WhatsApp;
+// e-mail → provedor de e-mail). Não revela se o usuário existe (resposta é sempre
+// de sucesso); só envia se existir.
 func (s *AuthService) RequestOTP(identifier string) error {
-	identifier = strings.TrimSpace(strings.ToLower(identifier))
-	user, err := s.users.FindByEmailGlobal(identifier)
+	identifier = normalizeIdentifier(identifier)
+	phone := isPhoneIdentifier(identifier)
+	user, err := s.findUserByIdentifier(identifier)
 	if err != nil {
 		return err
 	}
@@ -66,13 +100,33 @@ func (s *AuthService) RequestOTP(identifier string) error {
 	if err := s.auth.CreateOTP(identifier, hashCode(code), time.Now().UTC().Add(otpTTL)); err != nil {
 		return err
 	}
-	if s.mailer != nil {
+	// Canais permitidos pela empresa do usuário (super-admin da plataforma não
+	// tem conta → sem restrição).
+	whatsAllowed, emailAllowed := true, true
+	if user.AccountID != "" && s.accounts != nil {
+		if w, e, err := s.accounts.GetOTPChannels(user.AccountID); err == nil {
+			whatsAllowed, emailAllowed = w, e
+		}
+	}
+	// Telefone → WhatsApp (canal principal, template de autenticação).
+	if phone && whatsAllowed && s.whatsapp != nil && s.whatsapp.Configured() {
+		if err := s.whatsapp.SendOTP(identifier, code); err != nil {
+			slog.Error("falha ao enviar OTP por WhatsApp", "error", err)
+			if !s.isDev {
+				return err
+			}
+			// Em dev, não trava o teste: cai no log abaixo.
+		} else {
+			return nil
+		}
+	}
+	// E-mail → provedor (canal reserva).
+	if !phone && emailAllowed && s.mailer != nil {
 		if err := s.mailer.SendOTP(identifier, code); err != nil {
 			slog.Error("falha ao enviar OTP por e-mail", "error", err)
 			if !s.isDev {
 				return err
 			}
-			// Em dev, não trava o teste: cai no log abaixo.
 		} else {
 			return nil
 		}
@@ -84,8 +138,8 @@ func (s *AuthService) RequestOTP(identifier string) error {
 
 // VerifyOTP valida o código e emite o par de tokens.
 func (s *AuthService) VerifyOTP(identifier, code string) (*models.AuthResponse, error) {
-	identifier = strings.TrimSpace(strings.ToLower(identifier))
-	user, err := s.users.FindByEmailGlobal(identifier)
+	identifier = normalizeIdentifier(identifier)
+	user, err := s.findUserByIdentifier(identifier)
 	if err != nil {
 		return nil, err
 	}

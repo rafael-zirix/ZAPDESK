@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api_client.dart';
 import '../models/contact.dart';
@@ -14,6 +16,7 @@ class InboxController extends ChangeNotifier {
   final _api = ApiClient.instance;
 
   static const int maxPanes = 4;
+  static const _stateKey = 'zap_inbox_open';
 
   List<TicketListItem> tickets = [];
   bool loadingTickets = false;
@@ -41,6 +44,59 @@ class InboxController extends ChangeNotifier {
   /// Conversas abertas (no máximo [paneCount]).
   final List<ConversationController> open = [];
 
+  /// Índice do painel "focado" (destacado). Quando todos os slots estão
+  /// ocupados, o próximo contato aberto substitui a conversa desse painel.
+  int? selectedPane;
+
+  /// Marca um painel como selecionado (foco visual + alvo do próximo contato).
+  void selectPane(int index) {
+    if (index >= 0 && index < open.length && selectedPane != index) {
+      selectedPane = index;
+      unawaited(_persist());
+      notifyListeners();
+    }
+  }
+
+  /// Salva os painéis abertos (para sobreviver a um reload — ex.: troca de tema).
+  Future<void> _persist() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      _stateKey,
+      jsonEncode({
+        'paneCount': paneCount,
+        'open': open.map((c) => c.ticket.id).toList(),
+        'selected': selectedPane,
+      }),
+    );
+  }
+
+  bool _restored = false;
+
+  /// Reabre os painéis que estavam abertos antes de um reload (chamado após a
+  /// lista de conversas carregar). Roda só uma vez.
+  Future<void> _restore() async {
+    if (_restored) return;
+    _restored = true;
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_stateKey);
+    if (raw == null) return;
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      paneCount = (((data['paneCount'] as num?)?.toInt()) ?? 1).clamp(1, maxPanes);
+      final ids = (data['open'] as List?)?.cast<String>() ?? const <String>[];
+      for (final id in ids) {
+        if (open.length >= paneCount) break;
+        final idx = tickets.indexWhere((x) => x.id == id);
+        if (idx >= 0 && !isOpen(id)) {
+          open.add(ConversationController(tickets[idx]));
+        }
+      }
+      final sel = data['selected'];
+      if (sel is int && sel >= 0 && sel < open.length) selectedPane = sel;
+      notifyListeners();
+    } catch (_) {}
+  }
+
   // Modelos (templates) aprovados da conta — para iniciar/furar a janela de 24h.
   List<MessageTemplate> templates = [];
 
@@ -56,13 +112,35 @@ class InboxController extends ChangeNotifier {
       ticketsError = r.message ?? 'Erro ao carregar conversas';
     }
     notifyListeners();
+    if (ticketsError == null) await _restore(); // reabre os painéis de antes do reload
     loadTemplates();
+    loadAIState();
+  }
+
+  // Atendente IA da conta: define se o controle de IA aparece no header das
+  // conversas (só quando a IA está ligada na empresa).
+  bool aiEnabled = false;
+  bool aiProviderReady = false;
+
+  Future<void> loadAIState() async {
+    final r = await _api.get('/support/ai-state');
+    if (r.ok && r.data is Map) {
+      final m = r.data as Map;
+      aiEnabled = m['enabled'] == true;
+      aiProviderReady = m['provider_ready'] == true;
+      notifyListeners();
+    }
   }
 
   Future<void> loadTemplates() async {
     final r = await _api.get('/support/templates');
     if (r.ok && r.data is List) {
-      templates = (r.data as List).map((e) => MessageTemplate.fromJson(e as Map<String, dynamic>)).toList();
+      // Na barra de envio, só os APROVADOS e LIGADOS (os pendentes/rejeitados e
+      // os desligados aparecem/ajustam-se na tela de Modelos).
+      templates = (r.data as List)
+          .map((e) => MessageTemplate.fromJson(e as Map<String, dynamic>))
+          .where((t) => t.isApproved && t.enabled)
+          .toList();
       notifyListeners();
     }
   }
@@ -108,25 +186,45 @@ class InboxController extends ChangeNotifier {
     while (open.length > paneCount) {
       open.removeLast().dispose();
     }
+    _fixSelection();
+    unawaited(_persist());
     notifyListeners();
   }
 
-  /// Abre uma conversa: usa um slot livre; se todos ocupados, substitui o
-  /// último. Se já estiver aberta, não faz nada (já visível).
+  /// Abre uma conversa. Se já estiver aberta, apenas foca o painel dela. Se há
+  /// slot livre, abre num painel novo; se todos ocupados, substitui a conversa
+  /// do painel SELECIONADO (ou o último, se nenhum estiver focado).
   void openTicket(TicketListItem t) {
-    if (isOpen(t.id)) return;
-    final conv = ConversationController(t);
-    if (open.length >= paneCount && open.isNotEmpty) {
-      open.removeLast().dispose();
+    final existing = open.indexWhere((c) => c.ticket.id == t.id);
+    if (existing >= 0) {
+      selectedPane = existing;
+      unawaited(_persist());
+      notifyListeners();
+      return;
     }
-    open.add(conv);
+    final conv = ConversationController(t);
+    if (open.length < paneCount) {
+      open.add(conv);
+      selectedPane = open.length - 1;
+    } else {
+      final idx = (selectedPane != null && selectedPane! >= 0 && selectedPane! < open.length)
+          ? selectedPane!
+          : open.length - 1;
+      open[idx].dispose();
+      open[idx] = conv;
+      selectedPane = idx;
+    }
+    unawaited(_persist());
     notifyListeners();
   }
 
   /// Fecha um painel específico.
   void closePane(ConversationController c) {
-    if (open.remove(c)) {
-      c.dispose();
+    final idx = open.indexOf(c);
+    if (idx >= 0) {
+      open.removeAt(idx).dispose();
+      _fixSelection(removedIndex: idx);
+      unawaited(_persist());
       notifyListeners();
     }
   }
@@ -137,7 +235,24 @@ class InboxController extends ChangeNotifier {
       c.dispose();
     }
     open.clear();
+    selectedPane = null;
+    unawaited(_persist());
     notifyListeners();
+  }
+
+  /// Mantém [selectedPane] dentro dos limites após fechar/reduzir painéis.
+  void _fixSelection({int? removedIndex}) {
+    if (open.isEmpty) {
+      selectedPane = null;
+      return;
+    }
+    if (selectedPane == null) return;
+    if (removedIndex != null && selectedPane! > removedIndex) {
+      selectedPane = selectedPane! - 1;
+    }
+    if (selectedPane! >= open.length) {
+      selectedPane = open.length - 1;
+    }
   }
 
   @override

@@ -7,8 +7,11 @@ import 'auth/login_screen.dart';
 import 'contacts/contacts_controller.dart';
 import 'core/config.dart';
 import 'core/theme.dart';
+import 'core/theme_controller.dart';
 import 'inbox/inbox_controller.dart';
 import 'shell/app_shell.dart';
+import 'templates/templates_controller.dart';
+import 'usage/usage_controller.dart';
 import 'users/users_controller.dart';
 import 'whatsapp/whatsapp_controller.dart';
 
@@ -29,12 +32,25 @@ class ZapdeskApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AccountsController()),
         ChangeNotifierProvider(create: (_) => UsersController()),
         ChangeNotifierProvider(create: (_) => WhatsAppController()),
+        ChangeNotifierProvider(create: (_) => TemplatesController()),
+        ChangeNotifierProvider(create: (_) => UsageController()),
+        ChangeNotifierProvider(create: (_) => ThemeController()),
       ],
-      child: MaterialApp(
-        title: Config.appName,
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
-        home: const _Root(),
+      child: Consumer<ThemeController>(
+        builder: (context, themeCtrl, _) {
+          AppTheme.isDark = themeCtrl.isDark; // sincroniza antes de construir a árvore
+          return MaterialApp(
+            title: Config.appName,
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.light,
+            darkTheme: AppTheme.dark,
+            themeMode: themeCtrl.mode,
+            // Troca de tema instantânea — a animação de cross-fade padrão (200ms)
+            // fica travada no CanvasKit web com a conversa carregada.
+            themeAnimationDuration: Duration.zero,
+            home: const _Root(),
+          );
+        },
       ),
     );
   }

@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/contacts_import.dart';
 import '../core/entity_form.dart';
+import '../core/file_pick.dart';
 import '../core/theme.dart';
 import '../models/contact.dart';
 import 'contacts_controller.dart';
@@ -27,7 +31,17 @@ class _ContactsScreenState extends State<ContactsScreen> {
       color: AppTheme.bg,
       child: Column(
         children: [
-          ListHeader(title: 'Contatos', actionLabel: 'Novo contato', onAction: () => _openForm(c)),
+          ListHeader(
+            title: 'Contatos',
+            actionLabel: 'Novo contato',
+            onAction: () => _openForm(c),
+            secondary: OutlinedButton.icon(
+              onPressed: () => _import(c),
+              icon: const Icon(Icons.upload_file, size: 18),
+              label: const Text('Importar'),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
+            ),
+          ),
           const Divider(height: 1),
           Expanded(child: _body(c)),
         ],
@@ -112,6 +126,41 @@ class _ContactsScreenState extends State<ContactsScreen> {
       ],
       onSubmit: (v) => c.save(id: edit?.id, name: v['name']!, phone: v['phone']!),
     );
+  }
+
+  /// Importa contatos de um arquivo padrão (.vcf/vCard ou .csv).
+  Future<void> _import(ContactsController c) async {
+    final f = await pickFile(accept: '.vcf,.csv,text/csv,text/vcard,text/x-vcard');
+    if (f == null) return;
+    final content = utf8.decode(f.bytes, allowMalformed: true);
+    final parsed = parseContactsFile(f.name, content);
+    if (!mounted) return;
+    if (parsed.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Nenhum contato encontrado. Use um arquivo .vcf (vCard) ou .csv com nome e telefone.')));
+      return;
+    }
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Importar contatos'),
+        content: Text('Foram encontrados ${parsed.length} contatos no arquivo. Deseja importar?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            child: const Text('Importar'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !mounted) return;
+    final (ok, skipped) = await c.importContacts(parsed);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$ok contato(s) importado(s)'
+            '${skipped > 0 ? ' · $skipped ignorado(s)/duplicado(s)' : ''}.')));
   }
 
   Widget _empty(IconData icon, String text, {Future<void> Function()? retry}) {

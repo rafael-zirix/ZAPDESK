@@ -31,8 +31,8 @@ class AccountUsersController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String?> save({String? id, required String fullName, required String email, required String role}) async {
-    final body = {'full_name': fullName, 'email': email, 'role': role};
+  Future<String?> save({String? id, required String fullName, required String email, String? phone, required String role}) async {
+    final body = {'full_name': fullName, 'email': email, 'role': role, 'phone': phone ?? ''};
     final r = id == null
         ? await _api.post('/admin/accounts/$accountId/users', body)
         : await _api.put('/admin/accounts/$accountId/users/$id', body);
@@ -81,6 +81,10 @@ class _Body extends StatelessWidget {
         padding: const EdgeInsets.all(20),
         children: [
           _fichaCard(),
+          const SizedBox(height: 16),
+          _OtpAccessCard(account: account),
+          const SizedBox(height: 16),
+          _AIRechargeCard(account: account),
           const SizedBox(height: 20),
           Row(
             children: [
@@ -121,7 +125,7 @@ class _Body extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE7EAEC)),
       ),
@@ -148,7 +152,7 @@ class _Body extends StatelessWidget {
     if (c.error != null) return _msg(c.error!);
     if (c.users.isEmpty) return _msg('Nenhum usuário nesta empresa ainda.');
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE7EAEC))),
+      decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppTheme.border)),
       child: Column(
         children: [
           for (var i = 0; i < c.users.length; i++) ...[
@@ -193,9 +197,10 @@ class _Body extends StatelessWidget {
       fields: [
         FieldSpec(key: 'full_name', label: 'Nome completo', initial: edit?.fullName ?? ''),
         FieldSpec(key: 'email', label: 'E-mail', initial: edit?.email ?? '', keyboard: TextInputType.emailAddress),
+        FieldSpec(key: 'phone', label: 'Celular (WhatsApp) — login por código', initial: edit?.phone ?? '', required: false, keyboard: TextInputType.phone),
         FieldSpec(key: 'role', label: 'Perfil', initial: edit?.role ?? 'agent', options: const [('agent', 'Atendente'), ('admin', 'Administrador')]),
       ],
-      onSubmit: (v) => c.save(id: edit?.id, fullName: v['full_name']!, email: v['email']!, role: v['role']!),
+      onSubmit: (v) => c.save(id: edit?.id, fullName: v['full_name']!, email: v['email']!, phone: v['phone'], role: v['role']!),
     );
   }
 
@@ -224,4 +229,196 @@ class _Body extends StatelessWidget {
         alignment: Alignment.center,
         child: Text(text, style: TextStyle(color: Colors.grey.shade600)),
       );
+}
+
+/// Card do super-admin para ligar/desligar os canais de OTP de login da empresa.
+/// Salva direto na empresa (PUT /admin/accounts/:id).
+class _OtpAccessCard extends StatefulWidget {
+  const _OtpAccessCard({required this.account});
+  final Account account;
+
+  @override
+  State<_OtpAccessCard> createState() => _OtpAccessCardState();
+}
+
+class _OtpAccessCardState extends State<_OtpAccessCard> {
+  final _api = ApiClient.instance;
+  late bool _whats = widget.account.otpWhatsAppEnabled;
+  late bool _email = widget.account.otpEmailEnabled;
+  bool _saving = false;
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final r = await _api.put('/admin/accounts/${widget.account.id}', {
+      'otp_whatsapp_enabled': _whats,
+      'otp_email_enabled': _email,
+    });
+    if (!mounted) return;
+    setState(() => _saving = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(r.ok ? 'Canais de acesso salvos' : (r.message ?? 'Não foi possível salvar'))),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE7EAEC)),
+      ),
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 16, 18, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Acesso por código (OTP)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          SwitchListTile(
+            value: _whats,
+            onChanged: _saving ? null : (v) => setState(() => _whats = v),
+            secondary: const Icon(Icons.chat_outlined),
+            title: const Text('Código por WhatsApp'),
+          ),
+          SwitchListTile(
+            value: _email,
+            onChanged: _saving ? null : (v) => setState(() => _email = v),
+            secondary: const Icon(Icons.mail_outline),
+            title: const Text('Código por e-mail'),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+            child: Row(
+              children: [
+                const Spacer(),
+                FilledButton(
+                  onPressed: _saving ? null : _save,
+                  style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+                  child: _saving
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Salvar'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Card do super-admin: saldo de tokens de IA da empresa + recarga.
+class _AIRechargeCard extends StatefulWidget {
+  const _AIRechargeCard({required this.account});
+  final Account account;
+
+  @override
+  State<_AIRechargeCard> createState() => _AIRechargeCardState();
+}
+
+class _AIRechargeCardState extends State<_AIRechargeCard> {
+  final _api = ApiClient.instance;
+  bool _loading = true;
+  int _balance = 0;
+  bool _enabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final r = await _api.get('/admin/accounts/${widget.account.id}/ai');
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (r.ok && r.data is Map) {
+        final m = r.data as Map;
+        _balance = ((m['token_balance'] ?? 0) as num).toInt();
+        _enabled = (m['enabled'] ?? false) as bool;
+      }
+    });
+  }
+
+  Future<void> _recharge() async {
+    final ctrl = TextEditingController(text: '1000000');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Recarregar tokens de IA'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Quantos tokens creditar', suffixText: 'tokens'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            child: const Text('Recarregar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final tokens = int.tryParse(ctrl.text.trim()) ?? 0;
+    if (tokens <= 0) return;
+    final r = await _api.post('/admin/accounts/${widget.account.id}/ai/recharge', {'tokens': tokens});
+    if (!mounted) return;
+    if (r.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tokens creditados')));
+      await _load();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(r.message ?? 'Não foi possível recarregar')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Layout em Column (sem Expanded-em-Row, que colapsava no CanvasKit): título,
+    // saldo (largura total, quebra natural) e o botão embaixo — igual ao card OTP.
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE7EAEC)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: const [
+            Icon(Icons.smart_toy_outlined, color: AppTheme.seed),
+            SizedBox(width: 10),
+            Text('Atendente IA', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 6),
+          if (_loading)
+            Text('carregando…', style: TextStyle(color: Colors.grey.shade600))
+          else
+            Text(
+              '$_balance tokens (~${(_balance / 2000).round()} respostas) · IA ${_enabled ? "ligada" : "desligada"}',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _loading ? null : _recharge,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Recarregar'),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

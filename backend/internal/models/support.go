@@ -58,6 +58,8 @@ type SupportTicketListItem struct {
 	ContactName   *string   `json:"contact_name,omitempty"`
 	ContactPhone  string    `json:"contact_phone"`
 	LastMessageAt time.Time `json:"last_message_at"`
+	AIPaused      bool      `json:"ai_paused"`    // Atendente IA pausado nesta conversa
+	UnreadCount   int       `json:"unread_count"` // mensagens recebidas ainda não lidas
 }
 
 // SupportMessageResponse é a representação pública de uma mensagem.

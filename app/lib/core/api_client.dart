@@ -127,7 +127,8 @@ class ApiClient {
     return ApiResult(
       ok: ok,
       data: j['data'],
-      message: j['message'] as String?,
+      // Sucesso traz a msg no topo; erro traz em error.message → usa como reserva.
+      message: (j['message'] as String?) ?? (j['error']?['message'] as String?),
       errorCode: ok ? null : (j['error']?['code'] as String?),
       status: res.statusCode,
     );

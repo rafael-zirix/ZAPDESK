@@ -6,6 +6,7 @@ class AppUser {
     required this.fullName,
     required this.email,
     required this.role,
+    this.phone,
   });
 
   final String id;
@@ -13,6 +14,7 @@ class AppUser {
   final String fullName;
   final String email;
   final String role; // superadmin | admin | agent
+  final String? phone; // celular (WhatsApp) — usado no login por OTP
 
   bool get isSuperAdmin => role == 'superadmin';
   bool get isAdmin => role == 'admin';
@@ -31,5 +33,6 @@ class AppUser {
         fullName: j['full_name'] ?? '',
         email: j['email'] ?? '',
         role: j['role'] ?? 'agent',
+        phone: (j['phone'] == null || j['phone'] == '') ? null : j['phone'] as String,
       );
 }

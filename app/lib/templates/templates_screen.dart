@@ -1,0 +1,147 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../core/entity_form.dart';
+import '../core/theme.dart';
+import '../models/message_template.dart';
+import 'templates_controller.dart';
+
+class TemplatesScreen extends StatefulWidget {
+  const TemplatesScreen({super.key});
+
+  @override
+  State<TemplatesScreen> createState() => _TemplatesScreenState();
+}
+
+class _TemplatesScreenState extends State<TemplatesScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => context.read<TemplatesController>().load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<TemplatesController>();
+    return Container(
+      color: AppTheme.bg,
+      child: Column(
+        children: [
+          ListHeader(title: 'Modelos de mensagem', actionLabel: 'Novo modelo', onAction: () => _openForm(c)),
+          const Divider(height: 1),
+          Expanded(child: _body(c)),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(TemplatesController c) {
+    if (c.loading && c.templates.isEmpty) return const Center(child: CircularProgressIndicator());
+    if (c.error != null) return _empty(Icons.error_outline, c.error!, retry: c.load);
+    if (c.templates.isEmpty) {
+      return _empty(Icons.article_outlined,
+          'Nenhum modelo ainda.\nCrie modelos aprovados pela Meta para iniciar conversas fora da janela de 24h.');
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: c.templates.length,
+      separatorBuilder: (_, _) => const Divider(height: 1, indent: 20),
+      itemBuilder: (_, i) => _tile(c, c.templates[i]),
+    );
+  }
+
+  Widget _tile(TemplatesController c, MessageTemplate t) {
+    // Só os aprovados podem ser ligados/desligados na barra de mensagens prontas.
+    final canToggle = t.isApproved;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
+      title: Row(
+        children: [
+          Flexible(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
+          const SizedBox(width: 10),
+          _statusChip(t.status),
+        ],
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(t.bodyText ?? '(sem corpo)', style: TextStyle(color: Colors.grey.shade600, height: 1.3)),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(t.language, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          const SizedBox(width: 12),
+          // Chave: aparecer ou não na conversa. Desabilitada p/ modelos não aprovados.
+          Tooltip(
+            message: canToggle
+                ? (t.enabled ? 'Aparece nas mensagens prontas' : 'Oculto nas mensagens prontas')
+                : 'Disponível quando a Meta aprovar',
+            child: Switch(
+              value: canToggle && t.enabled,
+              onChanged: canToggle ? (v) => c.setEnabled(t.name, v) : null,
+              activeThumbColor: AppTheme.seed,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusChip(String? status) {
+    final s = (status ?? '').toUpperCase();
+    final (Color color, String label) = switch (s) {
+      'APPROVED' => (const Color(0xFF1F9D57), 'Aprovado'),
+      'REJECTED' => (Colors.red, 'Rejeitado'),
+      'PENDING' => (const Color(0xFFB88109), 'Em análise'),
+      _ => (Colors.grey, s.isEmpty ? '—' : s),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+      child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+    );
+  }
+
+  Future<void> _openForm(TemplatesController c) async {
+    final ok = await showEntityForm(
+      context,
+      title: 'Novo modelo',
+      submitLabel: 'Enviar para aprovação',
+      fields: [
+        FieldSpec(key: 'title', label: 'Nome do modelo', hint: 'ex.: Saudação bom dia'),
+        FieldSpec(
+          key: 'category',
+          label: 'Categoria',
+          initial: 'UTILITY',
+          options: const [('UTILITY', 'Utilidade (atendimento)'), ('MARKETING', 'Marketing')],
+        ),
+        FieldSpec(key: 'body', label: 'Mensagem', hint: 'ex.: Olá, bom dia!'),
+      ],
+      onSubmit: (v) => c.create(title: v['title']!, body: v['body']!, category: v['category']!),
+    );
+    if (ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Modelo enviado. A Meta revisa em minutos a algumas horas — acompanhe o status aqui.')));
+    }
+  }
+
+  Widget _empty(IconData icon, String text, {Future<void> Function()? retry}) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 56, color: Colors.grey.shade400),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(text, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, height: 1.4)),
+          ),
+          if (retry != null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton(onPressed: retry, child: const Text('Tentar de novo')),
+          ],
+        ],
+      ),
+    );
+  }
+}

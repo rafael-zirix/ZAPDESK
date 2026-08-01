@@ -91,13 +91,20 @@ class _UsersScreenState extends State<UsersScreen> {
         FieldSpec(key: 'full_name', label: 'Nome completo', initial: edit?.fullName ?? ''),
         FieldSpec(key: 'email', label: 'E-mail', initial: edit?.email ?? '', keyboard: TextInputType.emailAddress),
         FieldSpec(
+          key: 'phone',
+          label: 'Celular (WhatsApp) — para login por código',
+          initial: edit?.phone ?? '',
+          required: false,
+          keyboard: TextInputType.phone,
+        ),
+        FieldSpec(
           key: 'role',
           label: 'Perfil',
           initial: edit?.role ?? 'agent',
           options: const [('agent', 'Atendente'), ('admin', 'Administrador')],
         ),
       ],
-      onSubmit: (v) => c.save(id: edit?.id, fullName: v['full_name']!, email: v['email']!, role: v['role']!),
+      onSubmit: (v) => c.save(id: edit?.id, fullName: v['full_name']!, email: v['email']!, phone: v['phone'], role: v['role']!),
     );
   }
 

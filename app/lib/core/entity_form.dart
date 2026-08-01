@@ -174,20 +174,24 @@ class _EntityFormDialogState extends State<_EntityFormDialog> {
 
 /// Cabeçalho padrão das telas de cadastro: título + botão de ação à direita.
 class ListHeader extends StatelessWidget {
-  const ListHeader({super.key, required this.title, this.actionLabel, this.onAction});
+  const ListHeader({super.key, required this.title, this.actionLabel, this.onAction, this.secondary});
   final String title;
   final String? actionLabel;
   final VoidCallback? onAction;
 
+  /// Ação secundária opcional (ex.: "Importar"), exibida antes do botão principal.
+  final Widget? secondary;
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.white,
+      color: AppTheme.surface,
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
       child: Row(
         children: [
           Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
           const Spacer(),
+          if (secondary != null) ...[secondary!, const SizedBox(width: 10)],
           if (actionLabel != null)
             FilledButton.icon(
               onPressed: onAction,

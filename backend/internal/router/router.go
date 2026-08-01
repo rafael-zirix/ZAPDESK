@@ -57,12 +57,45 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		log.Println("[aviso] Resend não configurado — OTP vai para o log")
 	}
 
+	// Canal de OTP por WhatsApp (principal): usa o número conectado da conta
+	// designada em AUTH_OTP_ACCOUNT_ID (decifra o token internamente). Fica nil
+	// (desligado) sem a conta ou sem chave de cifra — aí o login cai no e-mail/log.
+	var waOTP services.WhatsAppSender
+	if cipher != nil && cfg.AuthOTPAccountID != "" {
+		waOTP = services.NewWhatsAppOTPSender(waRepo, cipher, cfg.MetaAPIBase, cfg.AuthOTPAccountID, cfg.AuthOTPTemplate, cfg.AuthOTPLang)
+		log.Println("[info] OTP de login por WhatsApp ativo")
+	}
+
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
-	authSvc := services.NewAuthService(userRepo, authRepo, jwtSvc, !cfg.IsProduction(), mailer)
+	authSvc := services.NewAuthService(userRepo, authRepo, accountRepo, jwtSvc, !cfg.IsProduction(), mailer, waOTP)
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
-	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient)
-	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher)
+	aiRepo := repository.NewAIRepository(db)
+	aiClient := services.NewAIClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
+	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient).
+		WithAI(aiClient, aiRepo)
+
+	// Cobrança de tokens via NuPay (checkout). Dormente sem credenciais.
+	tokenOrderRepo := repository.NewTokenOrderRepository(db)
+	nupayClient := services.NewNuPayClient(cfg.NuPayBaseURL, cfg.NuPayMerchantKey, cfg.NuPayMerchantToken)
+	billingSvc := services.NewBillingService(nupayClient, tokenOrderRepo, aiRepo, supportRepo, cfg.PublicURL)
+	if cfg.NuPayConfigured() {
+		log.Println("[info] Compra de tokens via NuPay ativa")
+	}
+
+	if cfg.AIConfigured() {
+		log.Printf("[info] Atendente IA ativo (modelo: %s)", cfg.AIModel)
+	}
+	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher).
+		WithEmbeddedSignup(cfg.MetaAPIBase, cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaESConfigID, cfg.GraphVersion()).
+		WithWebhookAutoConfig(cfg.PublicURL, cfg.MetaVerifyToken)
+	if cfg.PublicURL == "" || cfg.MetaVerifyToken == "" {
+		log.Println("[aviso] PUBLIC_URL/META_VERIFY_TOKEN ausentes: o webhook não será " +
+			"configurado na Meta ao conectar, e cada cliente terá de apontá-lo à mão")
+	}
+	if cfg.EmbeddedSignupEnabled() {
+		log.Println("[info] Embedded Signup (onboarding self-service) ativo")
+	}
 
 	authH := handlers.NewAuthHandler(authSvc)
 	userH := handlers.NewUserHandler(userSvc)
@@ -70,6 +103,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	adminH := handlers.NewAdminHandler(accountSvc, userSvc)
 	waH := handlers.NewWhatsAppHandler(accountSvc)
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
+	aiH := handlers.NewAIHandler(supportSvc, cfg.AIConfigured())
+	billingH := handlers.NewBillingHandler(billingSvc)
 
 	// Health.
 	r.GET("/health", func(c *gin.Context) {
@@ -90,6 +125,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		webhook.GET("", webhookH.Verify)
 		webhook.POST("", webhookH.Receive)
 	}
+
+	// Webhook da NuPay (público): confirma o pagamento e credita os tokens. Não
+	// confia no corpo — re-consulta o status autenticado antes de creditar.
+	r.POST("/webhook/nupay", billingH.Webhook)
 
 	// Mídia (foto/anexo): rota pública, o nome do arquivo é aleatório (segredo).
 	r.GET("/media/:name", supportH.ServeMedia)
@@ -116,9 +155,20 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
-			support.POST("/tickets/:id/media", supportH.SendMedia)       // envia foto/anexo
-			support.POST("/tickets/:id/template", supportH.SendTemplate) // envia um modelo aprovado
-			support.GET("/templates", supportH.ListTemplates)           // modelos aprovados da conta
+			support.POST("/tickets/:id/media", supportH.SendMedia)                    // envia foto/anexo
+			support.POST("/tickets/:id/template", supportH.SendTemplate)              // envia um modelo aprovado
+			support.POST("/tickets/:id/interactive", supportH.SendInteractive)        // envia botões ou menu de lista
+			support.POST("/tickets/:id/read", supportH.MarkRead)                      // marca como lida (+ digitando)
+			support.POST("/tickets/:id/location", supportH.SendLocation)              // envia localização
+			support.POST("/tickets/:id/contact", supportH.SendContact)                // envia cartão de contato
+			support.POST("/tickets/:id/messages/:msgId/retry", supportH.RetryMessage) // reenvia mensagem que falhou
+			support.POST("/forward", supportH.ForwardMessage)                        // encaminha uma mensagem a outro contato
+			support.GET("/templates", supportH.ListTemplates)                        // modelos da conta (todos os status)
+			support.POST("/templates", supportH.CreateTemplate)                      // cria um modelo (vai p/ aprovação da Meta)
+			support.PUT("/templates/:name/enabled", supportH.SetTemplateEnabled)     // liga/desliga na barra de mensagens prontas
+			support.GET("/ai-state", supportH.AIState)                               // Atendente IA ligado na empresa? (exibe o toggle na conversa)
+			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)        // consumo/valores da própria empresa (admin)
+			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                    // liga/pausa a IA nesta conversa
 		}
 
 		// Contatos (clientes finais da empresa).
@@ -137,17 +187,57 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			settings.GET("", waH.List)
 			settings.POST("", waH.Connect)
 			settings.DELETE("/:id", waH.Disconnect)
+			settings.POST("/:id/register", waH.Register)              // liga o número na Cloud API
+			settings.PUT("/:id/app-secret", waH.SetAppSecret)         // App Secret do app próprio do cliente
+			settings.POST("/:id/photo", supportH.UploadWhatsAppPhoto) // foto (avatar) do número
+		}
+
+		// Canais de OTP de login da própria empresa (admin da empresa).
+		otp := api.Group("/settings/otp", middleware.RequireAdmin())
+		{
+			otp.GET("", waH.GetOTP)
+			otp.PUT("", waH.SetOTP)
+		}
+
+		// Embedded Signup: conectar número via popup da Meta (admin da empresa).
+		es := api.Group("/settings/embedded", middleware.RequireAdmin())
+		{
+			es.GET("/config", waH.EmbeddedConfig)
+			es.POST("/connect", waH.ConnectEmbedded)
+		}
+
+		// Atendente IA da própria empresa (admin): config, base de conhecimento,
+		// saldo/extrato de tokens.
+		ai := api.Group("/ai", middleware.RequireAdmin())
+		{
+			ai.GET("/config", aiH.GetConfig)
+			ai.PUT("/config", aiH.SetConfig)
+			ai.PUT("/autorecharge", aiH.SetAutoRecharge)
+			ai.GET("/context", aiH.ListContext)
+			ai.POST("/context", aiH.AddContext)
+			ai.PUT("/context/:id", aiH.UpdateContext)
+			ai.POST("/upload-context", aiH.UploadContext)
+			ai.POST("/import-url", aiH.ImportURL)
+			ai.DELETE("/context/:id", aiH.DeleteContext)
+			ai.GET("/ledger", aiH.Ledger)
+			ai.POST("/recharge/checkout", billingH.Checkout) // compra tokens via NuPay (PIX/Nubank)
 		}
 
 		// Administração da PLATAFORMA (super-admin): cria e enxerga empresas.
 		// NÃO conecta números (isso é do cliente) e nunca vê tokens.
 		admin := api.Group("/admin", middleware.RequireSuperAdmin())
 		{
+			admin.GET("/usage", supportH.AdminUsage) // consumo/gastos por empresa e número
+			admin.GET("/pricing", supportH.GetPricing)
+			admin.PUT("/pricing", supportH.SetPricing)
 			admin.GET("/accounts", adminH.ListAccounts)
 			admin.POST("/accounts", adminH.CreateAccount)
 			admin.PUT("/accounts/:id", adminH.UpdateAccount)
 			admin.DELETE("/accounts/:id", adminH.DeleteAccount)
 			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
+			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.
+			admin.GET("/accounts/:id/ai", aiH.AdminAIInfo)
+			admin.POST("/accounts/:id/ai/recharge", aiH.AdminRecharge)
 			// Usuários/perfis de cada empresa (super-admin).
 			admin.GET("/accounts/:id/users", adminH.ListAccountUsers)
 			admin.POST("/accounts/:id/users", adminH.CreateAccountUser)

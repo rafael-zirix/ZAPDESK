@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -26,10 +27,38 @@ type Config struct {
 	MetaPhoneNumberID string // phone number id do número
 	// Conta que recebe as mensagens deste número (fase de 1 número).
 	MetaDefaultAccountID string
+	// Endereço público desta instalação (ex.: https://zapdesk.exemplo.com.br).
+	// É com ele que montamos o webhook que gravamos NA META, número a número, ao
+	// conectar — o que poupa o cliente de configurar webhook no painel dela.
+	// Vazio = não tentamos gravar, e o cliente configura à mão.
+	PublicURL string
 
-	// Resend (envio de OTP por e-mail).
+	// Embedded Signup (onboarding self-service). Vazio = desligado (só manual).
+	MetaAppID      string // App ID do app Meta (init do SDK + troca do code)
+	MetaESConfigID string // config_id do fluxo de Embedded Signup
+
+	// Resend (envio de OTP por e-mail — canal reserva).
 	ResendAPIKey    string
 	ResendFromEmail string
+
+	// OTP por WhatsApp (canal principal): a conta cujo número conectado envia os
+	// códigos de login (template de autenticação). Vazio desliga o canal WhatsApp
+	// (cai no e-mail/log).
+	AuthOTPAccountID string
+	AuthOTPTemplate  string
+	AuthOTPLang      string
+
+	// Atendente IA (motor trocável, compatível com a API OpenAI). Vazio = desligado.
+	// Aponta para Groq / Gemini (modo OpenAI) / Ollama / etc.
+	AIBaseURL string // ex.: https://api.groq.com/openai/v1
+	AIAPIKey  string
+	AIModel   string // ex.: llama-3.3-70b-versatile
+
+	// NuPay (checkout) — o cliente paga a recarga de tokens de IA. Vazio = compra
+	// por PIX/NuPay desligada (só a recarga manual pelo super-admin funciona).
+	NuPayBaseURL       string // sandbox-api.spinpay.com.br | api.spinpay.com.br
+	NuPayMerchantKey   string
+	NuPayMerchantToken string
 }
 
 // Load lê o .env (se existir) e monta a Config a partir do ambiente.
@@ -45,17 +74,56 @@ func Load() *Config {
 		MediaDir:        getenv("MEDIA_DIR", "/app/media"),
 		MetaAppSecret:        os.Getenv("META_APP_SECRET"),
 		MetaVerifyToken:      os.Getenv("META_VERIFY_TOKEN"),
+		PublicURL:            strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"),
 		MetaAPIBase:          getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),
 		MetaToken:            os.Getenv("META_TOKEN"),
 		MetaPhoneNumberID:    os.Getenv("META_PHONE_NUMBER_ID"),
 		MetaDefaultAccountID: os.Getenv("META_DEFAULT_ACCOUNT_ID"),
+		MetaAppID:            os.Getenv("META_APP_ID"),
+		MetaESConfigID:       os.Getenv("META_ES_CONFIG_ID"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		ResendFromEmail: os.Getenv("RESEND_FROM_EMAIL"),
+		AuthOTPAccountID: os.Getenv("AUTH_OTP_ACCOUNT_ID"),
+		AuthOTPTemplate:  getenv("AUTH_OTP_TEMPLATE", "login_code"),
+		AuthOTPLang:      getenv("AUTH_OTP_LANG", "pt_BR"),
+		AIBaseURL:        os.Getenv("AI_BASE_URL"),
+		AIAPIKey:         os.Getenv("AI_API_KEY"),
+		AIModel:          os.Getenv("AI_MODEL"),
+		NuPayBaseURL:       getenv("NUPAY_BASE_URL", "https://sandbox-api.spinpay.com.br"),
+		NuPayMerchantKey:   os.Getenv("NUPAY_MERCHANT_KEY"),
+		NuPayMerchantToken: os.Getenv("NUPAY_MERCHANT_TOKEN"),
 	}
+}
+
+// NuPayConfigured indica se a compra de tokens via NuPay está habilitada.
+func (c *Config) NuPayConfigured() bool {
+	return c.NuPayMerchantKey != "" && c.NuPayMerchantToken != ""
 }
 
 // IsProduction indica se o ambiente é de produção.
 func (c *Config) IsProduction() bool { return c.Env == "prd" }
+
+// GraphVersion devolve a versão da Graph API (ex.: "v20.0"), extraída da
+// MetaAPIBase — o SDK do front precisa casar com ela.
+func (c *Config) GraphVersion() string {
+	base := strings.TrimRight(c.MetaAPIBase, "/")
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		if v := base[i+1:]; strings.HasPrefix(v, "v") {
+			return v
+		}
+	}
+	return "v20.0"
+}
+
+// EmbeddedSignupEnabled indica se o onboarding via popup da Meta está configurado.
+func (c *Config) EmbeddedSignupEnabled() bool {
+	return c.MetaAppID != "" && c.MetaESConfigID != "" && c.MetaAppSecret != ""
+}
+
+// AIConfigured indica se o motor de IA (provedor) está configurado.
+func (c *Config) AIConfigured() bool {
+	return c.AIBaseURL != "" && c.AIModel != ""
+}
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

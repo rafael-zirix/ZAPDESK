@@ -9,11 +9,11 @@ import 'picked_file.dart';
 /// Abre o seletor de arquivo do navegador e devolve o arquivo escolhido.
 /// Implementação nativa (package:web) — não remove o input antes do diálogo
 /// abrir (o bug do file_picker v11 no web).
-Future<PickedFile?> pickFile() {
+Future<PickedFile?> pickFile({String? accept}) {
   final completer = Completer<PickedFile?>();
   final input = web.document.createElement('input') as web.HTMLInputElement;
   input.type = 'file';
-  input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip';
+  input.accept = accept ?? 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip';
   input.style.display = 'none';
 
   void finish(PickedFile? f) {

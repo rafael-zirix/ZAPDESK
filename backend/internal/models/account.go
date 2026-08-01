@@ -22,22 +22,26 @@ type AccountDetails struct {
 
 // Account é uma empresa cliente do SaaS (tenant).
 type Account struct {
-	ID        string
-	Name      string
-	Slug      *string
-	Status    string
-	CreatedAt time.Time
+	ID                 string
+	Name               string
+	Slug               *string
+	Status             string
+	CreatedAt          time.Time
+	OTPWhatsAppEnabled bool
+	OTPEmailEnabled    bool
 	AccountDetails
 }
 
 // AccountResponse é a representação pública de uma empresa (com contagens úteis).
 type AccountResponse struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Slug         *string   `json:"slug,omitempty"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	NumbersCount int       `json:"numbers_count"`
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Slug               *string   `json:"slug,omitempty"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	NumbersCount       int       `json:"numbers_count"`
+	OTPWhatsAppEnabled bool      `json:"otp_whatsapp_enabled"`
+	OTPEmailEnabled    bool      `json:"otp_email_enabled"`
 	AccountDetails
 }
 
@@ -53,6 +57,7 @@ type WhatsAppAccount struct {
 	AppSecretEnc    *string
 	VerifyToken     *string
 	Status          string
+	PhotoURL        *string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -66,6 +71,7 @@ type WhatsAppAccountResponse struct {
 	DisplayPhone  *string   `json:"display_phone,omitempty"`
 	VerifiedName  *string   `json:"verified_name,omitempty"`
 	Status        string    `json:"status"`
+	PhotoURL      *string   `json:"photo_url,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -79,6 +85,7 @@ func (w *WhatsAppAccount) ToResponse() WhatsAppAccountResponse {
 		DisplayPhone:  w.DisplayPhone,
 		VerifiedName:  w.VerifiedName,
 		Status:        w.Status,
+		PhotoURL:      w.PhotoURL,
 		CreatedAt:     w.CreatedAt,
 	}
 }
@@ -95,10 +102,12 @@ type CreateAccountRequest struct {
 	AccountDetails
 }
 
-// UpdateAccountRequest edita a empresa (situação + ficha completa).
+// UpdateAccountRequest edita a empresa (situação + ficha completa + canais de OTP).
 type UpdateAccountRequest struct {
-	Name   *string `json:"name" binding:"omitempty,min=2"`
-	Status *string `json:"status" binding:"omitempty,oneof=active suspended canceled"`
+	Name               *string `json:"name" binding:"omitempty,min=2"`
+	Status             *string `json:"status" binding:"omitempty,oneof=active suspended canceled"`
+	OTPWhatsAppEnabled *bool   `json:"otp_whatsapp_enabled"`
+	OTPEmailEnabled    *bool   `json:"otp_email_enabled"`
 	AccountDetails
 }
 
@@ -111,4 +120,8 @@ type AddWhatsAppRequest struct {
 	VerifyToken   *string `json:"verify_token"`
 	DisplayPhone  *string `json:"display_phone"`
 	VerifiedName  *string `json:"verified_name"`
+	// PIN da verificação em duas etapas, 6 dígitos. A Meta exige um para registrar
+	// o número na Cloud API; vindo vazio, o backend sorteia e devolve na resposta
+	// para o admin anotar. Se o número JÁ tiver PIN definido, tem de ser aquele.
+	PIN *string `json:"pin"`
 }

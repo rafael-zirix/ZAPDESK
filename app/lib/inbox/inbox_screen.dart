@@ -4,10 +4,14 @@ import 'package:provider/provider.dart';
 
 import '../core/config.dart';
 import '../core/file_pick.dart';
+import '../core/geolocation.dart';
 import '../core/theme.dart';
+import '../core/theme_controller.dart';
+import '../core/url_open.dart';
 import '../models/contact.dart';
 import '../models/message_template.dart';
 import '../models/support.dart';
+import 'audio_view.dart';
 import 'conversation_controller.dart';
 import 'inbox_controller.dart';
 
@@ -81,7 +85,7 @@ class _InboxScreenState extends State<InboxScreen> {
   // ---------- Barra do topo com o seletor de layout ----------
   Widget _topBar(InboxController inbox) {
     return Container(
-      color: Colors.white,
+      color: AppTheme.surface,
       padding: const EdgeInsets.fromLTRB(20, 10, 16, 10),
       child: Row(
         children: [
@@ -92,6 +96,15 @@ class _InboxScreenState extends State<InboxScreen> {
           _LayoutPicker(
             count: inbox.paneCount,
             onPick: inbox.setPaneCount,
+          ),
+          const SizedBox(width: 6),
+          // Alterna tema dia/noite — depois do seletor de janelas.
+          Consumer<ThemeController>(
+            builder: (context, tc, _) => IconButton(
+              tooltip: tc.isDark ? 'Tema claro (dia)' : 'Tema escuro (noite)',
+              onPressed: tc.toggle,
+              icon: Icon(tc.isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: Colors.grey.shade600),
+            ),
           ),
         ],
       ),
@@ -107,13 +120,61 @@ class _InboxScreenState extends State<InboxScreen> {
             'Selecione uma conversa para começar.\nEscolha o layout no alto para atender até 4 ao mesmo tempo.'),
       );
     }
-    final slots = <Widget>[
-      for (var i = 0; i < inbox.paneCount; i++)
-        i < inbox.open.length
-            ? _ConversationPane(conv: inbox.open[i], onClose: () => inbox.closePane(inbox.open[i]), templates: inbox.templates)
-            : _emptySlot(),
-    ];
-    return Container(color: AppTheme.bg, child: _grid(slots, inbox.paneCount));
+    final multi = inbox.paneCount > 1;
+    final slots = [for (var i = 0; i < inbox.paneCount; i++) _slot(inbox, i, multi)];
+    return Container(
+      color: multi ? AppTheme.gutter : AppTheme.bg,
+      padding: multi ? const EdgeInsets.all(2) : EdgeInsets.zero,
+      child: _grid(slots, inbox.paneCount),
+    );
+  }
+
+  // Cor por painel (modo multi): cada conversa aberta ganha uma identidade de cor
+  // no cabeçalho, pra não confundir qual é qual. Azul, amarelo, vermelho e o teal
+  // da marca (a cor de seleção que já existe).
+  static final _paneColors = <Color>[
+    const Color(0xFF2563EB), // azul
+    const Color(0xFFCA8A04), // amarelo (dourado, legível)
+    const Color(0xFFEF4444), // vermelho
+    AppTheme.seed, // teal
+  ];
+
+  // Um slot do grid. Em modo multi vira um CARTÃO com espaço e borda; a conversa
+  // em foco ganha borda verde + sombra, para não confundir qual é qual.
+  Widget _slot(InboxController inbox, int i, bool multi) {
+    final selected = multi && inbox.selectedPane == i;
+    final pane = i < inbox.open.length
+        ? _ConversationPane(
+            conv: inbox.open[i],
+            onClose: () => inbox.closePane(inbox.open[i]),
+            templates: inbox.templates,
+            selected: selected,
+            onSelect: multi ? () => inbox.selectPane(i) : null,
+            aiEnabled: inbox.aiEnabled,
+            accent: multi ? _paneColors[i % _paneColors.length] : null,
+          )
+        : _emptySlot();
+    if (!multi) return pane;
+    return Container(
+      margin: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected ? AppTheme.seed : AppTheme.border,
+          width: selected ? 2 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: selected ? AppTheme.seed.withValues(alpha: 0.22) : Colors.black.withValues(alpha: 0.06),
+            blurRadius: selected ? 14 : 6,
+            spreadRadius: selected ? 1 : 0,
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: pane,
+    );
   }
 
   Widget _grid(List<Widget> slots, int count) {
@@ -122,20 +183,13 @@ class _InboxScreenState extends State<InboxScreen> {
       case 1:
         return slots[0];
       case 2:
-        return Row(children: [col(slots[0]), const VerticalDivider(width: 1), col(slots[1])]);
+        return Row(children: [col(slots[0]), col(slots[1])]);
       case 3:
-        return Row(children: [
-          col(slots[0]),
-          const VerticalDivider(width: 1),
-          col(slots[1]),
-          const VerticalDivider(width: 1),
-          col(slots[2]),
-        ]);
+        return Row(children: [col(slots[0]), col(slots[1]), col(slots[2])]);
       default: // 4 → 2x2
         return Column(children: [
-          Expanded(child: Row(children: [col(slots[0]), const VerticalDivider(width: 1), col(slots[1])])),
-          const Divider(height: 1),
-          Expanded(child: Row(children: [col(slots[2]), const VerticalDivider(width: 1), col(slots[3])])),
+          Expanded(child: Row(children: [col(slots[0]), col(slots[1])])),
+          Expanded(child: Row(children: [col(slots[2]), col(slots[3])])),
         ]);
     }
   }
@@ -150,7 +204,7 @@ class _InboxScreenState extends State<InboxScreen> {
   // ---------- Lista de conversas ----------
   Widget _list(InboxController inbox) {
     return Container(
-      color: Colors.white,
+      color: AppTheme.surface,
       child: Column(
         children: [
           Container(
@@ -196,18 +250,29 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Widget _ticketTile(InboxController inbox, TicketListItem t) {
-    final sel = inbox.isOpen(t.id);
+    // Se a conversa está aberta num painel, o contato na lista ganha a MESMA cor
+    // da janela dela (azul/amarelo/vermelho/teal), pra casar visualmente.
+    final paneIdx = inbox.open.indexWhere((c) => c.ticket.id == t.id);
+    final sel = paneIdx >= 0;
+    final multi = inbox.paneCount > 1;
+    final paneColor = (sel && multi) ? _paneColors[paneIdx % _paneColors.length] : (sel ? AppTheme.seed : null);
+    final focused = sel && multi && inbox.selectedPane == paneIdx;
+    // Não lida = PENDENTE de abertura (mesmo com a IA já tendo respondido) →
+    // destaca em âmbar. Some quando a conversa é aberta (markRead zera o contador).
+    final pending = t.unreadCount > 0 && !sel;
     return InkWell(
       onTap: () => inbox.openTicket(t),
       child: Container(
-        color: sel ? AppTheme.sidebarSel : null,
+        color: paneColor != null
+            ? paneColor.withValues(alpha: focused ? 0.22 : 0.13)
+            : (pending ? Colors.amber.withValues(alpha: 0.13) : null),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
             CircleAvatar(
               radius: 22,
-              backgroundColor: AppTheme.seed.withValues(alpha: 0.15),
-              child: Text(t.initials, style: const TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700)),
+              backgroundColor: (paneColor ?? AppTheme.seed).withValues(alpha: 0.15),
+              child: Text(t.initials, style: TextStyle(color: paneColor ?? AppTheme.seed, fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -220,22 +285,36 @@ class _InboxScreenState extends State<InboxScreen> {
                         child: Text(t.displayName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                            style: TextStyle(fontWeight: t.unreadCount > 0 ? FontWeight.w800 : FontWeight.w600, fontSize: 15)),
                       ),
-                      Text(_time(t.lastMessageAt), style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                      Text(_time(t.lastMessageAt),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: t.unreadCount > 0 ? const Color(0xFF25D366) : Colors.grey.shade500,
+                              fontWeight: t.unreadCount > 0 ? FontWeight.w700 : FontWeight.normal)),
                     ],
                   ),
                   const SizedBox(height: 2),
                   Row(
                     children: [
                       Expanded(
-                        child: Text('#${t.protocol}',
+                        child: Text(t.prettyPhone,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                       ),
                       if (sel)
-                        const Icon(Icons.check_circle, size: 16, color: AppTheme.seed)
+                        Icon(Icons.check_circle, size: 16, color: paneColor ?? AppTheme.seed)
+                      else if (t.unreadCount > 0)
+                        Container(
+                          constraints: const BoxConstraints(minWidth: 20),
+                          height: 20,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(color: const Color(0xFF25D366), borderRadius: BorderRadius.circular(10)),
+                          child: Text(t.unreadCount > 99 ? '99+' : '${t.unreadCount}',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+                        )
                       else if (t.status == 'open')
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -286,28 +365,47 @@ class _InboxScreenState extends State<InboxScreen> {
 /// Um painel de conversa: escuta o seu [ConversationController] e se atualiza
 /// sozinho (independente dos outros painéis abertos).
 class _ConversationPane extends StatelessWidget {
-  const _ConversationPane({required this.conv, required this.onClose, this.templates = const [], this.showBack = false});
+  const _ConversationPane({
+    required this.conv,
+    required this.onClose,
+    this.templates = const [],
+    this.showBack = false,
+    this.selected = false,
+    this.onSelect,
+    this.aiEnabled = false,
+    this.accent,
+  });
 
   final ConversationController conv;
   final VoidCallback onClose;
   final List<MessageTemplate> templates;
   final bool showBack;
+  final bool selected;
+  final VoidCallback? onSelect;
+  final bool aiEnabled; // Atendente IA ligado na empresa → mostra o toggle no header
+  final Color? accent; // cor-identidade do painel (multi) — tinge o cabeçalho e o avatar
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: conv,
-      builder: (context, _) {
-        return Column(
-          children: [
-            _header(context),
-            const Divider(height: 1),
-            Expanded(child: _thread()),
-            _templatesBar(context),
-            _composer(context),
-          ],
-        );
-      },
+    // Clicar em qualquer lugar do painel o "seleciona" (foco) — sem consumir o
+    // evento, para os botões/campo internos seguirem funcionando.
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: onSelect == null ? null : (_) => onSelect!(),
+      child: ListenableBuilder(
+        listenable: conv,
+        builder: (context, _) {
+          return Column(
+            children: [
+              _header(context),
+              const Divider(height: 1),
+              Expanded(child: _thread()),
+              _templatesBar(context),
+              _composer(context),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -315,45 +413,67 @@ class _ConversationPane extends StatelessWidget {
   Widget _templatesBar(BuildContext context) {
     if (templates.isEmpty) return const SizedBox.shrink();
     return Container(
-      color: Colors.white,
+      color: AppTheme.surface,
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
       child: Align(
         alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: conv.sending ? null : () => _pickTemplate(context),
-          icon: const Icon(Icons.article_outlined, size: 18),
-          label: const Text('Modelos aprovados'),
-          style: TextButton.styleFrom(foregroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
+        child: Builder(
+          builder: (btnCtx) => TextButton.icon(
+            onPressed: conv.sending ? null : () => _pickTemplate(btnCtx),
+            icon: const Icon(Icons.article_outlined, size: 18),
+            label: const Text('Mensagens prontas'),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
+          ),
         ),
       ),
     );
   }
 
-  Future<void> _pickTemplate(BuildContext context) async {
-    final picked = await showModalBottomSheet<MessageTemplate>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => _TemplateSheet(templates: templates),
+  // Abre as mensagens prontas num popup compacto ACIMA do botão (igual ao emoji
+  // e ao menu +), em vez de um bottom-sheet grande.
+  Future<void> _pickTemplate(BuildContext btnCtx) async {
+    final box = btnCtx.findRenderObject() as RenderBox;
+    final overlayBox = Overlay.of(btnCtx).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlayBox),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlayBox),
+      ),
+      Offset.zero & overlayBox.size,
     );
-    if (picked == null || !context.mounted) return;
-    final sent = await conv.sendTemplate(picked.name, picked.language);
-    if (!sent && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível enviar o modelo')));
-    }
+    final picked = await showMenu<MessageTemplate>(
+      context: btnCtx,
+      position: position,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      items: [
+        PopupMenuItem<MessageTemplate>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: _TemplateSheet(templates: templates),
+        ),
+      ],
+    );
+    if (picked == null) return;
+    conv.stageTemplate(picked); // coloca no campo; o atendente revisa e aperta enviar
   }
 
   Widget _header(BuildContext context) {
     final t = conv.ticket;
+    final a = accent; // cor-identidade do painel (multi)
     return Container(
-      color: Colors.white,
+      decoration: BoxDecoration(
+        color: a != null
+            ? a.withValues(alpha: selected ? 0.22 : 0.14) // cabeçalho colorido por painel (mais forte se em foco)
+            : (selected ? AppTheme.sidebarSel : AppTheme.surface),
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Row(
         children: [
           if (showBack) IconButton(icon: const Icon(Icons.arrow_back), onPressed: onClose),
           CircleAvatar(
             radius: 18,
-            backgroundColor: AppTheme.seed.withValues(alpha: 0.15),
-            child: Text(t.initials, style: const TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700, fontSize: 13)),
+            backgroundColor: (a ?? AppTheme.seed).withValues(alpha: 0.2),
+            child: Text(t.initials, style: TextStyle(color: a ?? AppTheme.seed, fontWeight: FontWeight.w700, fontSize: 13)),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -365,6 +485,7 @@ class _ConversationPane extends StatelessWidget {
               ],
             ),
           ),
+          if (aiEnabled) _aiToggle(),
           if (!showBack)
             IconButton(
               icon: const Icon(Icons.close, size: 20),
@@ -372,6 +493,38 @@ class _ConversationPane extends StatelessWidget {
               onPressed: onClose,
             ),
         ],
+      ),
+    );
+  }
+
+  /// Chip que liga/pausa o Atendente IA nesta conversa (verde = respondendo,
+  /// cinza = pausada). O atendente pausa quando quiser assumir; ao reativar, a
+  /// IA volta a responder o cliente.
+  Widget _aiToggle() {
+    final active = !conv.ticket.aiPaused;
+    final color = active ? const Color(0xFF1F9D57) : Colors.grey;
+    return Padding(
+      padding: const EdgeInsets.only(right: 2),
+      child: Tooltip(
+        message: active ? 'IA respondendo — toque para pausar' : 'IA pausada — toque para reativar',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: conv.togglingAI ? null : () => conv.toggleAI(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withValues(alpha: 0.5)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(active ? Icons.smart_toy : Icons.smart_toy_outlined, size: 15, color: color),
+              const SizedBox(width: 5),
+              Text(active ? 'IA ativa' : 'IA off',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+            ]),
+          ),
+        ),
       ),
     );
   }
@@ -391,55 +544,199 @@ class _ConversationPane extends StatelessWidget {
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         itemCount: conv.messages.length,
-        itemBuilder: (_, i) => _bubble(conv.messages[conv.messages.length - 1 - i]),
+        itemBuilder: (ctx, i) => _bubble(ctx, conv.messages[conv.messages.length - 1 - i]),
       ),
     );
   }
 
-  Widget _bubble(Message m) {
+  Widget _bubble(BuildContext context, Message m) {
     final out = m.isOutbound;
+    // Localização: guardamos o link do mapa no conteúdo — vira um card clicável.
+    final mapUrl = _mapUrl(m.content);
+    final text = mapUrl != null ? m.content!.replaceAll(mapUrl, '').trim() : (m.content ?? '');
     return Align(
       alignment: out ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 420),
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-        decoration: BoxDecoration(
-          color: out ? AppTheme.bubbleOut : AppTheme.bubbleIn,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(10),
-            topRight: const Radius.circular(10),
-            bottomLeft: Radius.circular(out ? 10 : 2),
-            bottomRight: Radius.circular(out ? 2 : 10),
-          ),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 1, offset: const Offset(0, 1))],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (m.hasMedia) _media(m),
-            if ((m.content ?? '').isNotEmpty)
-              Text(m.content!, style: const TextStyle(fontSize: 14, height: 1.3)),
-            const SizedBox(height: 2),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(DateFormat('HH:mm').format(m.createdAt), style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
-                if (out) ...[
-                  const SizedBox(width: 4),
-                  switch (m.status) {
-                    'failed' => const Icon(Icons.error_outline, size: 13, color: Colors.red),
-                    'pending' => Icon(Icons.schedule, size: 12, color: Colors.grey.shade500),
-                    _ => const Icon(Icons.done_all, size: 13, color: AppTheme.seed),
-                  },
-                ],
-              ],
+      child: GestureDetector(
+        onLongPressStart: (d) => _msgMenu(context, m, d.globalPosition),
+        onSecondaryTapDown: (d) => _msgMenu(context, m, d.globalPosition),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 420),
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+          decoration: BoxDecoration(
+            color: out ? AppTheme.bubbleOut : AppTheme.bubbleIn,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(10),
+              topRight: const Radius.circular(10),
+              bottomLeft: Radius.circular(out ? 10 : 2),
+              bottomRight: Radius.circular(out ? 2 : 10),
             ),
-          ],
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 1, offset: const Offset(0, 1))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (m.hasMedia) _media(m),
+              if (mapUrl != null) _locationCard(mapUrl),
+              // Texto e, "ao lado" dele, a hora + os tracinhos de envio — alinhados
+              // à direita (estilo WhatsApp). Em texto curto ficam na mesma linha;
+              // em texto longo, a hora desce para a direita da última linha.
+              Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.end,
+                children: [
+                  if (text.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(text, style: const TextStyle(fontSize: 14, height: 1.3)),
+                    ),
+                  _meta(m, out),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  /// Extrai o link do Google Maps de uma mensagem de localização (ou null).
+  String? _mapUrl(String? content) {
+    if (content == null) return null;
+    return RegExp(r'https://www\.google\.com/maps\?q=[-0-9.]+,[-0-9.]+').firstMatch(content)?.group(0);
+  }
+
+  /// Card de localização (abre o mapa no navegador ao tocar).
+  Widget _locationCard(String url) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: InkWell(
+        onTap: () => openUrl(url),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 220,
+          decoration: BoxDecoration(color: const Color(0xFFEAF2FF), borderRadius: BorderRadius.circular(8)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                height: 84,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFD9E7F8),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+                ),
+                child: const Center(child: Icon(Icons.location_on, color: Color(0xFF2F80ED), size: 38)),
+              ),
+              const Padding(
+                padding: EdgeInsets.all(9),
+                child: Row(children: [
+                  Icon(Icons.map_outlined, size: 16, color: Color(0xFF2F80ED)),
+                  SizedBox(width: 6),
+                  Text('Ver no mapa', style: TextStyle(color: Color(0xFF2F80ED), fontWeight: FontWeight.w600, fontSize: 13)),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Menu de contexto da mensagem (long-press / clique direito): Encaminhar.
+  Future<void> _msgMenu(BuildContext ctx, Message m, Offset at) async {
+    final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox;
+    final choice = await showMenu<String>(
+      context: ctx,
+      position: RelativeRect.fromLTRB(at.dx, at.dy, overlay.size.width - at.dx, overlay.size.height - at.dy),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'forward',
+          height: 44,
+          child: Row(children: [Icon(Icons.forward, size: 18), SizedBox(width: 10), Text('Encaminhar')]),
+        ),
+      ],
+    );
+    if (choice == 'forward' && ctx.mounted) await _forwardFlow(ctx, m);
+  }
+
+  /// Escolhe o contato de destino e encaminha a mensagem.
+  Future<void> _forwardFlow(BuildContext ctx, Message m) async {
+    final inbox = ctx.read<InboxController>();
+    await inbox.loadContacts();
+    if (!ctx.mounted) return;
+    final picked = await showDialog<Contact>(
+      context: ctx,
+      builder: (_) => _ContactPickerDialog(contacts: inbox.contacts, title: 'Encaminhar para'),
+    );
+    if (picked == null || !ctx.mounted) return;
+    final ok = await conv.forward(m.id, picked.id);
+    if (!ctx.mounted) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+        content: Text(ok ? 'Mensagem encaminhada para ${picked.displayName}' : 'Não foi possível encaminhar')));
+  }
+
+  /// Item do menu de anexos (círculo colorido + label).
+  PopupMenuItem<String> _attachItem(String value, IconData icon, Color color, String label) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 46,
+      child: Row(
+        children: [
+          CircleAvatar(radius: 15, backgroundColor: color.withValues(alpha: 0.15), child: Icon(icon, color: color, size: 18)),
+          const SizedBox(width: 12),
+          Text(label),
+        ],
+      ),
+    );
+  }
+
+  /// Hora + tracinhos de envio, no canto inferior direito da bolha. Quando a
+  /// mensagem falhou, mostra "Reenviar" (toca para tentar de novo).
+  Widget _meta(Message m, bool out) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(DateFormat('HH:mm').format(m.createdAt),
+              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600)),
+          if (out) ...[
+            const SizedBox(width: 3),
+            if (m.status == 'failed')
+              InkWell(
+                onTap: () => conv.retry(m),
+                borderRadius: BorderRadius.circular(4),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 2),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.error_outline, size: 14, color: Colors.red),
+                    SizedBox(width: 2),
+                    Text('Reenviar', style: TextStyle(fontSize: 10.5, color: Colors.red, fontWeight: FontWeight.w700)),
+                  ]),
+                ),
+              )
+            else
+              _statusIcon(m.status),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Tracinhos de envio (estilo WhatsApp): relógio (pendente), ✓✓ (enviado/
+  /// entregue), ✓✓ azul (lido) e alerta (falhou).
+  Widget _statusIcon(String status) {
+    switch (status) {
+      case 'failed':
+        return const Icon(Icons.error_outline, size: 14, color: Colors.red);
+      case 'pending':
+        return Icon(Icons.access_time, size: 12.5, color: Colors.grey.shade600);
+      case 'read':
+        return const Icon(Icons.done_all, size: 15, color: Color(0xFF34B7F1));
+      default: // sent | delivered | outros
+        return Icon(Icons.done_all, size: 15, color: Colors.grey.shade600);
+    }
   }
 
   Widget _media(Message m) {
@@ -458,6 +755,12 @@ class _ConversationPane extends StatelessWidget {
                 : Container(height: 140, width: 200, alignment: Alignment.center, child: const CircularProgressIndicator(strokeWidth: 2)),
           ),
         ),
+      );
+    }
+    if (m.isAudio) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: audioView(url),
       );
     }
     return _fileCard(m);
@@ -490,8 +793,8 @@ class _ConversationPane extends StatelessWidget {
       }
     }
 
-    Future<void> pickAttachment() async {
-      final f = await pickFile();
+    Future<void> pickAndSend(String? accept) async {
+      final f = await pickFile(accept: accept);
       if (f == null) return;
       final ok = await conv.sendMedia(
         bytes: f.bytes,
@@ -506,6 +809,130 @@ class _ConversationPane extends StatelessWidget {
       }
     }
 
+    Future<void> doSendLocation(BuildContext ctx) async {
+      final pos = await currentPosition();
+      if (pos == null) {
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+              content: Text('Não foi possível obter a localização. Verifique a permissão do navegador.')));
+        }
+        return;
+      }
+      if (!ctx.mounted) return;
+      final go = await showDialog<bool>(
+        context: ctx,
+        builder: (_) => AlertDialog(
+          title: const Text('Enviar localização'),
+          content: const Text('Enviar a sua localização atual para este contato?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+              child: const Text('Enviar'),
+            ),
+          ],
+        ),
+      );
+      if (go != true || !ctx.mounted) return;
+      final ok = await conv.sendLocation(lat: pos.$1, lng: pos.$2);
+      if (!ok && ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Não foi possível enviar a localização')));
+      }
+    }
+
+    Future<void> doSendContact(BuildContext ctx) async {
+      final inbox = ctx.read<InboxController>();
+      await inbox.loadContacts();
+      if (!ctx.mounted) return;
+      final picked = await showDialog<Contact>(
+        context: ctx,
+        builder: (_) => _ContactPickerDialog(contacts: inbox.contacts, title: 'Enviar contato'),
+      );
+      if (picked == null || !ctx.mounted) return;
+      final ok = await conv.sendContact(name: picked.displayName, phone: picked.phone);
+      if (!ok && ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Não foi possível enviar o contato')));
+      }
+    }
+
+    Future<void> doSendButtons(BuildContext ctx) async {
+      final res = await showDialog<({String body, List<String> buttons})>(
+        context: ctx,
+        builder: (_) => const _ButtonsBuilderDialog(),
+      );
+      if (res == null || !ctx.mounted) return;
+      final ok = await conv.sendButtons(res.body, res.buttons);
+      if (!ok && ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+            content: Text('Não foi possível enviar. Botões só funcionam se o cliente te escreveu nas últimas 24h.')));
+      }
+    }
+
+    Future<void> doSendList(BuildContext ctx) async {
+      final res = await showDialog<
+          ({String body, String buttonLabel, String sectionTitle, List<({String title, String description})> rows})>(
+        context: ctx,
+        builder: (_) => const _ListBuilderDialog(),
+      );
+      if (res == null || !ctx.mounted) return;
+      final ok = await conv.sendList(res.body, res.buttonLabel, res.sectionTitle, res.rows);
+      if (!ok && ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+            content: Text('Não foi possível enviar. O menu só funciona se o cliente te escreveu nas últimas 24h.')));
+      }
+    }
+
+    // Menu de anexos como popup compacto ACIMA do botão (não tampa o campo).
+    Future<void> openAttachMenu(BuildContext btnCtx) async {
+      final box = btnCtx.findRenderObject() as RenderBox;
+      final overlayBox = Overlay.of(btnCtx).context.findRenderObject() as RenderBox;
+      final position = RelativeRect.fromRect(
+        Rect.fromPoints(
+          box.localToGlobal(Offset.zero, ancestor: overlayBox),
+          box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlayBox),
+        ),
+        Offset.zero & overlayBox.size,
+      );
+      final choice = await showMenu<String>(
+        context: btnCtx,
+        position: position,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        items: [
+          _attachItem('photos', Icons.photo_library_outlined, const Color(0xFF7B4DFF), 'Fotos e vídeos'),
+          _attachItem('file', Icons.insert_drive_file_outlined, const Color(0xFF2F80ED), 'Arquivo'),
+          _attachItem('buttons', Icons.smart_button_outlined, const Color(0xFF00A884), 'Botões'),
+          _attachItem('list', Icons.list_alt_outlined, const Color(0xFF6941C6), 'Lista / Menu'),
+          _attachItem('location', Icons.location_on_outlined, const Color(0xFF12B76A), 'Localização'),
+          _attachItem('contact', Icons.person_outline, const Color(0xFFF79009), 'Contato'),
+        ],
+      );
+      if (!btnCtx.mounted) return;
+      switch (choice) {
+        case 'photos':
+          await pickAndSend('image/*,video/*');
+        case 'file':
+          await pickAndSend(null);
+        case 'buttons':
+          await doSendButtons(btnCtx);
+        case 'list':
+          await doSendList(btnCtx);
+        case 'location':
+          await doSendLocation(btnCtx);
+        case 'contact':
+          await doSendContact(btnCtx);
+      }
+    }
+
+    Future<void> startRec() async {
+      final ok = await conv.startRecording();
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível acessar o microfone. Verifique a permissão do navegador.')),
+        );
+      }
+    }
+
     void insertEmoji(String emoji) {
       final t = conv.composer;
       final sel = t.selection;
@@ -517,24 +944,46 @@ class _ConversationPane extends StatelessWidget {
       }
     }
 
+    // Emoji num popup compacto ACIMA do botão (igual ao menu +).
+    void openEmoji(BuildContext btnCtx) {
+      final box = btnCtx.findRenderObject() as RenderBox;
+      final overlayBox = Overlay.of(btnCtx).context.findRenderObject() as RenderBox;
+      final position = RelativeRect.fromRect(
+        Rect.fromPoints(
+          box.localToGlobal(Offset.zero, ancestor: overlayBox),
+          box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlayBox),
+        ),
+        Offset.zero & overlayBox.size,
+      );
+      showMenu<void>(
+        context: btnCtx,
+        position: position,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        items: [
+          PopupMenuItem<void>(
+            enabled: false,
+            padding: EdgeInsets.zero,
+            child: _EmojiGrid(onPick: insertEmoji),
+          ),
+        ],
+      );
+    }
+
+    // Durante a gravação, o compositor vira a barra de gravação.
+    if (conv.recording) return _recordingBar(context);
+
     return Container(
-      color: Colors.white,
+      color: AppTheme.surface,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => showModalBottomSheet<void>(
-              context: context,
-              showDragHandle: true,
-              builder: (_) => _EmojiSheet(onPick: insertEmoji),
+          // "+" abre o menu de anexos (popup acima), como o WhatsApp.
+          Builder(
+            builder: (btnCtx) => IconButton(
+              onPressed: conv.sending ? null : () => openAttachMenu(btnCtx),
+              tooltip: 'Anexar',
+              icon: Icon(Icons.add, color: Colors.grey.shade700),
             ),
-            tooltip: 'Emoji',
-            icon: Icon(Icons.emoji_emotions_outlined, color: Colors.grey.shade600),
-          ),
-          IconButton(
-            onPressed: conv.sending ? null : pickAttachment,
-            tooltip: 'Anexar foto ou arquivo',
-            icon: Icon(Icons.attach_file, color: Colors.grey.shade600),
           ),
           Expanded(
             child: TextField(
@@ -545,15 +994,73 @@ class _ConversationPane extends StatelessWidget {
               onSubmitted: (_) => doSend(),
               decoration: InputDecoration(
                 hintText: 'Mensagem…',
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                isDense: true,
+                contentPadding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+                filled: true,
                 fillColor: AppTheme.bg,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
+                // Emoji DENTRO do campo, à direita (como o WhatsApp).
+                suffixIcon: Builder(
+                  builder: (emojiCtx) => IconButton(
+                    onPressed: () => openEmoji(emojiCtx),
+                    tooltip: 'Emoji',
+                    icon: Icon(Icons.emoji_emotions_outlined, color: Colors.grey.shade600, size: 22),
+                  ),
+                ),
               ),
             ),
           ),
           const SizedBox(width: 6),
+          // Botão à direita: microfone (campo vazio) ↔ seta enviar (com texto).
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: conv.composer,
+            builder: (_, value, _) {
+              final hasText = value.text.trim().isNotEmpty;
+              return IconButton.filled(
+                onPressed: conv.sending ? null : (hasText ? doSend : startRec),
+                tooltip: hasText ? 'Enviar' : 'Gravar áudio',
+                style: IconButton.styleFrom(backgroundColor: AppTheme.seed),
+                icon: conv.sending
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Icon(hasText ? Icons.send : Icons.mic, color: Colors.white, size: 20),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Barra que substitui o compositor durante a gravação de áudio.
+  Widget _recordingBar(BuildContext context) {
+    Future<void> sendRec() async {
+      final ok = await conv.stopAndSendRecording();
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível enviar o áudio')));
+      }
+    }
+
+    final s = conv.recordSeconds;
+    final mmss = '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
+    return Container(
+      color: AppTheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: conv.sending ? null : conv.cancelRecording,
+            tooltip: 'Cancelar',
+            icon: const Icon(Icons.delete_outline, color: Colors.red),
+          ),
+          const _RecordingDot(),
+          const SizedBox(width: 10),
+          Text('Gravando…  $mmss', style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
+          const Spacer(),
           IconButton.filled(
-            onPressed: conv.sending ? null : doSend,
+            onPressed: conv.sending ? null : sendRec,
+            tooltip: 'Enviar áudio',
             style: IconButton.styleFrom(backgroundColor: AppTheme.seed),
             icon: conv.sending
                 ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -602,7 +1109,7 @@ class _LayoutPicker extends StatelessWidget {
             width: 34,
             height: 28,
             decoration: BoxDecoration(
-              color: active ? Colors.white : Colors.transparent,
+              color: active ? AppTheme.surface : Colors.transparent,
               borderRadius: BorderRadius.circular(7),
               border: Border.all(color: active ? AppTheme.seed : Colors.transparent, width: 1.4),
               boxShadow: active ? [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 3)] : null,
@@ -649,8 +1156,9 @@ class _LayoutPicker extends StatelessWidget {
 
 /// Seletor de contato para iniciar uma nova conversa (com busca).
 class _ContactPickerDialog extends StatefulWidget {
-  const _ContactPickerDialog({required this.contacts});
+  const _ContactPickerDialog({required this.contacts, this.title = 'Nova conversa'});
   final List<Contact> contacts;
+  final String title;
 
   @override
   State<_ContactPickerDialog> createState() => _ContactPickerDialogState();
@@ -677,7 +1185,7 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
               child: Row(
                 children: [
-                  const Text('Nova conversa', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                  Text(widget.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                   const Spacer(),
                   IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
                 ],
@@ -728,66 +1236,290 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
       );
 }
 
+/// Monta uma mensagem com botões de resposta rápida (1 a 3). Devolve o corpo + os
+/// títulos ao fechar em "Enviar".
+class _ButtonsBuilderDialog extends StatefulWidget {
+  const _ButtonsBuilderDialog();
+  @override
+  State<_ButtonsBuilderDialog> createState() => _ButtonsBuilderDialogState();
+}
+
+class _ButtonsBuilderDialogState extends State<_ButtonsBuilderDialog> {
+  final _body = TextEditingController();
+  final List<TextEditingController> _buttons = [TextEditingController(), TextEditingController()];
+
+  @override
+  void dispose() {
+    _body.dispose();
+    for (final c in _buttons) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  List<String> get _titles => _buttons.map((c) => c.text.trim()).where((t) => t.isNotEmpty).toList();
+  bool get _valid => _body.text.trim().isNotEmpty && _titles.isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Enviar botões'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _body,
+              minLines: 2,
+              maxLines: 4,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(labelText: 'Mensagem', hintText: 'Ex.: Como posso ajudar?'),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Botões (até 3)',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(height: 6),
+            for (int i = 0; i < _buttons.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _buttons[i],
+                        maxLength: 20,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          counterText: '',
+                          hintText: 'Botão ${i + 1}',
+                          prefixIcon: const Icon(Icons.smart_button_outlined, size: 18),
+                        ),
+                      ),
+                    ),
+                    if (_buttons.length > 1)
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline, size: 20),
+                        onPressed: () => setState(() => _buttons.removeAt(i).dispose()),
+                      ),
+                  ],
+                ),
+              ),
+            if (_buttons.length < 3)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _buttons.add(TextEditingController())),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Adicionar botão'),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: _valid ? () => Navigator.pop(context, (body: _body.text.trim(), buttons: _titles)) : null,
+          style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+          child: const Text('Enviar'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Monta um menu de lista (1 a 10 itens, cada um com título e descrição opcional).
+class _ListBuilderDialog extends StatefulWidget {
+  const _ListBuilderDialog();
+  @override
+  State<_ListBuilderDialog> createState() => _ListBuilderDialogState();
+}
+
+class _ListBuilderDialogState extends State<_ListBuilderDialog> {
+  final _body = TextEditingController();
+  final _buttonLabel = TextEditingController(text: 'Ver opções');
+  final _sectionTitle = TextEditingController(text: 'Opções');
+  final List<({TextEditingController title, TextEditingController desc})> _rows = [
+    (title: TextEditingController(), desc: TextEditingController()),
+    (title: TextEditingController(), desc: TextEditingController()),
+  ];
+
+  @override
+  void dispose() {
+    _body.dispose();
+    _buttonLabel.dispose();
+    _sectionTitle.dispose();
+    for (final r in _rows) {
+      r.title.dispose();
+      r.desc.dispose();
+    }
+    super.dispose();
+  }
+
+  List<({String title, String description})> get _validRows => [
+        for (final r in _rows)
+          if (r.title.text.trim().isNotEmpty) (title: r.title.text.trim(), description: r.desc.text.trim()),
+      ];
+  bool get _valid => _body.text.trim().isNotEmpty && _validRows.isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Enviar lista / menu'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: _body,
+                minLines: 2,
+                maxLines: 4,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(labelText: 'Mensagem', hintText: 'Ex.: Escolha uma opção:'),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _buttonLabel,
+                      maxLength: 20,
+                      decoration: const InputDecoration(isDense: true, counterText: '', labelText: 'Botão da lista'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _sectionTitle,
+                      maxLength: 24,
+                      decoration: const InputDecoration(isDense: true, counterText: '', labelText: 'Título da seção'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Itens (até 10)',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12, fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 6),
+              for (int i = 0; i < _rows.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          children: [
+                            TextField(
+                              controller: _rows[i].title,
+                              maxLength: 24,
+                              onChanged: (_) => setState(() {}),
+                              decoration: InputDecoration(isDense: true, counterText: '', hintText: 'Item ${i + 1}'),
+                            ),
+                            const SizedBox(height: 4),
+                            TextField(
+                              controller: _rows[i].desc,
+                              maxLength: 72,
+                              decoration: const InputDecoration(isDense: true, counterText: '', hintText: 'Descrição (opcional)'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_rows.length > 1)
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline, size: 20),
+                          onPressed: () => setState(() {
+                            final r = _rows.removeAt(i);
+                            r.title.dispose();
+                            r.desc.dispose();
+                          }),
+                        ),
+                    ],
+                  ),
+                ),
+              if (_rows.length < 10)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _rows.add((title: TextEditingController(), desc: TextEditingController()))),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Adicionar item'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: _valid
+              ? () => Navigator.pop(context, (
+                    body: _body.text.trim(),
+                    buttonLabel: _buttonLabel.text.trim(),
+                    sectionTitle: _sectionTitle.text.trim(),
+                    rows: _validRows,
+                  ))
+              : null,
+          style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+          child: const Text('Enviar'),
+        ),
+      ],
+    );
+  }
+}
+
 /// Folha de seleção dos modelos aprovados. Toca no modelo (ou em "Enviar") para
 /// devolvê-lo a quem abriu — que dispara o envio.
+// Corpo compacto das "Mensagens prontas" — exibido num popup (showMenu) acima do
+// botão. Toca numa mensagem → Navigator.pop devolve o modelo para o showMenu.
 class _TemplateSheet extends StatelessWidget {
   const _TemplateSheet({required this.templates});
   final List<MessageTemplate> templates;
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320, maxHeight: 280),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Modelos aprovados', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            ),
+            padding: EdgeInsets.fromLTRB(14, 10, 14, 6),
+            child: Text('Mensagens prontas',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppTheme.seed)),
           ),
           Flexible(
             child: ListView.separated(
               shrinkWrap: true,
+              padding: EdgeInsets.zero,
               itemCount: templates.length,
-              separatorBuilder: (_, _) => const Divider(height: 1, indent: 16),
+              separatorBuilder: (_, _) => Divider(height: 1, indent: 14, color: AppTheme.border),
               itemBuilder: (_, i) {
                 final t = templates[i];
+                // Só a mensagem (toca para colocar no campo — o atendente envia).
                 return InkWell(
                   onTap: () => Navigator.pop(context, t),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 3),
-                              Text(
-                                t.bodyText ?? '(sem prévia)',
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: Colors.grey.shade600, height: 1.3, fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(context, t),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppTheme.seed,
-                            // reseta o "full-width" herdado do tema, p/ o botão ficar compacto
-                            minimumSize: const Size(0, 40),
-                            padding: const EdgeInsets.symmetric(horizontal: 18),
-                          ),
-                          child: const Text('Enviar'),
-                        ),
-                      ],
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    child: Text(
+                      t.bodyText ?? t.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13, height: 1.3),
                     ),
                   ),
                 );
@@ -800,10 +1532,10 @@ class _TemplateSheet extends StatelessWidget {
   }
 }
 
-/// Painel de emojis (mais usados no atendimento). Toca para inserir no texto;
-/// fica aberto para inserir vários.
-class _EmojiSheet extends StatelessWidget {
-  const _EmojiSheet({required this.onPick});
+/// Grade de emojis compacta, exibida num popup acima do compositor (igual ao
+/// menu +). Toca para inserir no texto; fica aberta para inserir vários.
+class _EmojiGrid extends StatelessWidget {
+  const _EmojiGrid({required this.onPick});
   final void Function(String) onPick;
 
   static const _emojis = [
@@ -816,32 +1548,53 @@ class _EmojiSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: SizedBox(
-        height: 280,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Emojis', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    return SizedBox(
+      width: 336,
+      height: 224,
+      child: GridView.count(
+        crossAxisCount: 8,
+        padding: const EdgeInsets.all(6),
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+        children: [
+          for (final e in _emojis)
+            InkWell(
+              onTap: () => onPick(e),
+              borderRadius: BorderRadius.circular(6),
+              child: Center(child: Text(e, style: const TextStyle(fontSize: 21))),
             ),
-            Expanded(
-              child: GridView.count(
-                crossAxisCount: 8,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  for (final e in _emojis)
-                    InkWell(
-                      onTap: () => onPick(e),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Center(child: Text(e, style: const TextStyle(fontSize: 24))),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pontinho vermelho pulsante da barra de gravação de áudio.
+class _RecordingDot extends StatefulWidget {
+  const _RecordingDot();
+
+  @override
+  State<_RecordingDot> createState() => _RecordingDotState();
+}
+
+class _RecordingDotState extends State<_RecordingDot> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 1, end: 0.25).animate(_c),
+      child: Container(
+        width: 11,
+        height: 11,
+        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
       ),
     );
   }

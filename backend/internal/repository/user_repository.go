@@ -70,6 +70,22 @@ func (r *UserRepository) FindByEmailGlobal(email string) (*models.User, error) {
 	return u, err
 }
 
+// FindByPhoneGlobal busca por telefone em qualquer conta (login por OTP via
+// WhatsApp). Compara ignorando formatação e código do país: casa pelos últimos
+// 11 dígitos (DDD + número), então funciona com o telefone gravado com ou sem +55.
+func (r *UserRepository) FindByPhoneGlobal(phone string) (*models.User, error) {
+	row := r.db.QueryRow(`SELECT `+userColumns+` FROM users
+		WHERE length($1) >= 8
+		  AND right(regexp_replace(coalesce(phone,''), '\D', '', 'g'), 11) = right($1, 11)
+		  AND deleted_at IS NULL AND is_active=true
+		ORDER BY created_at LIMIT 1`, phone)
+	u, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return u, err
+}
+
 // ListByAccount lista os usuários ativos de uma conta.
 func (r *UserRepository) ListByAccount(accountID string) ([]models.User, error) {
 	rows, err := r.db.Query(`SELECT `+userColumns+` FROM users

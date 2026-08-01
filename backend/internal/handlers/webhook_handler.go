@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,7 @@ type mediaObj struct {
 // metaPayload é o recorte do payload que nos interessa.
 type metaPayload struct {
 	Entry []struct {
+		ID      string `json:"id"` // WABA id — resolve o secret em eventos sem número (status de template/conta)
 		Changes []struct {
 			Value struct {
 				Metadata struct {
@@ -71,7 +73,36 @@ type metaPayload struct {
 					Document *mediaObj `json:"document"`
 					Audio    *mediaObj `json:"audio"`
 					Video    *mediaObj `json:"video"`
+					Location *struct {
+						Latitude  float64 `json:"latitude"`
+						Longitude float64 `json:"longitude"`
+						Name      string  `json:"name"`
+						Address   string  `json:"address"`
+					} `json:"location"`
+					// Resposta a botão/lista interativa (o cliente tocou numa opção).
+					Interactive *struct {
+						Type        string `json:"type"` // button_reply | list_reply
+						ButtonReply *struct {
+							ID    string `json:"id"`
+							Title string `json:"title"`
+						} `json:"button_reply"`
+						ListReply *struct {
+							ID          string `json:"id"`
+							Title       string `json:"title"`
+							Description string `json:"description"`
+						} `json:"list_reply"`
+					} `json:"interactive"`
+					// Resposta a botão de TEMPLATE (quick-reply de modelo).
+					Button *struct {
+						Text    string `json:"text"`
+						Payload string `json:"payload"`
+					} `json:"button"`
 				} `json:"messages"`
+				Statuses []struct {
+					ID          string `json:"id"`     // wamid da mensagem de saída
+					Status      string `json:"status"` // sent | delivered | read | failed
+					RecipientID string `json:"recipient_id"`
+				} `json:"statuses"`
 			} `json:"value"`
 		} `json:"changes"`
 	} `json:"entry"`
@@ -80,13 +111,29 @@ type metaPayload struct {
 // Receive processa as mensagens recebidas (POST). Valida a assinatura HMAC.
 func (h *WebhookHandler) Receive(c *gin.Context) {
 	raw, _ := io.ReadAll(c.Request.Body)
-	if !h.validSignature(c.GetHeader("X-Hub-Signature-256"), raw) {
-		c.Status(http.StatusUnauthorized)
-		return
-	}
+	// Parseia ANTES de validar a assinatura porque o phone_number_id do payload
+	// escolhe QUAL segredo valida: números sob o app PRÓPRIO do cliente são
+	// assinados com o App Secret dele (guardado por-conta), não o da plataforma.
+	// Só json.Unmarshal aqui — nada é processado antes de a assinatura conferir.
 	var p metaPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		c.Status(http.StatusOK) // responde 200 p/ a Meta não reenviar; loga o erro
+		c.Status(http.StatusOK) // responde 200 p/ a Meta não reenviar
+		return
+	}
+	// Escolhe o segredo que valida a assinatura: número sob o app PRÓPRIO do
+	// cliente usa o App Secret dele. Resolve pela conta dona — pelo número quando
+	// há mensagem, ou pela WABA nos eventos sem número (status de template/conta).
+	secret := h.appSecret
+	pnid := firstPhoneNumberID(&p)
+	wabaID := firstWabaID(&p)
+	if s, ok := h.support.AppSecretForPhoneNumberID(pnid); ok {
+		secret = s
+	} else if s, ok := h.support.AppSecretForWabaID(wabaID); ok {
+		secret = s
+	}
+	if !validSignatureWith(secret, c.GetHeader("X-Hub-Signature-256"), raw) {
+		slog.Warn("webhook: assinatura inválida — payload descartado", "phone_number_id", pnid, "waba_id", wabaID, "tam", len(raw))
+		c.Status(http.StatusUnauthorized)
 		return
 	}
 	for _, e := range p.Entry {
@@ -97,6 +144,9 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 			accountID := h.defaultAccountID
 			if aid, err := h.support.AccountByPhoneNumberID(v.Metadata.PhoneNumberID); err == nil && aid != "" {
 				accountID = aid
+			}
+			if len(v.Messages) > 0 {
+				slog.Info("webhook: mensagens recebidas", "phone_number_id", v.Metadata.PhoneNumberID, "conta", accountID, "qtd", len(v.Messages))
 			}
 			// Mapa wa_id → nome do perfil.
 			names := map[string]string{}
@@ -111,8 +161,51 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 					name = &n
 				}
 				if m.Type == "text" {
-					if err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body); err != nil {
+					tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body)
+					if err != nil {
 						slog.Error("Falha ao processar mensagem recebida", "erro", err, "wamid", m.ID)
+					} else if tid != "" {
+						go h.support.TriggerAIReply(accountID, tid)
+					}
+					continue
+				}
+				if m.Type == "location" && m.Location != nil {
+					link := fmt.Sprintf("📍 Localização\nhttps://www.google.com/maps?q=%.6f,%.6f",
+						m.Location.Latitude, m.Location.Longitude)
+					if _, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, link); err != nil {
+						slog.Error("Falha ao processar localização recebida", "erro", err, "wamid", m.ID)
+					}
+					continue
+				}
+				// Resposta a botão/lista interativa: grava o título escolhido como
+				// mensagem recebida (aparece normalmente na thread).
+				if m.Type == "interactive" && m.Interactive != nil {
+					title := ""
+					switch {
+					case m.Interactive.ButtonReply != nil:
+						title = m.Interactive.ButtonReply.Title
+					case m.Interactive.ListReply != nil:
+						title = m.Interactive.ListReply.Title
+					}
+					if title != "" {
+						tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, title)
+						if err != nil {
+							slog.Error("Falha ao processar resposta interativa", "erro", err, "wamid", m.ID)
+						} else if tid != "" {
+							go h.support.TriggerAIReply(accountID, tid)
+						}
+					}
+					continue
+				}
+				// Resposta a botão de TEMPLATE (quick-reply).
+				if m.Type == "button" && m.Button != nil {
+					if m.Button.Text != "" {
+						tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Button.Text)
+						if err != nil {
+							slog.Error("Falha ao processar botão recebido", "erro", err, "wamid", m.ID)
+						} else if tid != "" {
+							go h.support.TriggerAIReply(accountID, tid)
+						}
 					}
 					continue
 				}
@@ -135,20 +228,52 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 					slog.Error("Falha ao processar mídia recebida", "erro", err, "wamid", m.ID)
 				}
 			}
+			// Status de entrega das mensagens de saída (✓✓): atualiza pelo wamid.
+			for _, st := range v.Statuses {
+				if err := h.support.ProcessStatus(accountID, st.ID, st.Status); err != nil {
+					slog.Error("Falha ao atualizar status da mensagem", "erro", err, "wamid", st.ID)
+				}
+			}
 		}
 	}
 	c.Status(http.StatusOK)
 }
 
-// validSignature confere o HMAC-SHA256 do corpo com o app secret. Se não houver
-// app secret configurado (dev), aceita.
-func (h *WebhookHandler) validSignature(header string, body []byte) bool {
-	if h.appSecret == "" {
+// validSignatureWith confere o HMAC-SHA256 do corpo com o app secret informado.
+// Se não houver app secret (dev), aceita.
+func validSignatureWith(secret, header string, body []byte) bool {
+	if secret == "" {
 		return true
 	}
 	sig := strings.TrimPrefix(header, "sha256=")
-	mac := hmac.New(sha256.New, []byte(h.appSecret))
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(sig), []byte(expected))
+}
+
+// firstPhoneNumberID extrai o phone_number_id do payload. Todas as mensagens de
+// um POST vêm da mesma WABA/app, então o primeiro basta para escolher o segredo
+// que valida a assinatura.
+func firstPhoneNumberID(p *metaPayload) string {
+	for _, e := range p.Entry {
+		for _, ch := range e.Changes {
+			if ch.Value.Metadata.PhoneNumberID != "" {
+				return ch.Value.Metadata.PhoneNumberID
+			}
+		}
+	}
+	return ""
+}
+
+// firstWabaID extrai o WABA id (entry.id) do payload. Usado para resolver o
+// segredo em eventos que não trazem número (status de template/conta), que a
+// Meta reenvia até receber 2xx.
+func firstWabaID(p *metaPayload) string {
+	for _, e := range p.Entry {
+		if e.ID != "" {
+			return e.ID
+		}
+	}
+	return ""
 }

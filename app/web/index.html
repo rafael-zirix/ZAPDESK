@@ -18,18 +18,18 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Zapdesk — atendimento por WhatsApp para empresas.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="zapdesk_app">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <meta name="apple-mobile-web-app-title" content="Zapdesk">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png?v=2">
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <!-- Favicon (v2: logo do Zapdesk) -->
+  <link rel="icon" type="image/png" href="favicon.png?v=2"/>
 
-  <title>zapdesk_app</title>
+  <title>Zapdesk</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
@@ -41,6 +41,50 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <!-- Embedded Signup da Meta (onboarding self-service). Inerte até ser chamado
+       pelo app; carrega o SDK sob demanda e devolve code + IDs do número. -->
+  <script>
+  window.zapEmbeddedSignup = function (appId, configId, graphVersion) {
+    return new Promise(function (resolve, reject) {
+      var session = {};
+      function onMessage(event) {
+        try {
+          if ((event.origin || '').indexOf('facebook.com') === -1) return;
+          var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.data) session = data.data;
+        } catch (e) {}
+      }
+      function launch() {
+        window.addEventListener('message', onMessage);
+        window.FB.login(function (response) {
+          window.removeEventListener('message', onMessage);
+          var code = response && response.authResponse && response.authResponse.code;
+          if (code) {
+            resolve({ code: code, waba_id: session.waba_id || '', phone_number_id: session.phone_number_id || '' });
+          } else {
+            resolve(null); // usuário cancelou
+          }
+        }, {
+          config_id: configId,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: { sessionInfoVersion: 3 }
+        });
+      }
+      if (window.FB) { launch(); return; }
+      window.fbAsyncInit = function () {
+        window.FB.init({ appId: appId, autoLogAppEvents: true, xfbml: false, version: graphVersion });
+        launch();
+      };
+      var js = document.createElement('script');
+      js.async = true;
+      js.src = 'https://connect.facebook.net/en_US/sdk.js';
+      js.onerror = function () { reject('sdk_load_failed'); };
+      document.body.appendChild(js);
+    });
+  };
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

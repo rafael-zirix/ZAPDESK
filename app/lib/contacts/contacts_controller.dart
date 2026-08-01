@@ -35,6 +35,26 @@ class ContactsController extends ChangeNotifier {
     return r.message ?? 'Não foi possível salvar o contato';
   }
 
+  /// Importa vários contatos (nome/telefone), criando um a um. Duplicados e
+  /// falhas são apenas ignorados. Retorna (importados, ignorados).
+  Future<(int, int)> importContacts(List<({String name, String phone})> items) async {
+    var ok = 0, skipped = 0;
+    for (final it in items) {
+      if (it.phone.trim().isEmpty) {
+        skipped++;
+        continue;
+      }
+      final r = await _api.post('/contacts', {'name': it.name, 'phone': it.phone});
+      if (r.ok) {
+        ok++;
+      } else {
+        skipped++;
+      }
+    }
+    await load();
+    return (ok, skipped);
+  }
+
   /// Exclui o contato. Retorna null em sucesso, ou o erro.
   Future<String?> remove(String id) async {
     final r = await _api.delete('/contacts/$id');

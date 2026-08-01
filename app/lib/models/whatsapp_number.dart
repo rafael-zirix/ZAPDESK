@@ -7,6 +7,7 @@ class WhatsAppNumber {
     required this.status,
     this.displayPhone,
     this.verifiedName,
+    this.photoUrl,
   });
 
   final String id;
@@ -15,6 +16,7 @@ class WhatsAppNumber {
   final String status; // connected | disconnected | pending
   final String? displayPhone;
   final String? verifiedName;
+  final String? photoUrl;
 
   String get title => (verifiedName != null && verifiedName!.isNotEmpty)
       ? verifiedName!
@@ -27,5 +29,6 @@ class WhatsAppNumber {
         status: j['status'] ?? 'connected',
         displayPhone: j['display_phone'],
         verifiedName: j['verified_name'],
+        photoUrl: j['photo_url'],
       );
 }

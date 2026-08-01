@@ -66,6 +66,7 @@ func (h *AdminHandler) UpdateAccount(c *gin.Context) {
 	}
 	RespondSuccess(c, http.StatusOK, "Empresa atualizada", gin.H{
 		"id": a.ID, "name": a.Name, "status": a.Status, "created_at": a.CreatedAt,
+		"otp_whatsapp_enabled": a.OTPWhatsAppEnabled, "otp_email_enabled": a.OTPEmailEnabled,
 	})
 }
 

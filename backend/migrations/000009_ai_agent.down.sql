@@ -1,0 +1,10 @@
+ALTER TABLE support_tickets DROP COLUMN IF EXISTS ai_paused;
+DROP TABLE IF EXISTS ai_token_ledger;
+DROP TABLE IF EXISTS ai_context_items;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_payment_ref;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_autorecharge_amount;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_autorecharge_threshold;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_autorecharge_enabled;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_token_balance;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_instructions;
+ALTER TABLE accounts DROP COLUMN IF EXISTS ai_enabled;

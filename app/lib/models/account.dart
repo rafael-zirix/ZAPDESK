@@ -18,6 +18,8 @@ class Account {
     this.district,
     this.city,
     this.state,
+    this.otpWhatsAppEnabled = true,
+    this.otpEmailEnabled = true,
   });
 
   final String id;
@@ -25,6 +27,10 @@ class Account {
   final String status;
   final String? slug;
   final int numbersCount;
+
+  // Canais de OTP de login permitidos pela empresa.
+  final bool otpWhatsAppEnabled;
+  final bool otpEmailEnabled;
 
   // Ficha
   final String? personType; // pf | pj

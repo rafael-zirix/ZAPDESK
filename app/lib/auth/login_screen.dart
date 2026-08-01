@@ -12,13 +12,27 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final _phone = TextEditingController();
   final _email = TextEditingController();
   final _code = TextEditingController();
+
+  // Login por celular (padrão, código no WhatsApp) ou por e-mail (reserva).
+  bool _useEmail = false;
+
+  @override
+  void dispose() {
+    _phone.dispose();
+    _email.dispose();
+    _code.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
     final awaiting = auth.status == AuthStatus.awaitingCode;
+    final pending = auth.pendingIdentifier ?? '';
+    final viaWhats = !pending.contains('@');
 
     return Scaffold(
       body: Center(
@@ -28,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
             padding: const EdgeInsets.all(32),
             margin: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppTheme.surface,
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 24, offset: const Offset(0, 8)),
@@ -48,22 +62,42 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 6),
                 Text(
                   awaiting
-                      ? 'Enviamos um código para\n${auth.pendingIdentifier}'
+                      ? (viaWhats ? 'Enviamos um código no WhatsApp para\n$pending' : 'Enviamos um código para\n$pending')
                       : 'Acesse o painel de atendimento',
                   style: TextStyle(color: Colors.grey.shade600),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
                 if (!awaiting) ...[
-                  TextField(
-                    controller: _email,
-                    keyboardType: TextInputType.emailAddress,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'E-mail',
-                      prefixIcon: Icon(Icons.mail_outline),
+                  if (_useEmail)
+                    TextField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'E-mail',
+                        prefixIcon: Icon(Icons.mail_outline),
+                      ),
+                      onSubmitted: (_) => _submit(auth),
+                    )
+                  else
+                    TextField(
+                      controller: _phone,
+                      keyboardType: TextInputType.phone,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Celular (WhatsApp)',
+                        hintText: '(21) 99999-9999',
+                        prefixIcon: Icon(Icons.smartphone_outlined),
+                      ),
+                      onSubmitted: (_) => _submit(auth),
                     ),
-                    onSubmitted: (_) => _submitEmail(auth),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: auth.busy ? null : () => setState(() => _useEmail = !_useEmail),
+                      child: Text(_useEmail ? 'Entrar com celular' : 'Entrar com e-mail'),
+                    ),
                   ),
                 ] else ...[
                   TextField(
@@ -83,7 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
                 const SizedBox(height: 20),
                 FilledButton(
-                  onPressed: auth.busy ? null : () => awaiting ? _submitCode(auth) : _submitEmail(auth),
+                  onPressed: auth.busy ? null : () => awaiting ? _submitCode(auth) : _submit(auth),
                   child: auth.busy
                       ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : Text(awaiting ? 'Confirmar' : 'Enviar código'),
@@ -92,7 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: auth.busy ? null : auth.backToEmail,
-                    child: const Text('Usar outro e-mail'),
+                    child: const Text('Voltar'),
                   ),
                 ],
               ],
@@ -121,9 +155,10 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  void _submitEmail(AuthController auth) {
-    if (_email.text.trim().isEmpty) return;
-    auth.requestCode(_email.text);
+  void _submit(AuthController auth) {
+    final id = (_useEmail ? _email.text : _phone.text).trim();
+    if (id.isEmpty) return;
+    auth.requestCode(id);
   }
 
   void _submitCode(AuthController auth) {

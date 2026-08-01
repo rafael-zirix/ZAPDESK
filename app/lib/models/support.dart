@@ -7,6 +7,8 @@ class TicketListItem {
     required this.contactPhone,
     this.contactName,
     required this.lastMessageAt,
+    this.aiPaused = false,
+    this.unreadCount = 0,
   });
 
   final String id;
@@ -15,8 +17,22 @@ class TicketListItem {
   final String contactPhone;
   final String? contactName;
   final DateTime lastMessageAt;
+  bool aiPaused; // Atendente IA pausado nesta conversa (mutável p/ toggle otimista)
+  int unreadCount; // mensagens recebidas não lidas (mutável p/ zerar ao abrir)
 
   String get displayName => (contactName != null && contactName!.isNotEmpty) ? contactName! : contactPhone;
+
+  /// Telefone formatado (+55 21 99999-9999) quando possível.
+  String get prettyPhone {
+    final d = contactPhone.replaceAll(RegExp(r'\D'), '');
+    if (d.startsWith('55') && (d.length == 12 || d.length == 13)) {
+      final ddd = d.substring(2, 4);
+      final rest = d.substring(4);
+      if (rest.length == 9) return '+55 $ddd ${rest.substring(0, 5)}-${rest.substring(5)}';
+      if (rest.length == 8) return '+55 $ddd ${rest.substring(0, 4)}-${rest.substring(4)}';
+    }
+    return contactPhone;
+  }
 
   String get initials {
     final s = displayName.trim();
@@ -33,6 +49,8 @@ class TicketListItem {
         contactPhone: j['contact_phone'] ?? '',
         contactName: j['contact_name'],
         lastMessageAt: DateTime.tryParse(j['last_message_at'] ?? '')?.toLocal() ?? DateTime.now(),
+        aiPaused: j['ai_paused'] == true,
+        unreadCount: (j['unread_count'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -62,6 +80,7 @@ class Message {
 
   bool get isOutbound => direction == 'out';
   bool get isImage => type == 'image';
+  bool get isAudio => type == 'audio';
   bool get hasMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
 
   factory Message.fromJson(Map<String, dynamic> j) => Message(

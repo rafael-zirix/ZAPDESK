@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"zapdesk/internal/models"
@@ -29,12 +30,14 @@ func (r *SupportRepository) FindOrCreateContact(accountID, phone string, name *s
 	return &c, err
 }
 
-// ListContacts devolve os contatos da conta (por nome, depois telefone).
-func (r *SupportRepository) ListContacts(accountID string) ([]models.SupportContact, error) {
+// ListContacts devolve os contatos que o usuário pode ver: os SEUS (owner =
+// userID) + os sem dono (legados e os criados pelo webhook = compartilhados).
+func (r *SupportRepository) ListContacts(accountID, userID string) ([]models.SupportContact, error) {
 	rows, err := r.db.Query(`
 		SELECT id, account_id, phone, name, created_at, updated_at
-		FROM support_contacts WHERE account_id=$1
-		ORDER BY COALESCE(name,'~'), phone`, accountID)
+		FROM support_contacts
+		WHERE account_id=$1 AND (owner_user_id = $2::uuid OR owner_user_id IS NULL)
+		ORDER BY COALESCE(name,'~'), phone`, accountID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -52,14 +55,14 @@ func (r *SupportRepository) ListContacts(accountID string) ([]models.SupportCont
 
 // CreateContact insere um contato novo (telefone único por conta — o service
 // traduz a violação de unicidade).
-func (r *SupportRepository) CreateContact(accountID, phone string, name *string) (*models.SupportContact, error) {
+func (r *SupportRepository) CreateContact(accountID, ownerUserID, phone string, name *string) (*models.SupportContact, error) {
 	now := time.Now().UTC()
 	var c models.SupportContact
 	err := r.db.QueryRow(`
-		INSERT INTO support_contacts (account_id, phone, name, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$4)
+		INSERT INTO support_contacts (account_id, phone, name, owner_user_id, created_at, updated_at)
+		VALUES ($1,$2,$3,$4::uuid,$5,$5)
 		RETURNING id, account_id, phone, name, created_at, updated_at`,
-		accountID, phone, name, now).
+		accountID, phone, name, ownerUserID, now).
 		Scan(&c.ID, &c.AccountID, &c.Phone, &c.Name, &c.CreatedAt, &c.UpdatedAt)
 	return &c, err
 }
@@ -154,10 +157,10 @@ func (r *SupportRepository) ContactExists(accountID, contactID string) (bool, er
 func (r *SupportRepository) TicketListItem(accountID, ticketID string) (*models.SupportTicketListItem, error) {
 	var it models.SupportTicketListItem
 	err := r.db.QueryRow(`
-		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at
+		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0)
 		FROM support_tickets t JOIN support_contacts c ON c.id = t.contact_id
 		WHERE t.id=$1 AND t.account_id=$2`, ticketID, accountID).
-		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt)
+		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -183,18 +186,184 @@ func (r *SupportRepository) InsertMessage(m *models.SupportMessage) (*models.Sup
 	if err != nil {
 		return nil, err
 	}
-	_, _ = r.db.Exec(`UPDATE support_tickets SET last_message_at=$1, updated_at=$1 WHERE id=$2`, now, m.TicketID)
+	_, _ = r.db.Exec(`UPDATE support_tickets
+		SET last_message_at=$1, updated_at=$1,
+		    unread_count = unread_count + CASE WHEN $3 THEN 1 ELSE 0 END
+		WHERE id=$2`, now, m.TicketID, m.Direction == models.DirectionIn)
 	return m, nil
+}
+
+// ResetUnread zera o contador de não lidas de uma conversa (o atendente abriu/leu).
+func (r *SupportRepository) ResetUnread(accountID, ticketID string) error {
+	_, err := r.db.Exec(`UPDATE support_tickets SET unread_count=0 WHERE id=$1 AND account_id=$2`, ticketID, accountID)
+	return err
+}
+
+// GetPricing lê os preços da plataforma (0 se não definidos).
+func (r *SupportRepository) GetPricing() (conversation, per1kTokens float64, err error) {
+	rows, err := r.db.Query(`SELECT key, value FROM platform_settings WHERE key IN ('price_conversation','price_1k_tokens')`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return 0, 0, err
+		}
+		f, _ := strconv.ParseFloat(v, 64)
+		switch k {
+		case "price_conversation":
+			conversation = f
+		case "price_1k_tokens":
+			per1kTokens = f
+		}
+	}
+	return conversation, per1kTokens, rows.Err()
+}
+
+// SetPricing grava os preços da plataforma (upsert).
+func (r *SupportRepository) SetPricing(conversation, per1kTokens float64) error {
+	_, err := r.db.Exec(`
+		INSERT INTO platform_settings (key, value) VALUES ('price_conversation',$1),('price_1k_tokens',$2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		strconv.FormatFloat(conversation, 'f', -1, 64), strconv.FormatFloat(per1kTokens, 'f', -1, 64))
+	return err
+}
+
+// UpdateMessageStatusByExternalID aplica o status de entrega (webhook da Meta) a
+// uma mensagem de saída, identificada pelo wamid (external_id). Só AVANÇA na
+// régua pending→sent→delivered→read (failed no topo), então um evento fora de
+// ordem (ex.: 'delivered' que chega depois de 'read') não rebaixa o status.
+func (r *SupportRepository) UpdateMessageStatusByExternalID(accountID, externalID, status string) error {
+	_, err := r.db.Exec(`
+		UPDATE support_ticket_messages SET status=$3
+		WHERE account_id=$1 AND external_id=$2
+		  AND (CASE status
+		         WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2
+		         WHEN 'read' THEN 3 WHEN 'failed' THEN 4 ELSE 0 END)
+		    < (CASE $3::text
+		         WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2
+		         WHEN 'read' THEN 3 WHEN 'failed' THEN 4 ELSE 0 END)`,
+		accountID, externalID, status)
+	return err
+}
+
+// GetMessage busca uma mensagem da conta pelo id.
+func (r *SupportRepository) GetMessage(accountID, msgID string) (*models.SupportMessage, error) {
+	var m models.SupportMessage
+	err := r.db.QueryRow(`
+		SELECT id, account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, created_at
+		FROM support_ticket_messages WHERE id=$1 AND account_id=$2`, msgID, accountID).
+		Scan(&m.ID, &m.AccountID, &m.TicketID, &m.Direction, &m.Type, &m.Content,
+			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &m, err
+}
+
+// SetMessageStatusAndExtID atualiza o status e o external_id de uma mensagem
+// (usado no reenvio de uma mensagem que havia falhado).
+func (r *SupportRepository) SetMessageStatusAndExtID(msgID, status string, extID *string) error {
+	_, err := r.db.Exec(
+		`UPDATE support_ticket_messages SET status=$2, external_id=COALESCE($3, external_id) WHERE id=$1`,
+		msgID, status, extID)
+	return err
+}
+
+// AccountUsageRow é o consumo agregado de uma empresa num período.
+type AccountUsageRow struct {
+	AccountID     string
+	AccountName   string
+	MessagesOut   int
+	MessagesIn    int
+	Templates     int
+	Media         int
+	Conversations int
+}
+
+// UsageByAccount devolve o consumo (mensagens/conversas) por empresa no período
+// [from, to). Inclui todas as empresas ativas, mesmo com uso zero.
+func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRow, error) {
+	rows, err := r.db.Query(`
+		WITH msg AS (
+		  SELECT account_id,
+		    COUNT(*) FILTER (WHERE direction='out') AS out_count,
+		    COUNT(*) FILTER (WHERE direction='in') AS in_count,
+		    COUNT(*) FILTER (WHERE type='template') AS tpl_count,
+		    COUNT(*) FILTER (WHERE type IN ('image','audio','video','document')) AS media_count
+		  FROM support_ticket_messages
+		  WHERE created_at >= $1 AND created_at < $2
+		  GROUP BY account_id
+		),
+		conv AS (
+		  SELECT account_id, COUNT(*) AS conv_count
+		  FROM support_tickets
+		  WHERE created_at >= $1 AND created_at < $2
+		  GROUP BY account_id
+		)
+		SELECT a.id, a.name,
+		  COALESCE(m.out_count,0), COALESCE(m.in_count,0), COALESCE(m.tpl_count,0), COALESCE(m.media_count,0),
+		  COALESCE(c.conv_count,0)
+		FROM accounts a
+		LEFT JOIN msg m ON m.account_id = a.id
+		LEFT JOIN conv c ON c.account_id = a.id
+		WHERE a.deleted_at IS NULL
+		ORDER BY a.name`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]AccountUsageRow, 0)
+	for rows.Next() {
+		var u AccountUsageRow
+		if err := rows.Scan(&u.AccountID, &u.AccountName, &u.MessagesOut, &u.MessagesIn,
+			&u.Templates, &u.Media, &u.Conversations); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// DisabledTemplateNames devolve o conjunto de nomes de modelos que a conta
+// DESLIGOU (para não aparecerem na barra de mensagens prontas). Ausência de
+// linha = habilitado.
+func (r *SupportRepository) DisabledTemplateNames(accountID string) (map[string]bool, error) {
+	rows, err := r.db.Query(`SELECT name FROM support_template_prefs WHERE account_id=$1 AND enabled=false`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = true
+	}
+	return out, rows.Err()
+}
+
+// SetTemplateEnabled liga/desliga um modelo na barra de mensagens prontas (upsert).
+func (r *SupportRepository) SetTemplateEnabled(accountID, name string, enabled bool) error {
+	_, err := r.db.Exec(`
+		INSERT INTO support_template_prefs (account_id, name, enabled) VALUES ($1,$2,$3)
+		ON CONFLICT (account_id, name) DO UPDATE SET enabled=EXCLUDED.enabled`,
+		accountID, name, enabled)
+	return err
 }
 
 // ListInbox devolve as conversas da conta (mais recentes primeiro).
 func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketListItem, error) {
 	rows, err := r.db.Query(`
-		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at
+		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0)
 		FROM support_tickets t
 		JOIN support_contacts c ON c.id = t.contact_id
 		WHERE t.account_id=$1
-		ORDER BY t.last_message_at DESC`, accountID)
+		ORDER BY (COALESCE(t.unread_count, 0) > 0) DESC, t.last_message_at DESC`, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +371,7 @@ func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketL
 	out := make([]models.SupportTicketListItem, 0)
 	for rows.Next() {
 		var it models.SupportTicketListItem
-		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -231,6 +400,23 @@ func (r *SupportRepository) ListMessages(accountID, ticketID string) ([]models.S
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// LastInboundExternalID devolve o wamid da última mensagem RECEBIDA da conversa
+// (para marcar como lida na Meta). Vazio se não houver.
+func (r *SupportRepository) LastInboundExternalID(accountID, ticketID string) (string, error) {
+	var ext sql.NullString
+	err := r.db.QueryRow(`
+		SELECT external_id FROM support_ticket_messages
+		WHERE account_id=$1 AND ticket_id=$2 AND direction='in' AND external_id IS NOT NULL
+		ORDER BY created_at DESC LIMIT 1`, accountID, ticketID).Scan(&ext)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return ext.String, nil
 }
 
 // GetTicket busca uma conversa da conta.
