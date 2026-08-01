@@ -29,6 +29,7 @@ class _AIScreenState extends State<AIScreen> {
   int _kbLimit = 4000; // teto de caracteres da base de conhecimento (vem do backend)
 
   List<Map<String, dynamic>> _contexts = [];
+  List<Map<String, dynamic>> _actions = []; // Ações da IA (buscas externas)
 
   // ~2.000 tokens por pergunta+resposta (varia com base de conhecimento/conversa).
   int _estReplies(int tokens) => (tokens / 2000).round();
@@ -57,6 +58,7 @@ class _AIScreenState extends State<AIScreen> {
   Future<void> _load() async {
     final cfg = await _api.get('/ai/config');
     final ctx = await _api.get('/ai/context');
+    final act = await _api.get('/ai/actions');
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -69,6 +71,7 @@ class _AIScreenState extends State<AIScreen> {
         _kbLimit = ((m['kb_limit'] ?? 4000) as num).toInt();
       }
       _contexts = ctx.ok && ctx.data is List ? (ctx.data as List).cast<Map<String, dynamic>>() : [];
+      _actions = act.ok && act.data is List ? (act.data as List).cast<Map<String, dynamic>>() : [];
     });
   }
 
@@ -322,6 +325,8 @@ class _AIScreenState extends State<AIScreen> {
                             _balanceCard(),
                             const SizedBox(height: 16),
                             _knowledgeCard(),
+                            const SizedBox(height: 16),
+                            _actionsCard(),
                           ],
                         ),
                       ),
@@ -564,4 +569,162 @@ class _AIScreenState extends State<AIScreen> {
     );
   }
 
+  // ---- Ações da IA (buscas externas / function-calling) ----
+  Widget _actionsCard() => _card([
+        _cardTitle(Icons.bolt_outlined, 'Ações da IA — buscas externas'),
+        Text('A IA usa estas buscas sozinha quando o cliente precisar (ex.: 2ª via de boleto). '
+            'Ela pergunta o dado, consulta a API que você configurar e responde com o resultado.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+        const SizedBox(height: 12),
+        if (_actions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text('Nenhuma ação ainda.', style: TextStyle(color: Colors.grey.shade500)),
+          )
+        else
+          for (final a in _actions) _actionRow(a),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: () => _editAction(null),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed, minimumSize: const Size(0, 44)),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Nova ação'),
+          ),
+        ),
+      ]);
+
+  Widget _actionRow(Map<String, dynamic> a) {
+    final enabled = (a['enabled'] ?? true) == true;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        Icon(Icons.bolt, size: 18, color: enabled ? AppTheme.seed : Colors.grey),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text((a['name'] ?? '').toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text('${a['method'] ?? 'GET'} · pergunta: ${a['param_desc'] ?? a['param_name'] ?? ''}',
+                maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          ]),
+        ),
+        Switch(value: enabled, activeThumbColor: AppTheme.seed, onChanged: (v) => _toggleAction(a, v)),
+        IconButton(onPressed: () => _editAction(a), icon: const Icon(Icons.edit_outlined, size: 18), tooltip: 'Editar'),
+        IconButton(onPressed: () => _deleteAction(a), icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red), tooltip: 'Excluir'),
+      ]),
+    );
+  }
+
+  Future<void> _toggleAction(Map<String, dynamic> a, bool v) async {
+    setState(() => a['enabled'] = v);
+    final r = await _api.put('/ai/actions/${a['id']}/enabled', {'enabled': v});
+    if (!r.ok && mounted) {
+      setState(() => a['enabled'] = !v);
+      _toast(r.message ?? 'Não foi possível alterar');
+    }
+  }
+
+  Future<void> _deleteAction(Map<String, dynamic> a) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Excluir ação'),
+        content: Text('Excluir "${a['name']}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), style: FilledButton.styleFrom(backgroundColor: Colors.red), child: const Text('Excluir')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final r = await _api.delete('/ai/actions/${a['id']}');
+    if (!mounted) return;
+    if (r.ok) {
+      _toast('Ação excluída');
+      await _load();
+    } else {
+      _toast(r.message ?? 'Não foi possível excluir');
+    }
+  }
+
+  Future<void> _editAction(Map<String, dynamic>? existing) async {
+    final name = TextEditingController(text: existing?['name']?.toString() ?? '');
+    final trigger = TextEditingController(text: existing?['trigger_desc']?.toString() ?? '');
+    final paramDesc = TextEditingController(text: existing?['param_desc']?.toString() ?? '');
+    final paramName = TextEditingController(text: existing?['param_name']?.toString() ?? 'cpf_cnpj');
+    final url = TextEditingController(text: existing?['url']?.toString() ?? '');
+    final body = TextEditingController(text: existing?['body_template']?.toString() ?? '');
+    final auth = TextEditingController();
+    var method = (existing?['method']?.toString() ?? 'GET').toUpperCase();
+    final hasAuth = existing?['has_auth'] == true;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text(existing == null ? 'Nova ação' : 'Editar ação'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextField(controller: name, decoration: const InputDecoration(labelText: 'Nome (ex.: 2ª via de boleto)')),
+                const SizedBox(height: 8),
+                TextField(controller: trigger, minLines: 2, maxLines: 3, decoration: const InputDecoration(labelText: 'Quando a IA deve usar', hintText: 'Ex.: cliente pede 2ª via, boleto, fatura em aberto', alignLabelWithHint: true)),
+                const SizedBox(height: 8),
+                TextField(controller: paramDesc, decoration: const InputDecoration(labelText: 'O que perguntar ao cliente', hintText: 'Ex.: CPF ou CNPJ (só números)')),
+                const SizedBox(height: 8),
+                TextField(controller: paramName, decoration: const InputDecoration(labelText: 'Nome da variável (use entre {} na URL)', hintText: 'cpf_cnpj')),
+                const SizedBox(height: 8),
+                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  SizedBox(
+                    width: 110,
+                    child: DropdownButtonFormField<String>(
+                      initialValue: method,
+                      decoration: const InputDecoration(labelText: 'Método'),
+                      items: const [DropdownMenuItem(value: 'GET', child: Text('GET')), DropdownMenuItem(value: 'POST', child: Text('POST'))],
+                      onChanged: (v) => setLocal(() => method = v ?? 'GET'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(child: TextField(controller: url, decoration: const InputDecoration(labelText: 'URL da API', hintText: 'https://.../consulta?doc={cpf_cnpj}'))),
+                ]),
+                if (method == 'POST') ...[
+                  const SizedBox(height: 8),
+                  TextField(controller: body, minLines: 2, maxLines: 6, decoration: const InputDecoration(labelText: 'Corpo JSON (pode usar {cpf_cnpj})', alignLabelWithHint: true)),
+                ],
+                const SizedBox(height: 8),
+                TextField(controller: auth, decoration: InputDecoration(labelText: 'Autenticação (opcional)', hintText: hasAuth ? 'salvo — deixe em branco p/ manter' : 'Authorization: Bearer xxxxx')),
+              ]),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), style: FilledButton.styleFrom(backgroundColor: AppTheme.seed), child: const Text('Salvar')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final payload = <String, dynamic>{
+      'name': name.text.trim(),
+      'trigger_desc': trigger.text.trim(),
+      'param_desc': paramDesc.text.trim(),
+      'param_name': paramName.text.trim(),
+      'method': method,
+      'url': url.text.trim(),
+      'body_template': body.text,
+      if (auth.text.trim().isNotEmpty) 'auth_header': auth.text.trim(),
+    };
+    final r = existing == null
+        ? await _api.post('/ai/actions', payload)
+        : await _api.put('/ai/actions/${existing['id']}', payload);
+    if (!mounted) return;
+    if (r.ok) {
+      _toast('Ação salva');
+      await _load();
+    } else {
+      _toast(r.message ?? 'Não foi possível salvar');
+    }
+  }
 }

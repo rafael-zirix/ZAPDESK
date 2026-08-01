@@ -3,6 +3,7 @@ package services
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -81,8 +82,9 @@ type SupportService struct {
 	fallback *MetaClient
 	mediaDir string
 	// Atendente IA (opcional). Nil = desligado.
-	ai     *AIClient
-	aiRepo *repository.AIRepository
+	ai        *AIClient
+	aiRepo    *repository.AIRepository
+	aiActions *repository.AIActionRepository // ferramentas configuráveis (function-calling)
 	// Cobrança (opcional) — dispara a recarga automática ao consumir tokens.
 	billing *BillingService
 }
@@ -98,11 +100,14 @@ func NewSupportService(repo *repository.SupportRepository, wa *repository.WhatsA
 	return &SupportService{repo: repo, wa: wa, cipher: cipher, apiBase: apiBase, mediaDir: mediaDir, fallback: fallback}
 }
 
-// WithAI liga o Atendente IA (motor + repositório de IA).
-func (s *SupportService) WithAI(ai *AIClient, aiRepo *repository.AIRepository) *SupportService {
-	s.ai, s.aiRepo = ai, aiRepo
+// WithAI liga o Atendente IA (motor + repositório de IA + ações/ferramentas).
+func (s *SupportService) WithAI(ai *AIClient, aiRepo *repository.AIRepository, aiActions *repository.AIActionRepository) *SupportService {
+	s.ai, s.aiRepo, s.aiActions = ai, aiRepo, aiActions
 	return s
 }
+
+// AIActionsRepo expõe o repositório de ações (para os handlers de CRUD).
+func (s *SupportService) AIActionsRepo() *repository.AIActionRepository { return s.aiActions }
 
 // clientFor devolve o cliente Meta da conta (token do número conectado) e o
 // waba_id. Cai no fallback global quando a conta não tem número. Retorna nil
@@ -431,7 +436,7 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 	if len(chat) < 2 || chat[len(chat)-1].Role != "user" {
 		return
 	}
-	reply, tokens, err := s.ai.Complete(chat, 500)
+	reply, tokens, err := s.generateAIReply(accountID, chat)
 	if err != nil || strings.TrimSpace(reply) == "" {
 		slog.Error("Atendente IA falhou", "erro", err, "ticket", ticketID)
 		return
@@ -445,6 +450,86 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 	if s.billing != nil {
 		go s.billing.MaybeCharge(accountID, newBal)
 	}
+}
+
+// generateAIReply gera a resposta. Se a empresa tiver Ações da IA (ferramentas),
+// entra no loop de function-calling: a IA pode pedir uma busca, o backend executa
+// a chamada HTTP configurada e devolve o resultado para a IA compor a resposta.
+// Sem ferramentas, usa o caminho simples. Devolve o texto + o total de tokens.
+func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage) (string, int, error) {
+	var actions []models.AIAction
+	if s.aiActions != nil {
+		actions, _ = s.aiActions.ListEnabled(accountID)
+	}
+	if len(actions) == 0 {
+		return s.ai.Complete(chat, 500)
+	}
+	msgs := make([]map[string]any, 0, len(chat))
+	for _, m := range chat {
+		msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
+	}
+	tools := make([]AITool, 0, len(actions))
+	byName := make(map[string]models.AIAction, len(actions))
+	for i, a := range actions {
+		name := fmt.Sprintf("acao_%d", i)
+		byName[name] = a
+		tools = append(tools, AITool{Name: name, Description: a.TriggerDesc, ParamName: a.ParamName, ParamDesc: a.ParamDesc})
+	}
+	total := 0
+	for round := 0; round < 3; round++ {
+		content, calls, tok, err := s.ai.ChatRaw(msgs, tools, 600)
+		total += tok
+		if err != nil {
+			return "", total, err
+		}
+		if len(calls) == 0 {
+			return content, total, nil
+		}
+		asstCalls := make([]map[string]any, 0, len(calls))
+		for _, c := range calls {
+			asstCalls = append(asstCalls, map[string]any{
+				"id": c.ID, "type": "function",
+				"function": map[string]any{"name": c.Name, "arguments": c.ArgsJSON},
+			})
+		}
+		msgs = append(msgs, map[string]any{"role": "assistant", "content": content, "tool_calls": asstCalls})
+		for _, c := range calls {
+			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": c.ID, "content": s.runAITool(byName, c)})
+		}
+	}
+	// Muitas rodadas: pede a resposta final já sem ferramentas.
+	content, _, tok, err := s.ai.ChatRaw(msgs, nil, 600)
+	total += tok
+	return content, total, err
+}
+
+// runAITool executa a ferramenta pedida pela IA (chamada HTTP configurada) e
+// devolve o resultado como texto para a IA interpretar.
+func (s *SupportService) runAITool(byName map[string]models.AIAction, c AIToolCall) string {
+	a, ok := byName[c.Name]
+	if !ok {
+		return "Ferramenta desconhecida."
+	}
+	var args map[string]any
+	_ = json.Unmarshal([]byte(c.ArgsJSON), &args)
+	val := ""
+	if v, ok := args[a.ParamName]; ok {
+		val = fmt.Sprintf("%v", v)
+	} else {
+		for _, v := range args { // fallback: primeiro argumento, qualquer que seja o nome
+			val = fmt.Sprintf("%v", v)
+			break
+		}
+	}
+	out, err := ExecuteAction(a, strings.TrimSpace(val))
+	if err != nil {
+		slog.Warn("Ação da IA falhou", "acao", a.Name, "erro", err)
+		return "A consulta falhou agora. Diga ao cliente que um atendente humano vai verificar."
+	}
+	if strings.TrimSpace(out) == "" {
+		return "A consulta não retornou dados para esse valor."
+	}
+	return out
 }
 
 // buildAISystemPrompt monta as instruções do sistema: guardrails + instruções da

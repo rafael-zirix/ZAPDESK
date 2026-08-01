@@ -71,9 +71,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
 	aiRepo := repository.NewAIRepository(db)
+	aiActionRepo := repository.NewAIActionRepository(db)
 	aiClient := services.NewAIClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient).
-		WithAI(aiClient, aiRepo)
+		WithAI(aiClient, aiRepo, aiActionRepo)
 
 	// Cobrança: PIX/cartão avulso via Mercado Pago; recarga automática por cartão
 	// via Stripe (off-session). Dormentes sem credencial.
@@ -234,6 +235,11 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.POST("/upload-context", aiH.UploadContext)
 			ai.POST("/import-url", aiH.ImportURL)
 			ai.DELETE("/context/:id", aiH.DeleteContext)
+			ai.GET("/actions", aiH.ListActions)               // ferramentas (buscas externas) da IA
+			ai.POST("/actions", aiH.CreateAction)
+			ai.PUT("/actions/:id", aiH.UpdateAction)
+			ai.PUT("/actions/:id/enabled", aiH.ToggleAction)
+			ai.DELETE("/actions/:id", aiH.DeleteAction)
 			ai.GET("/ledger", aiH.Ledger)
 			ai.GET("/plans", billingH.Plans)                       // planos/pacotes + preço p/ o cliente
 			ai.POST("/recharge/checkout", billingH.Checkout)       // gera o PIX (Mercado Pago)
