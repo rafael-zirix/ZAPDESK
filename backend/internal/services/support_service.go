@@ -83,6 +83,14 @@ type SupportService struct {
 	// Atendente IA (opcional). Nil = desligado.
 	ai     *AIClient
 	aiRepo *repository.AIRepository
+	// Cobrança (opcional) — dispara a recarga automática ao consumir tokens.
+	billing *BillingService
+}
+
+// WithBilling liga o serviço de cobrança (para a recarga automática a 10%).
+func (s *SupportService) WithBilling(b *BillingService) *SupportService {
+	s.billing = b
+	return s
 }
 
 func NewSupportService(repo *repository.SupportRepository, wa *repository.WhatsAppRepository,
@@ -433,8 +441,9 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 		return
 	}
 	newBal, _ := s.aiRepo.ConsumeTokens(accountID, int64(tokens), ticketID)
-	if cfg.AutoEnabled && newBal <= cfg.AutoThreshold {
-		s.maybeAutoRecharge(accountID, cfg)
+	// Recarga automática por cartão (Stripe): dispara sozinha ao chegar ao limite.
+	if s.billing != nil {
+		go s.billing.MaybeCharge(accountID, newBal)
 	}
 }
 

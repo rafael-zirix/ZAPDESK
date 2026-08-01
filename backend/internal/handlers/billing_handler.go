@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -106,6 +107,81 @@ func (h *BillingHandler) Plans(c *gin.Context) {
 		pkgs = []float64{}
 	}
 	RespondSuccess(c, http.StatusOK, "Planos", gin.H{"price_1k_tokens": per1k, "packages": pkgs})
+}
+
+// StripeSetup prepara a recarga automática por cartão e devolve a URL do Stripe
+// (Checkout setup) para o cliente cadastrar o cartão uma vez.
+func (h *BillingHandler) StripeSetup(c *gin.Context) {
+	var req struct {
+		AmountBRL float64 `json:"amount_brl" binding:"required"`
+		Email     string  `json:"email"` // opcional (o Stripe coleta no checkout)
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Informe o valor do plano", err.Error())
+		return
+	}
+	url, err := h.billing.StripeSetup(middleware.AccountID(c), strings.TrimSpace(req.Email), req.AmountBRL)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrStripeUnavailable):
+			RespondError(c, http.StatusServiceUnavailable, ErrInternal, "Recarga automática indisponível no momento", nil)
+		case errors.Is(err, services.ErrPriceUnset):
+			RespondError(c, http.StatusConflict, ErrValidation, "A plataforma ainda não definiu o preço dos tokens", nil)
+		default:
+			RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível iniciar o cadastro do cartão", err.Error())
+		}
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Cadastro de cartão criado", gin.H{"url": url})
+}
+
+// AutoRecharge devolve a config de recarga automática da empresa.
+func (h *BillingHandler) AutoRecharge(c *gin.Context) {
+	cfg, err := h.billing.GetAutoRecharge(middleware.AccountID(c))
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao consultar a recarga automática", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Recarga automática", cfg)
+}
+
+// DisableAutoRecharge desliga a recarga automática por cartão.
+func (h *BillingHandler) DisableAutoRecharge(c *gin.Context) {
+	if err := h.billing.DisableAutoRecharge(middleware.AccountID(c)); err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Não foi possível desligar", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Recarga automática desligada", nil)
+}
+
+// StripeWebhook recebe eventos do Stripe (público). Confere a assinatura; no
+// checkout.session.completed (setup) salva o cartão e liga a recarga automática.
+func (h *BillingHandler) StripeWebhook(c *gin.Context) {
+	payload, _ := c.GetRawData()
+	if !h.billing.VerifyStripeWebhook(payload, c.GetHeader("Stripe-Signature")) {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	var evt struct {
+		Type string `json:"type"`
+		Data struct {
+			Object struct {
+				ID                string `json:"id"`
+				ClientReferenceID string `json:"client_reference_id"`
+			} `json:"object"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		c.Status(http.StatusOK)
+		return
+	}
+	if evt.Type == "checkout.session.completed" {
+		if err := h.billing.HandleStripeCheckoutCompleted(evt.Data.Object.ID, evt.Data.Object.ClientReferenceID); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+	}
+	c.Status(http.StatusOK)
 }
 
 // Subscribe cria a assinatura de recarga automática e devolve o init_point (o app

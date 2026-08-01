@@ -51,7 +51,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// o código vai para o log (dev).
 	var mailer services.Mailer
 	if cfg.ResendAPIKey != "" && cfg.ResendFromEmail != "" {
-		mailer = services.NewResendMailer(cfg.ResendAPIKey, cfg.ResendFromEmail)
+		mailer = services.NewResendMailer(cfg.ResendAPIKey, cfg.ResendFromEmail, cfg.PublicURL)
 		log.Println("[info] envio de OTP por e-mail (Resend) ativo")
 	} else {
 		log.Println("[aviso] Resend não configurado — OTP vai para o log")
@@ -75,13 +75,20 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient).
 		WithAI(aiClient, aiRepo)
 
-	// Cobrança de tokens via Mercado Pago (PIX QR). Dormente sem credencial.
+	// Cobrança: PIX/cartão avulso via Mercado Pago; recarga automática por cartão
+	// via Stripe (off-session). Dormentes sem credencial.
 	tokenOrderRepo := repository.NewTokenOrderRepository(db)
 	tokenSubRepo := repository.NewTokenSubscriptionRepository(db)
+	tokenAutoRepo := repository.NewTokenAutoRechargeRepository(db)
 	mpClient := services.NewMercadoPagoClient(cfg.MercadoPagoBaseURL, cfg.MercadoPagoAccessToken)
-	billingSvc := services.NewBillingService(mpClient, tokenOrderRepo, tokenSubRepo, aiRepo, supportRepo, cfg.PublicURL)
+	stripeClient := services.NewStripeClient(cfg.StripeSecretKey, cfg.StripeWebhookSecret)
+	billingSvc := services.NewBillingService(mpClient, stripeClient, tokenOrderRepo, tokenSubRepo, tokenAutoRepo, aiRepo, supportRepo, cfg.PublicURL)
+	supportSvc.WithBilling(billingSvc) // liga o gatilho da recarga automática a 10%
 	if cfg.MercadoPagoConfigured() {
 		log.Println("[info] Compra de tokens via Mercado Pago (PIX) ativa")
+	}
+	if cfg.StripeConfigured() {
+		log.Println("[info] Recarga automática por cartão (Stripe) ativa")
 	}
 
 	if cfg.AIConfigured() {
@@ -132,6 +139,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Aceita GET e POST (o MP valida a URL com um GET ao configurar).
 	r.POST("/webhook/mercadopago", billingH.Webhook)
 	r.GET("/webhook/mercadopago", billingH.Webhook)
+
+	// Webhook do Stripe (público): no setup do cartão, liga a recarga automática.
+	r.POST("/webhook/stripe", billingH.StripeWebhook)
 
 	// Mídia (foto/anexo): rota pública, o nome do arquivo é aleatório (segredo).
 	r.GET("/media/:name", supportH.ServeMedia)
@@ -215,7 +225,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		{
 			ai.GET("/config", aiH.GetConfig)
 			ai.PUT("/config", aiH.SetConfig)
-			ai.PUT("/autorecharge", aiH.SetAutoRecharge)
+			ai.POST("/autorecharge/setup", billingH.StripeSetup)     // cadastra cartão (Stripe) p/ recarga a 10%
+			ai.GET("/autorecharge", billingH.AutoRecharge)           // estado da recarga automática
+			ai.DELETE("/autorecharge", billingH.DisableAutoRecharge) // desliga
 			ai.GET("/context", aiH.ListContext)
 			ai.POST("/context", aiH.AddContext)
 			ai.PUT("/context/:id", aiH.UpdateContext)

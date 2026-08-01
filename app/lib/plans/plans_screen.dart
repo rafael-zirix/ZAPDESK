@@ -27,6 +27,10 @@ class _PlansScreenState extends State<PlansScreen> {
   Map<String, dynamic>? _sub;
   List<Map<String, dynamic>> _ledger = [];
   bool _busy = false;
+  // Recarga automática oculta por ora (só faz sentido com Stripe, que dá o gatilho
+  // de 10% sem CVV). Vire true p/ religar quando houver STRIPE_SECRET_KEY no .env.
+  // ignore: prefer_final_fields
+  bool _showAutoRecharge = false;
 
   @override
   void initState() {
@@ -37,7 +41,7 @@ class _PlansScreenState extends State<PlansScreen> {
   Future<void> _load() async {
     final cfg = await _api.get('/ai/config');
     final plans = await _api.get('/ai/plans');
-    final sub = await _api.get('/ai/subscription');
+    final auto = await _api.get('/ai/autorecharge');
     final led = await _api.get('/ai/ledger');
     if (!mounted) return;
     setState(() {
@@ -50,7 +54,7 @@ class _PlansScreenState extends State<PlansScreen> {
         _per1k = ((m['price_1k_tokens'] ?? 0) as num).toDouble();
         _packages = ((m['packages'] as List?) ?? const []).map((e) => (e as num).toDouble()).toList();
       }
-      _sub = (sub.ok && sub.data is Map) ? (sub.data as Map).cast<String, dynamic>() : null;
+      _sub = (auto.ok && auto.data is Map) ? (auto.data as Map).cast<String, dynamic>() : null;
       _ledger = led.ok && led.data is List ? (led.data as List).cast<Map<String, dynamic>>() : [];
     });
   }
@@ -81,13 +85,22 @@ class _PlansScreenState extends State<PlansScreen> {
           child: _loading
               ? const Center(child: CircularProgressIndicator())
               : ListView(padding: const EdgeInsets.all(20), children: [
-                  _balanceCard(),
-                  const SizedBox(height: 18),
-                  _plansSection(),
-                  const SizedBox(height: 18),
-                  _autoRechargeCard(),
-                  const SizedBox(height: 18),
-                  _ledgerCard(),
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 980),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        _balanceCard(),
+                        const SizedBox(height: 18),
+                        _plansSection(),
+                        const SizedBox(height: 18),
+                        if (_showAutoRecharge) ...[
+                          _autoRechargeCard(),
+                          const SizedBox(height: 18),
+                        ],
+                        _ledgerCard(),
+                      ]),
+                    ),
+                  ),
                 ]),
         ),
       ]),
@@ -130,7 +143,7 @@ class _PlansScreenState extends State<PlansScreen> {
       if (pkgs.isEmpty)
         _freeAmountCard()
       else
-        Wrap(spacing: 14, runSpacing: 14, children: [for (final a in pkgs) _planCard(a)]),
+        Wrap(alignment: WrapAlignment.center, spacing: 14, runSpacing: 14, children: [for (final a in pkgs) _planCard(a)]),
     ]);
   }
 
@@ -150,24 +163,24 @@ class _PlansScreenState extends State<PlansScreen> {
         Text('≈ ${_fmtTokens(tokens)} tokens', style: TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700)),
         Text('~ ${_fmtTokens((tokens / 2).round())} respostas', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
         const SizedBox(height: 14),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _busy || _per1k <= 0 ? null : () => _payPix(amount),
-              icon: const Icon(Icons.qr_code, size: 18),
-              label: const Text('PIX'),
-            ),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _busy || _per1k <= 0 ? null : () => _payPix(amount),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            icon: const Icon(Icons.qr_code, size: 18),
+            label: const Text('Pagar com PIX'),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: _busy || _per1k <= 0 ? null : () => _payCard(amount),
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
-              icon: const Icon(Icons.credit_card, size: 18),
-              label: const Text('Cartão'),
-            ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _busy || _per1k <= 0 ? null : () => _payCard(amount),
+            icon: const Icon(Icons.credit_card, size: 18),
+            label: const Text('Cartão'),
           ),
-        ]),
+        ),
       ]),
     );
   }
@@ -339,12 +352,14 @@ class _PlansScreenState extends State<PlansScreen> {
     }
   }
 
-  // ---- Recarga automática (assinatura) ----
+  // ---- Recarga automática (Stripe, off-session a ~10%) ----
   Widget _autoRechargeCard() {
     final sub = _sub;
-    final ativa = (sub?['status'] ?? '') == 'authorized';
+    final ativa = (sub?['enabled'] ?? false) == true && (sub?['has_card'] ?? false) == true;
     final valor = ((sub?['amount_brl'] ?? 0) as num).toDouble();
     final tokens = ((sub?['tokens'] ?? 0) as num).toInt();
+    final threshold = ((sub?['threshold'] ?? 0) as num).toInt();
+    final pkgs = _packages.isNotEmpty ? _packages : <double>[];
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppTheme.border)),
@@ -354,74 +369,171 @@ class _PlansScreenState extends State<PlansScreen> {
           SizedBox(width: 8),
           Text('Recarga automática', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         ]),
-        const SizedBox(height: 6),
-        if (ativa)
-          Row(children: [
-            const Icon(Icons.check_circle, color: Color(0xFF15803D), size: 18),
-            const SizedBox(width: 8),
-            Expanded(child: Text('Ativa — R\$ ${_num(valor)}/mês · +$tokens tokens')),
-            TextButton(onPressed: _busy ? null : _cancelAuto, child: const Text('Cancelar')),
-          ])
-        else
-          Row(children: [
+        const SizedBox(height: 10),
+        // Como funciona (a regra dos 10%)
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: AppTheme.bg, borderRadius: BorderRadius.circular(10)),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: const [
+            Icon(Icons.info_outline, size: 18, color: AppTheme.seed),
+            SizedBox(width: 8),
             Expanded(
-              child: Text('Ative para o crédito entrar sozinho todo mês (cartão autorizado uma vez no Mercado Pago).',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-            ),
-            const SizedBox(width: 10),
-            FilledButton(
-              onPressed: _busy ? null : _startAuto,
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
-              child: const Text('Ativar'),
+              child: Text(
+                'Como funciona: escolha um plano e cadastre um cartão uma vez. Quando seu saldo cair a ~10% do plano, '
+                'cobramos esse valor no cartão automaticamente e recarregamos — sem você precisar lembrar. Cancele quando quiser.',
+                style: TextStyle(fontSize: 12.5, height: 1.4),
+              ),
             ),
           ]),
+        ),
+        const SizedBox(height: 14),
+        if (ativa) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: const Color(0xFF15803D).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
+            child: Row(children: [
+              const Icon(Icons.check_circle, color: Color(0xFF15803D), size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Ligada — plano R\$ ${_num(valor)} (≈ ${_fmtTokens(tokens)} tokens). Recarrega sozinho ao cair a ~${_fmtTokens(threshold)} tokens.',
+                  style: const TextStyle(color: Color(0xFF15803D), fontWeight: FontWeight.w600),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : _cancelAuto,
+              icon: const Icon(Icons.close, size: 18),
+              label: const Text('Desligar recarga automática'),
+            ),
+          ),
+        ] else if (_per1k <= 0) ...[
+          Text('A plataforma ainda não definiu o preço dos tokens.', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+        ] else if (pkgs.isEmpty) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _startAuto,
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+              icon: const Icon(Icons.credit_card, size: 18),
+              label: const Text('Ativar (escolher valor)'),
+            ),
+          ),
+        ] else ...[
+          const Text('Escolha o plano da recarga automática:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          Wrap(alignment: WrapAlignment.center, spacing: 14, runSpacing: 14, children: [for (final a in pkgs) _autoPlanCard(a)]),
+        ],
       ]),
     );
   }
 
-  Future<void> _startAuto() async {
-    final valor = TextEditingController(text: '50');
-    final email = TextEditingController();
+  Widget _autoPlanCard(double amount) {
+    final tokens = _tokensFor(amount);
+    final trigger = (tokens / 10).round();
+    return Container(
+      width: 220,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: AppTheme.bg, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppTheme.border)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('R\$ ${_num(amount)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 2),
+        Text('≈ ${_fmtTokens(tokens)} tokens', style: TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700)),
+        Text('recarrega ao cair a ~${_fmtTokens(trigger)}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _busy ? null : () => _startAutoWith(amount),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            icon: const Icon(Icons.autorenew, size: 18),
+            label: const Text('Ativar'),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // Ativa a recarga automática de um PLANO escolhido (1 clique + cadastro do cartão).
+  Future<void> _startAutoWith(double amount) async {
+    final tokens = _tokensFor(amount);
+    final trigger = (tokens / 10).round();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Recarga automática (mensal)'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: valor, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Valor por mês', prefixText: 'R\$ ')),
-          TextField(controller: email, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'E-mail do pagador')),
+        title: const Text('Ativar recarga automática'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Plano: R\$ ${_num(amount)} · ≈ ${_fmtTokens(tokens)} tokens.', style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Text('Quando seu saldo cair a ~${_fmtTokens(trigger)} tokens (10% do plano), o sistema cobra '
+              'R\$ ${_num(amount)} no seu cartão automaticamente e recarrega — sem você precisar lembrar.',
+              style: const TextStyle(fontSize: 13)),
+          const SizedBox(height: 8),
+          const Text('Você cadastra o cartão agora, uma vez, na página segura do Stripe.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Ativar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Cadastrar cartão')),
         ],
       ),
     );
     if (ok != true) return;
+    await _setupAuto(amount);
+  }
+
+  // Fallback quando a plataforma não definiu planos: valor livre.
+  Future<void> _startAuto() async {
+    final valor = TextEditingController(text: '50');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Recarga automática'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Quanto comprar a cada recarga. Ao saldo chegar a ~10%, cobramos esse valor no cartão que você vai cadastrar agora.',
+                style: TextStyle(fontSize: 13)),
+          ),
+          const SizedBox(height: 12),
+          TextField(controller: valor, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Valor por recarga', prefixText: 'R\$ ')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Continuar')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _setupAuto(double.tryParse(valor.text.replaceAll(',', '.')) ?? 0);
+  }
+
+  Future<void> _setupAuto(double amount) async {
+    if (amount <= 0) return;
     setState(() => _busy = true);
-    final r = await _api.post('/ai/subscription', {
-      'amount_brl': double.tryParse(valor.text.replaceAll(',', '.')) ?? 0,
-      'email': email.text.trim(),
-      'frequency': 1,
-      'frequency_type': 'months',
-    });
+    final r = await _api.post('/ai/autorecharge/setup', {'amount_brl': amount});
     if (!mounted) return;
     setState(() => _busy = false);
     if (r.ok && r.data is Map) {
-      final init = (r.data as Map)['init_point']?.toString() ?? '';
-      if (init.isNotEmpty) openUrl(init);
-      _toast('Autorize o cartão no Mercado Pago para ativar.');
+      final url = (r.data as Map)['url']?.toString() ?? '';
+      if (url.isNotEmpty) openUrl(url);
+      _toast('Cadastre o cartão para ligar a recarga automática.');
       await _load();
     } else {
-      _toast(r.message ?? 'Não foi possível ativar');
+      _toast(r.message ?? 'Não foi possível iniciar');
     }
   }
 
   Future<void> _cancelAuto() async {
     setState(() => _busy = true);
-    final r = await _api.delete('/ai/subscription');
+    final r = await _api.delete('/ai/autorecharge');
     if (!mounted) return;
     setState(() => _busy = false);
-    _toast(r.ok ? 'Recarga automática cancelada' : (r.message ?? 'Não foi possível cancelar'));
+    _toast(r.ok ? 'Recarga automática desligada' : (r.message ?? 'Não foi possível desligar'));
     await _load();
   }
 

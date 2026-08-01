@@ -64,6 +64,11 @@ type Config struct {
 	// cola). Vazio = compra desligada (só a recarga manual pelo super-admin roda).
 	MercadoPagoBaseURL     string
 	MercadoPagoAccessToken string
+
+	// Stripe — SÓ para a recarga automática (cartão salvo + cobrança off-session ao
+	// atingir 10%). Vazio = recarga automática por cartão desligada.
+	StripeSecretKey     string
+	StripeWebhookSecret string
 }
 
 // Load lê o .env (se existir) e monta a Config a partir do ambiente.
@@ -99,11 +104,16 @@ func Load() *Config {
 		NuPayMerchantToken: os.Getenv("NUPAY_MERCHANT_TOKEN"),
 		MercadoPagoBaseURL:     getenv("MERCADOPAGO_BASE_URL", "https://api.mercadopago.com"),
 		MercadoPagoAccessToken: os.Getenv("MERCADOPAGO_ACCESS_TOKEN"),
+		StripeSecretKey:        os.Getenv("STRIPE_SECRET_KEY"),
+		StripeWebhookSecret:    os.Getenv("STRIPE_WEBHOOK_SECRET"),
 	}
 }
 
 // MercadoPagoConfigured indica se a compra de tokens via Mercado Pago está ativa.
 func (c *Config) MercadoPagoConfigured() bool { return c.MercadoPagoAccessToken != "" }
+
+// StripeConfigured indica se a recarga automática por cartão (Stripe) está ativa.
+func (c *Config) StripeConfigured() bool { return c.StripeSecretKey != "" }
 
 // NuPayConfigured indica se a compra de tokens via NuPay está habilitada.
 func (c *Config) NuPayConfigured() bool {

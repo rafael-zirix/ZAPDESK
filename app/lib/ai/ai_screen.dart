@@ -23,7 +23,6 @@ class _AIScreenState extends State<AIScreen> {
   final _api = ApiClient.instance;
   bool _loading = true;
   bool _savingCfg = false;
-  bool _savingAuto = false;
 
   // Config
   bool _enabled = false;
@@ -32,14 +31,7 @@ class _AIScreenState extends State<AIScreen> {
   int _balance = 0;
   int _kbLimit = 4000; // teto de caracteres da base de conhecimento (vem do backend)
 
-  // Recarga automática (assinatura do Mercado Pago)
-  Map<String, dynamic>? _sub; // assinatura atual (null = nenhuma)
-  final _subValor = TextEditingController(text: '50');
-  final _subEmail = TextEditingController();
-  final int _subFreq = 1; // a cada N meses (mensal)
-
   List<Map<String, dynamic>> _contexts = [];
-  List<Map<String, dynamic>> _ledger = [];
 
   // ~2.000 tokens por pergunta+resposta (varia com base de conhecimento/conversa).
   int _estReplies(int tokens) => (tokens / 2000).round();
@@ -62,16 +54,12 @@ class _AIScreenState extends State<AIScreen> {
   @override
   void dispose() {
     _instructions.dispose();
-    _subValor.dispose();
-    _subEmail.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     final cfg = await _api.get('/ai/config');
     final ctx = await _api.get('/ai/context');
-    final led = await _api.get('/ai/ledger');
-    final subr = await _api.get('/ai/subscription');
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -83,9 +71,7 @@ class _AIScreenState extends State<AIScreen> {
         _balance = ((m['token_balance'] ?? 0) as num).toInt();
         _kbLimit = ((m['kb_limit'] ?? 4000) as num).toInt();
       }
-      _sub = (subr.ok && subr.data is Map) ? (subr.data as Map).cast<String, dynamic>() : null;
       _contexts = ctx.ok && ctx.data is List ? (ctx.data as List).cast<Map<String, dynamic>>() : [];
-      _ledger = led.ok && led.data is List ? (led.data as List).cast<Map<String, dynamic>>() : [];
     });
   }
 
@@ -95,43 +81,6 @@ class _AIScreenState extends State<AIScreen> {
     if (!mounted) return;
     setState(() => _savingCfg = false);
     _toast(r.ok ? 'Atendente IA salvo' : (r.message ?? 'Não foi possível salvar'));
-  }
-
-  // Ativa a recarga automática: cria a assinatura no MP e abre o init_point para o
-  // cliente autorizar o cartão uma vez (o MP guarda o cartão, não nós).
-  Future<void> _ativarRecarga() async {
-    final valor = double.tryParse(_subValor.text.replaceAll(',', '.').trim()) ?? 0;
-    final email = _subEmail.text.trim();
-    if (valor <= 0 || email.isEmpty) {
-      _toast('Informe valor e e-mail');
-      return;
-    }
-    setState(() => _savingAuto = true);
-    final r = await _api.post('/ai/subscription', {
-      'amount_brl': valor,
-      'email': email,
-      'frequency': _subFreq,
-      'frequency_type': 'months',
-    });
-    if (!mounted) return;
-    setState(() => _savingAuto = false);
-    if (r.ok && r.data is Map) {
-      final init = (r.data as Map)['init_point']?.toString() ?? '';
-      if (init.isNotEmpty) openUrl(init);
-      _toast('Autorize o cartão no Mercado Pago para ativar a recarga automática.');
-      await _load();
-    } else {
-      _toast(r.message ?? 'Não foi possível criar a recarga automática');
-    }
-  }
-
-  Future<void> _cancelarRecarga() async {
-    setState(() => _savingAuto = true);
-    final r = await _api.delete('/ai/subscription');
-    if (!mounted) return;
-    setState(() => _savingAuto = false);
-    _toast(r.ok ? 'Recarga automática cancelada' : (r.message ?? 'Não foi possível cancelar'));
-    await _load();
   }
 
   // Seções fixas da base de conhecimento (o "quadro" dividido por tópico).
@@ -376,10 +325,6 @@ class _AIScreenState extends State<AIScreen> {
                             _balanceCard(),
                             const SizedBox(height: 16),
                             _knowledgeCard(),
-                            const SizedBox(height: 16),
-                            _autoRechargeCard(),
-                            const SizedBox(height: 16),
-                            _ledgerCard(),
                           ],
                         ),
                       ),
@@ -778,123 +723,4 @@ class _AIScreenState extends State<AIScreen> {
     );
   }
 
-  Widget _autoRechargeCard() {
-    final sub = _sub;
-    final status = (sub?['status'] ?? '').toString();
-    final ativa = status == 'authorized';
-    final pendente = sub != null && status == 'pending';
-    final tokens = ((sub?['tokens'] ?? 0) as num).toInt();
-    final valor = ((sub?['amount_brl'] ?? 0) as num).toDouble();
-    return _card([
-      _cardTitle(Icons.autorenew, 'Recarga automática'),
-      Text('Opcional: o cartão é autorizado uma vez no Mercado Pago (nós não guardamos o cartão) '
-          'e o crédito entra sozinho todo mês. Cancele quando quiser. Sem ativar, a recarga é manual por PIX.',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-      const SizedBox(height: 12),
-      if (ativa) ...[
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: const Color(0xFF15803D).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
-          child: Row(children: [
-            const Icon(Icons.check_circle, color: Color(0xFF15803D), size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text('Ativa — R\$ ${valor.toStringAsFixed(2)}/mês · +$tokens tokens por recarga')),
-          ]),
-        ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            onPressed: _savingAuto ? null : _cancelarRecarga,
-            icon: const Icon(Icons.close, size: 18),
-            label: const Text('Cancelar recarga automática'),
-          ),
-        ),
-      ] else ...[
-        if (pendente)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: AppTheme.bg, borderRadius: BorderRadius.circular(8)),
-              child: Row(children: [
-                const Icon(Icons.hourglass_top, size: 18),
-                const SizedBox(width: 8),
-                const Expanded(child: Text('Aguardando você autorizar o cartão no Mercado Pago.')),
-                TextButton(
-                  onPressed: () {
-                    final i = (sub['init_point'] ?? '').toString();
-                    if (i.isNotEmpty) openUrl(i);
-                  },
-                  child: const Text('Abrir'),
-                ),
-              ]),
-            ),
-          ),
-        Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _subValor,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Valor por mês', prefixText: 'R\$ '),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: TextField(
-              controller: _subEmail,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(labelText: 'E-mail do pagador'),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: _savingAuto ? null : _ativarRecarga,
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed, minimumSize: const Size(0, 44)),
-            icon: _savingAuto
-                ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.autorenew, size: 18),
-            label: const Text('Ativar recarga automática'),
-          ),
-        ),
-      ],
-    ]);
-  }
-
-  Widget _ledgerCard() => _card([
-        _cardTitle(Icons.receipt_long_outlined, 'Extrato de tokens'),
-        if (_ledger.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text('Sem movimentações ainda.', style: TextStyle(color: Colors.grey.shade500)),
-          )
-        else
-          for (final e in _ledger)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(children: [
-                Expanded(child: Text(_ledgerLabel((e['kind'] ?? '').toString(), (e['note'])?.toString()))),
-                Text(
-                  '${((e['delta'] ?? 0) as num) >= 0 ? '+' : ''}${(e['delta'] ?? 0)}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: ((e['delta'] ?? 0) as num) >= 0 ? const Color(0xFF1F9D57) : Colors.red,
-                  ),
-                ),
-              ]),
-            ),
-      ]);
-
-  String _ledgerLabel(String kind, String? note) {
-    final base = switch (kind) {
-      'recharge' => 'Recarga',
-      'autorecharge' => 'Recompra automática',
-      'consumption' => 'Consumo (resposta da IA)',
-      _ => kind,
-    };
-    return note != null && note.isNotEmpty ? '$base — $note' : base;
-  }
 }
