@@ -12,6 +12,8 @@ type TokenOrder struct {
 	Tokens         int64     `json:"tokens"`
 	Status         string    `json:"status"`
 	PaymentURL     string    `json:"payment_url"`
+	PixQR          string    `json:"pix_qr"`         // PIX copia e cola
+	PixQRBase64    string    `json:"pix_qr_base64"`  // imagem PNG do QR (base64)
 	Credited       bool      `json:"credited"`
 	CreatedAt      time.Time `json:"created_at"`
 }

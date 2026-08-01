@@ -36,6 +36,32 @@ func (r *TokenOrderRepository) SetPsp(referenceID, pspRef, paymentURL string) er
 	return err
 }
 
+// SetPixPsp grava o id do Mercado Pago e os dados do PIX (copia e cola + imagem)
+// no pedido, após criar a cobrança.
+func (r *TokenOrderRepository) SetPixPsp(referenceID, pspRef, qr, qrBase64 string) error {
+	_, err := r.db.Exec(
+		`UPDATE token_orders SET psp_reference_id=$2, pix_qr=$3, pix_qr_base64=$4, updated_at=$5 WHERE reference_id=$1`,
+		referenceID, pspRef, qr, qrBase64, time.Now().UTC())
+	return err
+}
+
+// GetByReference devolve o pedido da conta (o app consulta para saber se a recarga
+// já foi paga/creditada). Escopado pela conta dona.
+func (r *TokenOrderRepository) GetByReference(accountID, referenceID string) (*models.TokenOrder, error) {
+	var o models.TokenOrder
+	err := r.db.QueryRow(`
+		SELECT id, account_id, reference_id, COALESCE(psp_reference_id,''), amount_brl, tokens, status, credited
+		FROM token_orders WHERE reference_id=$1 AND account_id=$2`, referenceID, accountID).
+		Scan(&o.ID, &o.AccountID, &o.ReferenceID, &o.PspReferenceID, &o.AmountBRL, &o.Tokens, &o.Status, &o.Credited)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
 // ClaimForCredit marca o pedido como pago+creditado de forma ATÔMICA e devolve a
 // conta/quantia SÓ na primeira vez — guarda contra crédito duplo quando a NuPay
 // repete o webhook. Devolve (nil, nil) se já estava creditado ou não existe.

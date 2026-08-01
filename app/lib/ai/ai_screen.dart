@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
@@ -470,8 +474,8 @@ class _AIScreenState extends State<AIScreen> {
         title: const Text('Comprar tokens'),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('Pagamento via NuPay (Nubank). Ao confirmar, você vai para o Nubank; '
-                'os tokens entram assim que o pagamento é aprovado.',
+            const Text('Pagamento via PIX (Mercado Pago). Ao gerar, aparece o QR e o '
+                'copia e cola; os tokens entram sozinhos assim que o PIX é aprovado.',
                 style: TextStyle(fontSize: 13)),
             const SizedBox(height: 12),
             TextField(controller: valorCtrl, keyboardType: TextInputType.number,
@@ -486,7 +490,7 @@ class _AIScreenState extends State<AIScreen> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Pagar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Gerar PIX')),
         ],
       ),
     );
@@ -504,15 +508,102 @@ class _AIScreenState extends State<AIScreen> {
       'email': emailCtrl.text.trim(),
     });
     if (!mounted) return;
-    final url = (r.data is Map) ? (r.data as Map)['payment_url'] as String? : null;
-    if (r.ok && url != null && url.isNotEmpty) {
-      openUrl(url);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Abrindo o pagamento… os tokens entram após a confirmação.')));
+    if (r.ok && r.data is Map) {
+      await _mostrarPix(r.data as Map);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(r.message ?? 'Não foi possível iniciar o pagamento')));
+          SnackBar(content: Text(r.message ?? 'Não foi possível gerar o PIX')));
     }
+  }
+
+  // Decodifica a imagem do QR (base64 do MP, PNG sem prefixo). Null se vier vazio/inválido.
+  Uint8List? _qrBytes(String s) {
+    if (s.isEmpty) return null;
+    try {
+      return base64Decode(s.replaceAll(RegExp(r'\s'), ''));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Mostra o PIX (QR + copia e cola) e fica consultando o pedido até o pagamento
+  // cair — aí credita sozinho e atualiza o saldo. Sem depender de o cliente voltar.
+  Future<void> _mostrarPix(Map res) async {
+    final ref = (res['reference_id'] ?? '').toString();
+    final qr = (res['pix_qr'] ?? '').toString();
+    final qrBytes = _qrBytes((res['pix_qr_base64'] ?? '').toString());
+    final ticket = (res['ticket_url'] ?? '').toString();
+    final tokens = ((res['tokens'] ?? 0) as num).toInt();
+    final valor = ((res['amount_brl'] ?? 0) as num).toDouble();
+    Timer? poll;
+    var pago = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dctx) => StatefulBuilder(builder: (dctx, setLocal) {
+        poll ??= Timer.periodic(const Duration(seconds: 4), (t) async {
+          final s = await _api.get('/ai/recharge/order/$ref');
+          if (s.ok && s.data is Map && ((s.data as Map)['credited'] == true)) {
+            t.cancel();
+            pago = true;
+            setLocal(() {});
+          }
+        });
+        return AlertDialog(
+          title: Text(pago ? 'Pagamento confirmado' : 'Pague com PIX'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+              if (pago) ...[
+                const Icon(Icons.check_circle, color: Color(0xFF15803D), size: 56),
+                const SizedBox(height: 10),
+                Text('$tokens tokens creditados no seu saldo.', textAlign: TextAlign.center),
+              ] else ...[
+                Text('R\$ ${valor.toStringAsFixed(2)}  ·  $tokens tokens',
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 12),
+                if (qrBytes != null)
+                  Image.memory(qrBytes, width: 210, height: 210, gaplessPlayback: true)
+                else if (ticket.isNotEmpty)
+                  TextButton.icon(onPressed: () => openUrl(ticket),
+                      icon: const Icon(Icons.open_in_new), label: const Text('Abrir QR no navegador')),
+                const SizedBox(height: 12),
+                const Text('Ou copie o código PIX:', style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: AppTheme.bg, borderRadius: BorderRadius.circular(8)),
+                  child: SelectableText(qr, maxLines: 3, style: const TextStyle(fontSize: 11.5)),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: qr));
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Código copiado')));
+                    },
+                    icon: const Icon(Icons.copy, size: 18),
+                    label: const Text('Copiar código'),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+                  SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: 8),
+                  Text('Aguardando pagamento…', style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                ]),
+              ],
+            ]),
+          ),
+          actions: [
+            pago
+                ? FilledButton(onPressed: () => Navigator.pop(dctx), child: const Text('Concluir'))
+                : TextButton(onPressed: () => Navigator.pop(dctx), child: const Text('Fechar')),
+          ],
+        );
+      }),
+    );
+    poll?.cancel();
+    if (pago && mounted) _load(); // atualiza o saldo/extrato
   }
 
   // Medidor de uso da base: como ela vai inteira no prompt de cada pergunta, há

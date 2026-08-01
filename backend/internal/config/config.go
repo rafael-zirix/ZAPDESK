@@ -59,6 +59,11 @@ type Config struct {
 	NuPayBaseURL       string // sandbox-api.spinpay.com.br | api.spinpay.com.br
 	NuPayMerchantKey   string
 	NuPayMerchantToken string
+
+	// Mercado Pago — gateway ativo da compra de tokens: PIX QR universal (copia e
+	// cola). Vazio = compra desligada (só a recarga manual pelo super-admin roda).
+	MercadoPagoBaseURL     string
+	MercadoPagoAccessToken string
 }
 
 // Load lê o .env (se existir) e monta a Config a partir do ambiente.
@@ -92,8 +97,13 @@ func Load() *Config {
 		NuPayBaseURL:       getenv("NUPAY_BASE_URL", "https://sandbox-api.spinpay.com.br"),
 		NuPayMerchantKey:   os.Getenv("NUPAY_MERCHANT_KEY"),
 		NuPayMerchantToken: os.Getenv("NUPAY_MERCHANT_TOKEN"),
+		MercadoPagoBaseURL:     getenv("MERCADOPAGO_BASE_URL", "https://api.mercadopago.com"),
+		MercadoPagoAccessToken: os.Getenv("MERCADOPAGO_ACCESS_TOKEN"),
 	}
 }
+
+// MercadoPagoConfigured indica se a compra de tokens via Mercado Pago está ativa.
+func (c *Config) MercadoPagoConfigured() bool { return c.MercadoPagoAccessToken != "" }
 
 // NuPayConfigured indica se a compra de tokens via NuPay está habilitada.
 func (c *Config) NuPayConfigured() bool {

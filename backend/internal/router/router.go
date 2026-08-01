@@ -75,12 +75,12 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient).
 		WithAI(aiClient, aiRepo)
 
-	// Cobrança de tokens via NuPay (checkout). Dormente sem credenciais.
+	// Cobrança de tokens via Mercado Pago (PIX QR). Dormente sem credencial.
 	tokenOrderRepo := repository.NewTokenOrderRepository(db)
-	nupayClient := services.NewNuPayClient(cfg.NuPayBaseURL, cfg.NuPayMerchantKey, cfg.NuPayMerchantToken)
-	billingSvc := services.NewBillingService(nupayClient, tokenOrderRepo, aiRepo, supportRepo, cfg.PublicURL)
-	if cfg.NuPayConfigured() {
-		log.Println("[info] Compra de tokens via NuPay ativa")
+	mpClient := services.NewMercadoPagoClient(cfg.MercadoPagoBaseURL, cfg.MercadoPagoAccessToken)
+	billingSvc := services.NewBillingService(mpClient, tokenOrderRepo, aiRepo, supportRepo, cfg.PublicURL)
+	if cfg.MercadoPagoConfigured() {
+		log.Println("[info] Compra de tokens via Mercado Pago (PIX) ativa")
 	}
 
 	if cfg.AIConfigured() {
@@ -126,9 +126,11 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		webhook.POST("", webhookH.Receive)
 	}
 
-	// Webhook da NuPay (público): confirma o pagamento e credita os tokens. Não
-	// confia no corpo — re-consulta o status autenticado antes de creditar.
-	r.POST("/webhook/nupay", billingH.Webhook)
+	// Webhook do Mercado Pago (público): confirma o pagamento e credita os tokens.
+	// Não confia no corpo — re-consulta o status autenticado antes de creditar.
+	// Aceita GET e POST (o MP valida a URL com um GET ao configurar).
+	r.POST("/webhook/mercadopago", billingH.Webhook)
+	r.GET("/webhook/mercadopago", billingH.Webhook)
 
 	// Mídia (foto/anexo): rota pública, o nome do arquivo é aleatório (segredo).
 	r.GET("/media/:name", supportH.ServeMedia)
@@ -220,7 +222,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.POST("/import-url", aiH.ImportURL)
 			ai.DELETE("/context/:id", aiH.DeleteContext)
 			ai.GET("/ledger", aiH.Ledger)
-			ai.POST("/recharge/checkout", billingH.Checkout) // compra tokens via NuPay (PIX/Nubank)
+			ai.POST("/recharge/checkout", billingH.Checkout)       // gera o PIX (Mercado Pago)
+			ai.GET("/recharge/order/:ref", billingH.OrderStatus)   // polling do pedido até creditar
 		}
 
 		// Administração da PLATAFORMA (super-admin): cria e enxerga empresas.
