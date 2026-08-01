@@ -13,7 +13,7 @@ class UsageController extends ChangeNotifier {
   String? error;
 
   /// Período selecionado: month | lastMonth | 7d | 30d.
-  String period = 'month';
+  String period = '30d';
   String fromLabel = '';
   String toLabel = '';
 

@@ -332,8 +332,10 @@ func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRo
 		  GROUP BY account_id
 		),
 		conv AS (
-		  SELECT account_id, COUNT(*) AS conv_count
-		  FROM support_tickets
+		  -- Conversas = tickets com ATIVIDADE (mensagem) no período, não só os criados
+		  -- nele. Assim uma conversa iniciada antes mas usada agora é contada/cobrada.
+		  SELECT account_id, COUNT(DISTINCT ticket_id) AS conv_count
+		  FROM support_ticket_messages
 		  WHERE created_at >= $1 AND created_at < $2
 		  GROUP BY account_id
 		)

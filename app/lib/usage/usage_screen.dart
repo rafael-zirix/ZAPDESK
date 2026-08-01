@@ -87,12 +87,12 @@ class _UsageScreenState extends State<UsageScreen> {
       padding: const EdgeInsets.all(20),
       children: [
         _PricingCard(c),
-        for (final co in c.companies) _companyCard(co),
+        for (final co in c.companies) _companyCard(co, c.pricing),
       ],
     );
   }
 
-  Widget _companyCard(CompanyUsage co) {
+  Widget _companyCard(CompanyUsage co, Pricing pricing) {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(18),
@@ -112,8 +112,8 @@ class _UsageScreenState extends State<UsageScreen> {
           ),
           const SizedBox(height: 14),
           Wrap(
-            spacing: 26,
-            runSpacing: 12,
+            spacing: 18,
+            runSpacing: 10,
             children: [
               _stat('Enviadas', co.messagesOut, Icons.north_east, const Color(0xFF2F80ED)),
               _stat('Recebidas', co.messagesIn, Icons.south_west, const Color(0xFF12B76A)),
@@ -124,7 +124,7 @@ class _UsageScreenState extends State<UsageScreen> {
             ],
           ),
           const SizedBox(height: 14),
-          _valuesRow(co),
+          _billingBreakdown(co, pricing),
           if (co.numbers.isNotEmpty) ...[
             const SizedBox(height: 14),
             const Divider(height: 1),
@@ -136,48 +136,65 @@ class _UsageScreenState extends State<UsageScreen> {
     );
   }
 
+  // Stat compacto INLINE (ícone + número + rótulo numa linha). mainAxisSize.min p/ o
+  // Wrap fluir vários por linha em vez de 1 por linha.
   Widget _stat(String label, int value, IconData icon, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(children: [
-          Icon(icon, size: 15, color: color),
-          const SizedBox(width: 5),
-          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-        ]),
-        const SizedBox(height: 3),
-        Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 5),
+        Text('$value', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
       ],
     );
   }
 
-  // Faixa de valores em R$ (o que a plataforma cobra da empresa no período).
-  Widget _valuesRow(CompanyUsage co) {
+  // Detalhamento a cobrar por tipo de uso (fatura do mês): quantidade × preço = valor.
+  Widget _billingBreakdown(CompanyUsage co, Pricing p) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(color: AppTheme.seed.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(8)),
-      child: Row(children: [
-        _money('WhatsApp', co.valueWhatsApp),
-        const SizedBox(width: 28),
-        _money('IA', co.valueAI),
-        const Spacer(),
-        _money('Total a cobrar', co.valueTotal, big: true),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text('Detalhamento a cobrar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey.shade700)),
+        const SizedBox(height: 10),
+        _billLine('Conversas (WhatsApp)', '${co.conversations} × R\$ ${_price(p.conversation)}/conversa', co.valueWhatsApp),
+        const SizedBox(height: 8),
+        _billLine('Tokens de IA', '${_int(co.aiTokens)} × R\$ ${_price(p.per1kTokens)}/1k', co.valueAI),
+        const Padding(padding: EdgeInsets.symmetric(vertical: 9), child: Divider(height: 1)),
+        Row(children: [
+          const Expanded(child: Text('Total a cobrar', style: TextStyle(fontWeight: FontWeight.w800))),
+          Text(_reais(co.valueTotal), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppTheme.seed)),
+        ]),
       ]),
     );
   }
 
-  Widget _money(String label, double v, {bool big = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-        const SizedBox(height: 2),
-        Text('R\$ ${v.toStringAsFixed(2)}',
-            style: TextStyle(fontSize: big ? 18 : 14.5, fontWeight: FontWeight.w800, color: big ? AppTheme.seed : null)),
-      ],
-    );
+  Widget _billLine(String label, String detail, double value) {
+    return Row(children: [
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+          Text(detail, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+        ]),
+      ),
+      Text(_reais(value), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+    ]);
+  }
+
+  // R$ no formato pt-BR (vírgula decimal).
+  String _reais(double v) => 'R\$ ${v.toStringAsFixed(2).replaceAll('.', ',')}';
+  String _price(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2).replaceAll('.', ',');
+  // Inteiro com separador de milhar (25133 -> 25.133).
+  String _int(int n) {
+    final s = n.abs().toString();
+    final b = StringBuffer(n < 0 ? '-' : '');
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) b.write('.');
+      b.write(s[i]);
+    }
+    return b.toString();
   }
 
   Widget _numberRow(NumberUsage n) {

@@ -70,6 +70,29 @@ class ConversationController extends ChangeNotifier {
   bool loading = false;
   bool sending = false;
 
+  /// Hora da última mensagem RECEBIDA do cliente — define a janela de 24h da Meta.
+  DateTime? get lastInboundAt {
+    for (final m in messages.reversed) {
+      if (!m.isOutbound) return m.createdAt;
+    }
+    return null;
+  }
+
+  /// Janela de 24h aberta? Fora dela a Meta só aceita MODELO (template) aprovado.
+  /// Sem nenhuma mensagem recebida ainda, tratamos como FECHADA (só template abre).
+  bool get windowOpen {
+    final t = lastInboundAt;
+    return t != null && DateTime.now().difference(t) < const Duration(hours: 24);
+  }
+
+  /// Quanto falta para a janela fechar (Duration.zero se já fechada).
+  Duration get windowLeft {
+    final t = lastInboundAt;
+    if (t == null) return Duration.zero;
+    final left = const Duration(hours: 24) - DateTime.now().difference(t);
+    return left.isNegative ? Duration.zero : left;
+  }
+
   // Gravação de áudio (estilo WhatsApp).
   final AudioRecorder _recorder = AudioRecorder();
   bool recording = false;

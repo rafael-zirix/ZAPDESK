@@ -461,7 +461,9 @@ func (s *SupportService) buildAISystemPrompt(accountID, instructions string) str
 	}
 	if items, err := s.aiRepo.ListContext(accountID); err == nil && len(items) > 0 {
 		b.WriteString("# Base de conhecimento\n")
-		const budget = 12000
+		// Teto da base é 12.000 chars (maxKBChars). O budget do prompt tem folga acima
+		// disso p/ caber guardrails + instruções + a base cheia sem cortar o final.
+		const budget = 16000
 		for _, it := range items {
 			chunk := "## " + it.Title + "\n" + it.Content + "\n\n"
 			if b.Len()+len(chunk) > budget {

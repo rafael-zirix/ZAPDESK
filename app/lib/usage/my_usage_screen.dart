@@ -21,7 +21,7 @@ class _MyUsageScreenState extends State<MyUsageScreen> {
   Pricing _pricing = Pricing(conversation: 0, per1kTokens: 0);
   String _fromLabel = '';
   String _toLabel = '';
-  String _period = 'month';
+  String _period = '30d';
 
   static const _periods = [
     ('month', 'Este mês'),
@@ -159,8 +159,8 @@ class _MyUsageScreenState extends State<MyUsageScreen> {
         const Text('Uso no período', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         const SizedBox(height: 14),
         Wrap(
-          spacing: 26,
-          runSpacing: 12,
+          spacing: 18,
+          runSpacing: 10,
           children: [
             _stat('Conversas', u.conversations, Icons.forum_outlined, AppTheme.seed),
             _stat('Enviadas', u.messagesOut, Icons.north_east, const Color(0xFF2F80ED)),
@@ -200,18 +200,17 @@ class _MyUsageScreenState extends State<MyUsageScreen> {
     );
   }
 
+  // Stat compacto INLINE (ícone + número + rótulo numa linha só). mainAxisSize.min
+  // p/ o item medir pelo conteúdo e o Wrap fluir vários por linha (não 1 por linha).
   Widget _stat(String label, int value, IconData icon, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(children: [
-          Icon(icon, size: 15, color: color),
-          const SizedBox(width: 5),
-          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-        ]),
-        const SizedBox(height: 3),
-        Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 5),
+        Text('$value', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
       ],
     );
   }

@@ -15,8 +15,8 @@ import (
 
 // maxKBChars é o teto total (em caracteres) da base de conhecimento por empresa.
 // Como a base inteira vai no prompt de CADA pergunta, esse teto segura o custo
-// por resposta. ~8.000 caracteres ≈ ~2.400 tokens.
-const maxKBChars = 8000
+// por resposta. ~12.000 caracteres ≈ ~3.500 tokens (casa com o budget do prompt).
+const maxKBChars = 12000
 
 // AIHandler expõe o Atendente IA: config + base de conhecimento + saldo/extrato
 // (empresa) e recarga de tokens (super-admin).

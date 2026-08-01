@@ -429,9 +429,9 @@ class _ConversationPane extends StatelessWidget {
     );
   }
 
-  // Abre as mensagens prontas num popup compacto ACIMA do botão (igual ao emoji
-  // e ao menu +), em vez de um bottom-sheet grande.
-  Future<void> _pickTemplate(BuildContext btnCtx) async {
+  // Abre as mensagens prontas num popup compacto ACIMA do botão. Devolve o modelo
+  // escolhido (ou null).
+  Future<MessageTemplate?> _chooseTemplate(BuildContext btnCtx) async {
     final box = btnCtx.findRenderObject() as RenderBox;
     final overlayBox = Overlay.of(btnCtx).context.findRenderObject() as RenderBox;
     final position = RelativeRect.fromRect(
@@ -441,7 +441,7 @@ class _ConversationPane extends StatelessWidget {
       ),
       Offset.zero & overlayBox.size,
     );
-    final picked = await showMenu<MessageTemplate>(
+    return showMenu<MessageTemplate>(
       context: btnCtx,
       position: position,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -453,8 +453,38 @@ class _ConversationPane extends StatelessWidget {
         ),
       ],
     );
-    if (picked == null) return;
-    conv.stageTemplate(picked); // coloca no campo; o atendente revisa e aperta enviar
+  }
+
+  // Janela ABERTA: prepara o modelo no campo (o atendente revisa e envia).
+  // Janela FECHADA: envia o modelo DIRETO (é o único que a Meta entrega fora das 24h),
+  // com uma confirmação — não faz sentido "preparar" num campo bloqueado.
+  Future<void> _pickTemplate(BuildContext btnCtx) async {
+    final picked = await _chooseTemplate(btnCtx);
+    if (picked == null || !btnCtx.mounted) return;
+    if (conv.windowOpen) {
+      conv.stageTemplate(picked);
+      return;
+    }
+    final go = await showDialog<bool>(
+      context: btnCtx,
+      builder: (_) => AlertDialog(
+        title: const Text('Enviar modelo'),
+        content: Text(picked.bodyText?.isNotEmpty == true ? picked.bodyText! : picked.name),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(btnCtx, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(btnCtx, true),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    final ok = await conv.sendTemplate(picked.name, picked.language, picked.bodyText ?? '');
+    if (!ok && btnCtx.mounted) {
+      ScaffoldMessenger.of(btnCtx).showSnackBar(const SnackBar(content: Text('Não foi possível enviar o modelo')));
+    }
   }
 
   Widget _header(BuildContext context) {
@@ -486,6 +516,7 @@ class _ConversationPane extends StatelessWidget {
             ),
           ),
           if (aiEnabled) _aiToggle(),
+          _windowChip(),
           if (!showBack)
             IconButton(
               icon: const Icon(Icons.close, size: 20),
@@ -524,6 +555,39 @@ class _ConversationPane extends StatelessWidget {
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
             ]),
           ),
+        ),
+      ),
+    );
+  }
+
+  // Chip compacto no header (à direita do "IA ativa") com o status da janela de
+  // 24h da Meta: cadeado + "24h", verde = aberta, vermelho = fechada. Não ocupa
+  // linha própria (economiza espaço na conversa). Detalhe/tempo restante no tooltip.
+  Widget _windowChip() {
+    final open = conv.windowOpen;
+    final color = open ? const Color(0xFF1F9D57) : const Color(0xFFEF4444);
+    final left = conv.windowLeft;
+    final tip = open
+        ? (left.inHours > 0
+            ? 'Janela de 24h aberta · faltam ${left.inHours}h — pode enviar texto livre'
+            : 'Janela de 24h aberta · faltam ${left.inMinutes}min — pode enviar texto livre')
+        : 'Janela de 24h fechada — só modelo aprovado é entregue';
+    return Padding(
+      padding: const EdgeInsets.only(right: 2),
+      child: Tooltip(
+        message: tip,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withValues(alpha: 0.5)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(open ? Icons.lock_open_outlined : Icons.lock_clock_outlined, size: 15, color: color),
+            const SizedBox(width: 5),
+            Text('24h', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+          ]),
         ),
       ),
     );
@@ -972,6 +1036,10 @@ class _ConversationPane extends StatelessWidget {
     // Durante a gravação, o compositor vira a barra de gravação.
     if (conv.recording) return _recordingBar(context);
 
+    // Fora da janela de 24h a Meta só entrega MODELO aprovado → bloqueia o texto
+    // livre e direciona para os modelos.
+    if (!conv.windowOpen) return _closedWindowComposer(context);
+
     return Container(
       color: AppTheme.surface,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
@@ -1028,6 +1096,52 @@ class _ConversationPane extends StatelessWidget {
               );
             },
           ),
+        ],
+      ),
+    );
+  }
+
+  // Compositor bloqueado quando a janela de 24h está fechada: sem texto livre,
+  // só o botão de escolher um modelo (que é enviado direto, pois é o único que a
+  // Meta entrega fora das 24h).
+  Widget _closedWindowComposer(BuildContext context) {
+    final noTemplates = templates.isEmpty;
+    // Column empilhada (sem Expanded-em-Row, que colapsa no CanvasKit): texto na
+    // largura toda com quebra natural + botão embaixo.
+    return Container(
+      width: double.infinity,
+      color: AppTheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text.rich(
+            TextSpan(children: [
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Icon(Icons.lock_clock_outlined, size: 16, color: Colors.grey.shade600),
+              ),
+              const TextSpan(text: '  '),
+              TextSpan(
+                text: noTemplates
+                    ? 'Janela de 24h fechada. Fora dela só um modelo aprovado é entregue — crie um na aba Modelos.'
+                    : 'Janela de 24h fechada. Envie um modelo aprovado (o único que a Meta entrega agora).',
+              ),
+            ]),
+            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600),
+          ),
+          if (!noTemplates) ...[
+            const SizedBox(height: 10),
+            Builder(
+              builder: (btnCtx) => FilledButton.icon(
+                onPressed: conv.sending ? null : () => _pickTemplate(btnCtx),
+                style: FilledButton.styleFrom(backgroundColor: AppTheme.seed, minimumSize: const Size(0, 44)),
+                icon: const Icon(Icons.article_outlined, size: 18),
+                label: const Text('Enviar modelo'),
+              ),
+            ),
+          ],
         ],
       ),
     );
