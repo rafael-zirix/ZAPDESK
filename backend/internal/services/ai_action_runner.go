@@ -145,12 +145,20 @@ func actionLoginToken(a models.AIAction) (string, error) {
 		return "", fmt.Errorf("resposta do login não é JSON")
 	}
 	field := strings.TrimSpace(a.TokenField)
-	if field == "" {
-		field = "token"
+	tok := ""
+	if field != "" {
+		tok = extractJSONPath(parsed, field)
 	}
-	tok := extractJSONPath(parsed, field)
+	// À prova de erro: se o campo configurado não bater, tenta os nomes usuais de JWT.
 	if tok == "" {
-		return "", fmt.Errorf("campo '%s' não veio na resposta do login", field)
+		for _, f := range []string{"token", "jwt", "access_token", "accessToken", "data.token", "data.jwt"} {
+			if tok = extractJSONPath(parsed, f); tok != "" {
+				break
+			}
+		}
+	}
+	if tok == "" {
+		return "", fmt.Errorf("não achei o token na resposta do login (campo '%s')", field)
 	}
 	actionJWTCache.Store(a.ID, cachedJWT{token: tok, exp: time.Now().Add(20 * time.Minute)})
 	return tok, nil
