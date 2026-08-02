@@ -483,8 +483,9 @@ func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage)
 			b.WriteString(sys)
 			b.WriteString("\n\n# Ferramentas disponíveis\nVocê pode buscar informações em tempo real com as ferramentas abaixo. ")
 			b.WriteString("Se o pedido do cliente for sobre um destes assuntos, PEÇA os dados que faltam (ex.: CPF) e USE a ferramenta — ")
-			b.WriteString("NÃO diga que vai chamar um atendente humano nesses casos (só encaminhe se a ferramenta falhar). ")
-			b.WriteString("Ao receber o resultado, responda ao cliente com base nele.\n")
+			b.WriteString("NÃO diga que vai chamar um atendente humano nesses casos (só encaminhe se a ferramenta retornar ERRO). ")
+			b.WriteString("Baseie a resposta SOMENTE no resultado da ferramenta. Se o resultado for uma lista, selecione os itens relevantes ao pedido e resuma de forma clara (não despeje o JSON cru). ")
+			b.WriteString("Se a lista vier vazia, diga que não há nada no momento.\n")
 			for _, a := range actions {
 				b.WriteString("- " + a.Name + ": " + a.TriggerDesc + "\n")
 			}
@@ -543,6 +544,7 @@ func (s *SupportService) runAITool(byName map[string]models.AIAction, c AIToolCa
 	if strings.TrimSpace(out) == "" {
 		return "A consulta não retornou dados para esse valor."
 	}
+	slog.Info("Ação da IA executada", "acao", a.Name, "chars", len(out))
 	return out
 }
 
