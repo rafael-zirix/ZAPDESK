@@ -475,9 +475,25 @@ func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage)
 		byName[name] = a
 		tools = append(tools, AITool{Name: name, Description: a.TriggerDesc, ParamName: a.ParamName, ParamDesc: a.ParamDesc})
 	}
+	// Reforça no system que a IA deve USAR as ferramentas (senão o guardrail a leva a
+	// "chamar um atendente" em vez de pedir o dado e consultar).
+	if len(msgs) > 0 {
+		if sys, ok := msgs[0]["content"].(string); ok && msgs[0]["role"] == "system" {
+			var b strings.Builder
+			b.WriteString(sys)
+			b.WriteString("\n\n# Ferramentas disponíveis\nVocê pode buscar informações em tempo real com as ferramentas abaixo. ")
+			b.WriteString("Se o pedido do cliente for sobre um destes assuntos, PEÇA os dados que faltam (ex.: CPF) e USE a ferramenta — ")
+			b.WriteString("NÃO diga que vai chamar um atendente humano nesses casos (só encaminhe se a ferramenta falhar). ")
+			b.WriteString("Ao receber o resultado, responda ao cliente com base nele.\n")
+			for _, a := range actions {
+				b.WriteString("- " + a.Name + ": " + a.TriggerDesc + "\n")
+			}
+			msgs[0]["content"] = b.String()
+		}
+	}
 	total := 0
 	for round := 0; round < 3; round++ {
-		content, calls, tok, err := s.ai.ChatRaw(msgs, tools, 600)
+		content, calls, rawMsg, tok, err := s.ai.ChatRaw(msgs, tools, 600)
 		total += tok
 		if err != nil {
 			return "", total, err
@@ -485,20 +501,18 @@ func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage)
 		if len(calls) == 0 {
 			return content, total, nil
 		}
-		asstCalls := make([]map[string]any, 0, len(calls))
-		for _, c := range calls {
-			asstCalls = append(asstCalls, map[string]any{
-				"id": c.ID, "type": "function",
-				"function": map[string]any{"name": c.Name, "arguments": c.ArgsJSON},
-			})
+		// Reenvia a mensagem do assistant COMO VEIO (preserva thought_signature do Gemini).
+		if rawMsg == nil {
+			rawMsg = map[string]any{}
 		}
-		msgs = append(msgs, map[string]any{"role": "assistant", "content": content, "tool_calls": asstCalls})
+		rawMsg["role"] = "assistant"
+		msgs = append(msgs, rawMsg)
 		for _, c := range calls {
 			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": c.ID, "content": s.runAITool(byName, c)})
 		}
 	}
 	// Muitas rodadas: pede a resposta final já sem ferramentas.
-	content, _, tok, err := s.ai.ChatRaw(msgs, nil, 600)
+	content, _, _, tok, err := s.ai.ChatRaw(msgs, nil, 600)
 	total += tok
 	return content, total, err
 }

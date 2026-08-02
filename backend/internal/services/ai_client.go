@@ -114,9 +114,9 @@ type AIToolCall struct {
 // ChatRaw envia mensagens no formato OpenAI (mapas livres, para suportar tool_calls
 // e mensagens de resultado) + ferramentas opcionais. Devolve o texto final OU os
 // tool_calls pedidos pela IA, mais os tokens usados. Gemini suporta no modo OpenAI.
-func (c *AIClient) ChatRaw(messages []map[string]any, tools []AITool, maxTokens int) (string, []AIToolCall, int, error) {
+func (c *AIClient) ChatRaw(messages []map[string]any, tools []AITool, maxTokens int) (string, []AIToolCall, map[string]any, int, error) {
 	if !c.Configured() {
-		return "", nil, 0, errors.New("motor de IA não configurado")
+		return "", nil, nil, 0, errors.New("motor de IA não configurado")
 	}
 	if maxTokens <= 0 {
 		maxTokens = 500
@@ -150,7 +150,7 @@ func (c *AIClient) ChatRaw(messages []map[string]any, tools []AITool, maxTokens 
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
-		return "", nil, 0, err
+		return "", nil, nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -158,25 +158,16 @@ func (c *AIClient) ChatRaw(messages []map[string]any, tools []AITool, maxTokens 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", nil, 0, err
+		return "", nil, nil, 0, err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return "", nil, 0, fmt.Errorf("ia respondeu %d: %s", resp.StatusCode, string(data))
+		return "", nil, nil, 0, fmt.Errorf("ia respondeu %d: %s", resp.StatusCode, string(data))
 	}
 	var out struct {
 		Choices []struct {
-			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
-					ID       string `json:"id"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
+			Message json.RawMessage `json:"message"`
 		} `json:"choices"`
 		Usage struct {
 			TotalTokens      int `json:"total_tokens"`
@@ -185,19 +176,33 @@ func (c *AIClient) ChatRaw(messages []map[string]any, tools []AITool, maxTokens 
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return "", nil, 0, err
+		return "", nil, nil, 0, err
 	}
 	total := out.Usage.TotalTokens
 	if total == 0 {
 		total = out.Usage.PromptTokens + out.Usage.CompletionTokens
 	}
 	if len(out.Choices) == 0 {
-		return "", nil, total, errors.New("a IA não devolveu resposta")
+		return "", nil, nil, total, errors.New("a IA não devolveu resposta")
 	}
-	msg := out.Choices[0].Message
+	// Guarda a mensagem do assistant CRUA para reenviar igual na próxima ida (o Gemini
+	// exige campos como thought_signature nos tool_calls; remontar quebra a continuação).
+	rawMsg := map[string]any{}
+	_ = json.Unmarshal(out.Choices[0].Message, &rawMsg)
+	var msg struct {
+		Content   string `json:"content"`
+		ToolCalls []struct {
+			ID       string `json:"id"`
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls"`
+	}
+	_ = json.Unmarshal(out.Choices[0].Message, &msg)
 	var calls []AIToolCall
 	for _, tc := range msg.ToolCalls {
 		calls = append(calls, AIToolCall{ID: tc.ID, Name: tc.Function.Name, ArgsJSON: tc.Function.Arguments})
 	}
-	return strings.TrimSpace(msg.Content), calls, total, nil
+	return strings.TrimSpace(msg.Content), calls, rawMsg, total, nil
 }
