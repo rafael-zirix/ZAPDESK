@@ -656,8 +656,12 @@ class _AIScreenState extends State<AIScreen> {
     final url = TextEditingController(text: existing?['url']?.toString() ?? '');
     final body = TextEditingController(text: existing?['body_template']?.toString() ?? '');
     final auth = TextEditingController();
+    final loginUrl = TextEditingController(text: existing?['login_url']?.toString() ?? '');
+    final loginBody = TextEditingController();
+    final tokenField = TextEditingController(text: existing?['token_field']?.toString() ?? 'token');
     var method = (existing?['method']?.toString() ?? 'GET').toUpperCase();
     final hasAuth = existing?['has_auth'] == true;
+    final hasLogin = existing?['has_login'] == true;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -694,7 +698,23 @@ class _AIScreenState extends State<AIScreen> {
                   TextField(controller: body, minLines: 2, maxLines: 6, decoration: const InputDecoration(labelText: 'Corpo JSON (pode usar {cpf_cnpj})', alignLabelWithHint: true)),
                 ],
                 const SizedBox(height: 8),
-                TextField(controller: auth, decoration: InputDecoration(labelText: 'Autenticação (opcional)', hintText: hasAuth ? 'salvo — deixe em branco p/ manter' : 'Authorization: Bearer xxxxx')),
+                TextField(controller: auth, decoration: InputDecoration(labelText: 'Autenticação por header (opcional)', hintText: hasAuth ? 'salvo — deixe em branco p/ manter' : 'Authorization: Bearer xxxxx')),
+                const SizedBox(height: 14),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Login (token → JWT) — opcional', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                ),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Para APIs que exigem logar antes (ex.: RODAR). O sistema faz o login e usa o token nas chamadas.',
+                      style: TextStyle(fontSize: 11.5, color: Colors.grey)),
+                ),
+                const SizedBox(height: 6),
+                TextField(controller: loginUrl, decoration: const InputDecoration(labelText: 'URL de login', hintText: 'https://.../login')),
+                const SizedBox(height: 8),
+                TextField(controller: loginBody, minLines: 1, maxLines: 3, decoration: InputDecoration(labelText: 'Corpo do login (com o token)', hintText: hasLogin ? 'salvo — deixe em branco p/ manter' : '{"token":"SEU_TOKEN"}')),
+                const SizedBox(height: 8),
+                TextField(controller: tokenField, decoration: const InputDecoration(labelText: 'Campo do token na resposta', hintText: 'token')),
               ]),
             ),
           ),
@@ -715,6 +735,9 @@ class _AIScreenState extends State<AIScreen> {
       'url': url.text.trim(),
       'body_template': body.text,
       if (auth.text.trim().isNotEmpty) 'auth_header': auth.text.trim(),
+      'login_url': loginUrl.text.trim(),
+      if (loginBody.text.trim().isNotEmpty) 'login_body': loginBody.text.trim(),
+      'token_field': tokenField.text.trim(),
     };
     final r = existing == null
         ? await _api.post('/ai/actions', payload)

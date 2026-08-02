@@ -42,6 +42,9 @@ type aiActionReq struct {
 	URL          string `json:"url" binding:"required"`
 	BodyTemplate string `json:"body_template"`
 	AuthHeader   string `json:"auth_header"`
+	LoginURL     string `json:"login_url"`
+	LoginBody    string `json:"login_body"`
+	TokenField   string `json:"token_field"`
 	Enabled      *bool  `json:"enabled"`
 }
 
@@ -54,6 +57,10 @@ func (r aiActionReq) toModel(accountID string) models.AIAction {
 	if r.Enabled != nil {
 		enabled = *r.Enabled
 	}
+	tokenField := strings.TrimSpace(r.TokenField)
+	if tokenField == "" {
+		tokenField = "token"
+	}
 	return models.AIAction{
 		AccountID:    accountID,
 		Name:         strings.TrimSpace(r.Name),
@@ -64,6 +71,9 @@ func (r aiActionReq) toModel(accountID string) models.AIAction {
 		URL:          strings.TrimSpace(r.URL),
 		BodyTemplate: r.BodyTemplate,
 		AuthHeader:   strings.TrimSpace(r.AuthHeader),
+		LoginURL:     strings.TrimSpace(r.LoginURL),
+		LoginBody:    strings.TrimSpace(r.LoginBody),
+		TokenField:   tokenField,
 		Enabled:      enabled,
 	}
 }
@@ -101,9 +111,8 @@ func (h *AIHandler) UpdateAction(c *gin.Context) {
 	}
 	a := req.toModel(middleware.AccountID(c))
 	a.ID = c.Param("id")
-	// Só troca o segredo (auth) se o front mandou um novo; senão mantém o atual.
-	setAuth := strings.TrimSpace(req.AuthHeader) != ""
-	if err := h.support.AIActionsRepo().Update(&a, setAuth); err != nil {
+	// Segredos (auth_header/login_body) em branco = mantém o atual (o repo trata via CASE).
+	if err := h.support.AIActionsRepo().Update(&a); err != nil {
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao salvar a ação", nil)
 		return
 	}

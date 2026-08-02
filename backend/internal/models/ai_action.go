@@ -18,7 +18,12 @@ type AIAction struct {
 	BodyTemplate string    `json:"body_template"`
 	AuthHeader   string    `json:"-"`        // sensível: nunca volta em texto na API
 	HasAuth      bool      `json:"has_auth"` // indica ao front que há auth salva
-	Enabled      bool      `json:"enabled"`
+	// Passo de login opcional (token pré-compartilhado → JWT usado como Bearer).
+	LoginURL   string `json:"login_url"`
+	LoginBody  string `json:"-"`         // sensível (contém o token): nunca volta em texto
+	TokenField string `json:"token_field"`
+	HasLogin   bool   `json:"has_login"` // indica ao front que há login salvo
+	Enabled    bool   `json:"enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

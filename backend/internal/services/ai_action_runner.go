@@ -2,12 +2,14 @@ package services
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"zapdesk/internal/models"
@@ -41,7 +43,14 @@ func ExecuteAction(a models.AIAction, paramValue string) (string, error) {
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if h := strings.TrimSpace(a.AuthHeader); h != "" {
+	// Autenticação: o passo de login (token→JWT) tem prioridade; senão, header fixo.
+	if strings.TrimSpace(a.LoginURL) != "" {
+		tok, lerr := actionLoginToken(a)
+		if lerr != nil {
+			return "", fmt.Errorf("login da ação falhou: %w", lerr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	} else if h := strings.TrimSpace(a.AuthHeader); h != "" {
 		if i := strings.Index(h, ":"); i > 0 {
 			req.Header.Set(strings.TrimSpace(h[:i]), strings.TrimSpace(h[i+1:]))
 		}
@@ -89,4 +98,76 @@ func guardURL(raw string) error {
 func jsonEscape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
 	return r.Replace(s)
+}
+
+// --- passo de login (token pré-compartilhado → JWT), com cache em memória ---
+
+type cachedJWT struct {
+	token string
+	exp   time.Time
+}
+
+var actionJWTCache sync.Map // actionID -> cachedJWT
+
+// actionLoginToken faz (ou reusa do cache) o login da ação e devolve o JWT. Faz
+// POST no LoginURL com LoginBody (JSON) e extrai o token do campo TokenField
+// (aceita caminho com ponto, ex.: "data.token"). Cache curto p/ não logar a cada msg.
+func actionLoginToken(a models.AIAction) (string, error) {
+	if v, ok := actionJWTCache.Load(a.ID); ok {
+		if cj, ok := v.(cachedJWT); ok && cj.token != "" && time.Now().Before(cj.exp) {
+			return cj.token, nil
+		}
+	}
+	if err := guardURL(a.LoginURL); err != nil {
+		return "", err
+	}
+	var body io.Reader
+	if strings.TrimSpace(a.LoginBody) != "" {
+		body = strings.NewReader(a.LoginBody)
+	}
+	req, err := http.NewRequest(http.MethodPost, a.LoginURL, body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 20000))
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("login respondeu %d", resp.StatusCode)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", fmt.Errorf("resposta do login não é JSON")
+	}
+	field := strings.TrimSpace(a.TokenField)
+	if field == "" {
+		field = "token"
+	}
+	tok := extractJSONPath(parsed, field)
+	if tok == "" {
+		return "", fmt.Errorf("campo '%s' não veio na resposta do login", field)
+	}
+	actionJWTCache.Store(a.ID, cachedJWT{token: tok, exp: time.Now().Add(20 * time.Minute)})
+	return tok, nil
+}
+
+// extractJSONPath lê um campo string de um mapa, aceitando caminho com pontos.
+func extractJSONPath(m map[string]any, path string) string {
+	var cur any = m
+	for _, part := range strings.Split(path, ".") {
+		mm, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur = mm[part]
+	}
+	if s, ok := cur.(string); ok {
+		return s
+	}
+	return ""
 }
