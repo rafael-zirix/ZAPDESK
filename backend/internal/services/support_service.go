@@ -618,6 +618,57 @@ func (s *SupportService) maybeAutoRecharge(accountID string, cfg *models.AIConfi
 // AIRepo expõe o repositório de IA para os handlers (config/contexto/extrato).
 func (s *SupportService) AIRepo() *repository.AIRepository { return s.aiRepo }
 
+// OnboardingStatus/SetOnboardingDone expõem o progresso do 1º acesso ao handler.
+func (s *SupportService) OnboardingStatus(accountID string) (*models.OnboardingStatus, error) {
+	return s.repo.OnboardingStatus(accountID)
+}
+func (s *SupportService) SetOnboardingDone(accountID string) error { return s.repo.SetOnboardingDone(accountID) }
+
+// onboardingHelpPrompt ensina o assistente a guiar a configuração do HotZap.
+const onboardingHelpPrompt = `Você é o assistente de configuração do HotZap, uma plataforma de atendimento por WhatsApp com IA. Ajude o cliente NOVO a configurar a conta, de forma curta, cordial e objetiva, em português do Brasil. Baseie-se APENAS nas instruções abaixo; diga em qual menu clicar. Se não souber, diga que um atendente humano pode ajudar.
+
+# Passo a passo do HotZap
+
+## 1. Conectar o WhatsApp (menu "WhatsApp")
+- Mais fácil: botão "Conectar com a Meta" (login na Meta, conecta o número em poucos cliques).
+- Manual: cole o Identificador do número (phone_number_id), o Identificador da conta (waba_id) e o token de acesso — pegos em developers.facebook.com → seu app → WhatsApp → Configuração da API.
+
+## 2. Ligar o Atendente IA (menu "Atendente IA")
+- Ative "Responder automaticamente".
+- Em "Instruções", escreva a persona e as regras (ex.: "Você é o atendimento da Loja X. Seja cordial, responda em até 3 linhas, não dê descontos.").
+
+## 3. Base de conhecimento (mesmo menu "Atendente IA")
+- Preencha as 3 seções: Horários, Contato e Contexto da empresa. Pode colar texto, subir arquivo ou importar um site. A IA responde os clientes com base nisso.
+
+## 4. Ações da IA — opcional (card "Ações da IA")
+- Cadastre buscas na sua API (ex.: 2ª via de boleto): nome, quando usar, o que perguntar, método+URL e login se precisar. A IA passa a consultar sozinha.
+
+## 5. Comprar créditos (menu "Planos")
+- Compre tokens por PIX ou cartão. A IA consome tokens por resposta; ao zerar, ela pausa e cai no atendimento humano.
+
+## 6. Convidar a equipe (menu "Usuários")
+- Crie logins para os atendentes.
+
+Responda à dúvida do cliente com base nisso, de forma direta.`
+
+// OnboardingAsk responde uma dúvida do onboarding com a IA — os tokens são por conta
+// do HotZap (não descontam do cliente). Usa o motor de IA da plataforma.
+func (s *SupportService) OnboardingAsk(question string) (string, error) {
+	if s.ai == nil || !s.ai.Configured() {
+		return "", errors.New("assistente indisponível no momento")
+	}
+	q := strings.TrimSpace(question)
+	if q == "" {
+		return "", errors.New("faça uma pergunta")
+	}
+	chat := []AIChatMessage{
+		{Role: "system", Content: onboardingHelpPrompt},
+		{Role: "user", Content: q},
+	}
+	reply, _, err := s.ai.Complete(chat, 400)
+	return reply, err
+}
+
 // ProcessStatus aplica um status de entrega recebido no webhook da Meta
 // (sent/delivered/read/failed) à mensagem de saída identificada pelo wamid.
 func (s *SupportService) ProcessStatus(accountID, externalID, status string) error {

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HotZap — Atendimento de WhatsApp com IA</title>
+  <meta name="description" content="Centralize as conversas do WhatsApp, deixe a inteligência artificial responder na hora e nunca perca um cliente." />
+  <link rel="icon" href="/favicon.png" />
+  <style>
+    :root {
+      --green: #25D366;
+      --green-d: #1da851;
+      --ink: #0b141a;
+      --ink-2: #111b21;
+      --card: #16232c;
+      --line: rgba(255, 255, 255, 0.09);
+      --txt: #e9edf0;
+      --muted: #9fb0ba;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--ink);
+      color: var(--txt);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { text-decoration: none; color: inherit; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 22px; }
+
+    /* Nav */
+    nav {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(11, 20, 26, 0.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+    }
+    nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: -0.3px; }
+    .logo .mark {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: linear-gradient(135deg, var(--green), var(--green-d));
+      display: grid; place-items: center;
+    }
+    .logo .mark svg { width: 20px; height: 20px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--green); color: #04120a; font-weight: 700;
+      padding: 11px 20px; border-radius: 10px; font-size: 15px;
+      border: none; cursor: pointer; transition: transform .06s ease, background .15s ease;
+    }
+    .btn:hover { background: #2ee06f; }
+    .btn:active { transform: translateY(1px); }
+    .btn.ghost { background: transparent; color: var(--txt); border: 1px solid var(--line); }
+    .btn.ghost:hover { background: rgba(255,255,255,.05); }
+    .btn.lg { padding: 15px 24px; font-size: 16px; width: 100%; justify-content: center; }
+
+    /* Hero */
+    .hero { padding: 70px 0 40px; }
+    .hero .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 48px; align-items: center; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(37, 211, 102, .12); color: var(--green);
+      padding: 6px 13px; border-radius: 999px; font-size: 13px; font-weight: 600;
+      margin-bottom: 20px;
+    }
+    .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    h1 { font-size: 46px; line-height: 1.08; letter-spacing: -1.4px; font-weight: 800; }
+    h1 .hl { color: var(--green); }
+    .lead { color: var(--muted); font-size: 18px; margin: 20px 0 30px; max-width: 520px; }
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .checks { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 26px; color: var(--muted); font-size: 14px; }
+    .checks span { display: inline-flex; align-items: center; gap: 7px; }
+    .checks svg { width: 16px; height: 16px; color: var(--green); }
+
+    /* Login card */
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 18px; padding: 30px; box-shadow: 0 24px 60px rgba(0,0,0,.35);
+    }
+    .card h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.3px; }
+    .card p.sub { color: var(--muted); font-size: 14px; margin: 6px 0 22px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    .field input {
+      width: 100%; background: var(--ink-2); border: 1px solid var(--line); color: var(--txt);
+      padding: 13px 14px; border-radius: 10px; font-size: 15px; outline: none;
+    }
+    .field input:focus { border-color: var(--green); }
+    .card .hint { text-align: center; color: var(--muted); font-size: 13px; margin-top: 16px; }
+    .card .hint a { color: var(--green); font-weight: 600; }
+
+    /* Features */
+    .features { padding: 30px 0 80px; }
+    .features h3 { text-align: center; font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 30px; }
+    .fgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+    .feat { background: var(--ink-2); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+    .feat .ico { width: 42px; height: 42px; border-radius: 10px; background: rgba(37,211,102,.12); display: grid; place-items: center; margin-bottom: 14px; }
+    .feat .ico svg { width: 22px; height: 22px; color: var(--green); }
+    .feat b { display: block; font-size: 15.5px; margin-bottom: 5px; }
+    .feat span { color: var(--muted); font-size: 13.5px; }
+
+    footer { border-top: 1px solid var(--line); padding: 26px 0; color: var(--muted); font-size: 13px; }
+    footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+
+    @media (max-width: 860px) {
+      .hero .grid { grid-template-columns: 1fr; gap: 34px; }
+      h1 { font-size: 36px; }
+      .fgrid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 520px) {
+      .fgrid { grid-template-columns: 1fr; }
+      h1 { font-size: 31px; }
+      .hero { padding: 46px 0 20px; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="wrap">
+      <div class="logo">
+        <span class="mark">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3C7 3 3 6.6 3 11c0 2 .9 3.9 2.4 5.3L4.5 20l3.9-1a10 10 0 0 0 3.6.7c5 0 9-3.6 9-8s-4-8.7-9-8.7Z" fill="#fff"/></svg>
+        </span>
+        HotZap
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <a class="btn ghost" href="/app/">Entrar</a>
+        <a class="btn" href="/app/?signup=1">Quero ser cliente</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="wrap grid">
+      <div>
+        <span class="badge"><span class="dot"></span> Atendimento com Inteligência Artificial</span>
+        <h1>O WhatsApp da sua empresa, com <span class="hl">IA que responde sozinha</span>.</h1>
+        <p class="lead">Centralize todas as conversas num só painel, deixe a inteligência artificial atender 24 horas com a sua base de conhecimento e nunca mais perca um cliente.</p>
+        <div class="hero-actions">
+          <a class="btn lg" style="width:auto" href="/app/?signup=1">Quero ser cliente</a>
+          <a class="btn ghost lg" style="width:auto" href="/app/">Já sou cliente</a>
+        </div>
+        <div class="checks">
+          <span><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Conecte em 1 minuto</span>
+          <span><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Vários atendentes</span>
+          <span><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Sem instalar nada</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Acesse sua conta</h2>
+        <p class="sub">Entre com o e-mail cadastrado da sua empresa — enviamos um código de acesso na hora.</p>
+        <form onsubmit="return goLogin(event)">
+          <div class="field">
+            <label for="email">E-mail</label>
+            <input id="email" type="email" inputmode="email" placeholder="voce@suaempresa.com.br" autocomplete="email" />
+          </div>
+          <button class="btn lg" type="submit">Entrar no painel</button>
+        </form>
+        <p class="hint">É novo por aqui? <a href="/app/?signup=1">Quero ser cliente</a></p>
+      </div>
+    </div>
+  </header>
+
+  <section class="features" id="recursos">
+    <div class="wrap">
+      <h3>Tudo para atender melhor</h3>
+      <div class="fgrid">
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.3A8 8 0 1 1 21 12Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></div>
+          <b>Inbox unificado</b>
+          <span>Todas as conversas do WhatsApp num só lugar, com fila e vários atendentes.</span>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v3m0 12v3M5 12H2m20 0h-3M6.3 6.3 4.2 4.2m15.6 0-2.1 2.1M6.3 17.7l-2.1 2.1m15.6 0-2.1-2.1M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <b>Atendente IA</b>
+          <span>Responde na hora, 24h, com as regras e a base de conhecimento da sua empresa.</span>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></div>
+          <b>Ações inteligentes</b>
+          <span>A IA consulta seus sistemas — 2ª via de boleto, pedidos — e responde sozinha.</span>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none"><path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <b>Conexão em 1 minuto</b>
+          <span>Entre com o Facebook da empresa e pronto — sem copiar tokens nem configurar nada.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div>© <span id="y"></span> HotZap · Atendimento de WhatsApp com IA</div>
+      <div><a href="/app/">Acessar o painel</a></div>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('y').textContent = new Date().getFullYear();
+    // O login real (código por e-mail) acontece no painel; levamos o e-mail
+    // digitado para lá pré-preenchido (?email=).
+    function goLogin(e) {
+      e.preventDefault();
+      var email = (document.getElementById('email').value || '').trim();
+      var url = '/app/';
+      if (email) url += '?email=' + encodeURIComponent(email);
+      window.location.href = url;
+      return false;
+    }
+  </script>
+</body>
+</html>

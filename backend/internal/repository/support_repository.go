@@ -317,6 +317,33 @@ type AccountUsageRow struct {
 	Conversations int
 }
 
+// OnboardingStatus resume o progresso do primeiro acesso do cliente (checklist).
+func (r *SupportRepository) OnboardingStatus(accountID string) (*models.OnboardingStatus, error) {
+	var s models.OnboardingStatus
+	err := r.db.QueryRow(`
+		SELECT
+			a.onboarding_done,
+			EXISTS(SELECT 1 FROM whatsapp_accounts w WHERE w.account_id=a.id),
+			a.ai_enabled,
+			(COALESCE(a.ai_instructions,'') <> ''),
+			EXISTS(SELECT 1 FROM ai_context_items c WHERE c.account_id=a.id),
+			EXISTS(SELECT 1 FROM ai_actions ac WHERE ac.account_id=a.id),
+			(a.ai_token_balance > 0),
+			(SELECT count(*) FROM users u WHERE u.account_id=a.id AND u.deleted_at IS NULL)
+		FROM accounts a WHERE a.id=$1`, accountID).
+		Scan(&s.Done, &s.HasWhatsApp, &s.AIEnabled, &s.HasInstructions, &s.HasKnowledge, &s.HasActions, &s.HasCredits, &s.TeamSize)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// SetOnboardingDone marca o guia como concluído/dispensado.
+func (r *SupportRepository) SetOnboardingDone(accountID string) error {
+	_, err := r.db.Exec(`UPDATE accounts SET onboarding_done=true WHERE id=$1`, accountID)
+	return err
+}
+
 // UsageByAccount devolve o consumo (mensagens/conversas) por empresa no período
 // [from, to). Inclui todas as empresas ativas, mesmo com uso zero.
 func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRow, error) {

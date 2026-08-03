@@ -47,6 +47,29 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Auto-cadastro: cria a empresa + o admin e cai no fluxo de código (OTP no
+  /// WhatsApp) — o mesmo verifyCode conclui o login e leva ao onboarding.
+  Future<void> signup(String company, String name, String email, String phone) async {
+    _busy(true);
+    error = null;
+    final r = await _api.post('/auth/signup', {
+      'company_name': company.trim(),
+      'admin_name': name.trim(),
+      'email': email.trim(),
+      'phone': phone.trim(),
+    });
+    _busy(false);
+    if (r.ok) {
+      // O código vai pelo e-mail (canal confiável) quando informado; o
+      // verifyCode usa o mesmo identificador.
+      pendingIdentifier = email.trim().isNotEmpty ? email.trim() : phone.trim();
+      _set(AuthStatus.awaitingCode);
+    } else {
+      error = r.message ?? 'Não foi possível criar a conta';
+      notifyListeners();
+    }
+  }
+
   /// Etapa 2: valida o código e entra.
   Future<void> verifyCode(String code) async {
     if (pendingIdentifier == null) return;

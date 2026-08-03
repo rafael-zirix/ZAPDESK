@@ -19,6 +19,9 @@ var (
 	ErrAuthUserNotFound = errors.New("usuário não encontrado para este identificador")
 	ErrAuthInvalidCode  = errors.New("código inválido ou expirado")
 	ErrAuthInvalidToken = errors.New("sessão inválida ou expirada")
+	ErrSignupInvalid    = errors.New("dados de cadastro inválidos")
+	// Re-exportado do repositório para o handler não depender da camada de dados.
+	ErrPhoneAlreadyUsed = repository.ErrPhoneAlreadyUsed
 )
 
 const (
@@ -32,10 +35,48 @@ type AuthService struct {
 	users    *repository.UserRepository
 	auth     *repository.AuthRepository
 	accounts *repository.AccountRepository // canais de OTP permitidos por empresa
-	jwt      *JWTService
-	isDev    bool
-	mailer   Mailer         // envio de e-mail (canal reserva; pode ser nil)
-	whatsapp WhatsAppSender // envio por WhatsApp (canal principal; pode ser nil)
+	jwt         *JWTService
+	isDev       bool
+	mailer      Mailer         // envio de e-mail (canal reserva; pode ser nil)
+	whatsapp    WhatsAppSender // envio por WhatsApp (canal principal; pode ser nil)
+	signupTrial int64          // tokens de IA concedidos no auto-cadastro público
+}
+
+// WithSignupTrial define o saldo de trial (crédito de boas-vindas) concedido a
+// cada empresa criada pelo auto-cadastro público.
+func (s *AuthService) WithSignupTrial(n int64) *AuthService {
+	s.signupTrial = n
+	return s
+}
+
+// Signup é o auto-cadastro público: cria a empresa + o seu admin com o crédito de
+// trial e dispara o código OTP para o novo admin confirmar e já entrar no
+// onboarding. O código vai por E-MAIL (canal confiável) quando informado; senão
+// cai no WhatsApp. Recusa e-mail/telefone já cadastrado (ErrPhoneAlreadyUsed).
+func (s *AuthService) Signup(company, adminName, phone, email string) error {
+	company = strings.TrimSpace(company)
+	adminName = strings.TrimSpace(adminName)
+	email = strings.ToLower(strings.TrimSpace(email))
+	phone = normalizePhone(phone)
+	hasEmail := strings.Contains(email, "@")
+	hasPhone := len(phone) >= 12
+	if len([]rune(company)) < 2 || len([]rune(adminName)) < 2 || (!hasEmail && !hasPhone) {
+		return ErrSignupInvalid
+	}
+	if _, err := s.accounts.SignupCompany(company, adminName, phone, email, s.signupTrial); err != nil {
+		return err
+	}
+	// Conta criada. O envio do código é best-effort: se falhar (provedor fora,
+	// e-mail inválido), o cliente ainda entra no fluxo de código e reenvia pelo
+	// login — não desfazemos a conta nem devolvemos erro.
+	dest := phone
+	if hasEmail {
+		dest = email // e-mail é o canal preferido (entrega confiável)
+	}
+	if err := s.RequestOTP(dest); err != nil {
+		slog.Error("signup: falha ao enviar o código (conta já criada)", "erro", err, "dest", dest)
+	}
+	return nil
 }
 
 // Mailer envia o código OTP por e-mail (implementado por um provedor, ex.: Resend).

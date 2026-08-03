@@ -67,7 +67,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	}
 
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
-	authSvc := services.NewAuthService(userRepo, authRepo, accountRepo, jwtSvc, !cfg.IsProduction(), mailer, waOTP)
+	authSvc := services.NewAuthService(userRepo, authRepo, accountRepo, jwtSvc, !cfg.IsProduction(), mailer, waOTP).
+		WithSignupTrial(cfg.SignupTrialTokens)
 	userSvc := services.NewUserService(userRepo)
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
 	aiRepo := repository.NewAIRepository(db)
@@ -123,9 +124,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Autenticação (público).
 	auth := r.Group("/auth")
 	{
-		auth.POST("/login", authH.Login)   // pede o OTP
-		auth.POST("/verify", authH.Verify) // valida o OTP → tokens
-		auth.POST("/refresh", authH.Refresh)
+		auth.POST("/login", authH.Login)     // pede o OTP
+		auth.POST("/verify", authH.Verify)   // valida o OTP → tokens
+		auth.POST("/refresh", authH.Refresh) //
+		auth.POST("/signup", authH.Signup)   // auto-cadastro público (empresa + admin + trial)
 	}
 
 	// Webhook da Meta (público: autenticado pela assinatura HMAC / verify token).
@@ -250,6 +252,14 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.DELETE("/subscription", billingH.Unsubscribe)       // cancela a recarga automática
 		}
 
+		// Onboarding do 1º acesso (admin): checklist + assistente de IA (por conta do HotZap).
+		onb := api.Group("/onboarding", middleware.RequireAdmin())
+		{
+			onb.GET("/status", supportH.OnboardingStatus)
+			onb.POST("/done", supportH.OnboardingDone)
+			onb.POST("/ask", supportH.OnboardingAsk)
+		}
+
 		// Administração da PLATAFORMA (super-admin): cria e enxerga empresas.
 		// NÃO conecta números (isso é do cliente) e nunca vê tokens.
 		admin := api.Group("/admin", middleware.RequireSuperAdmin())
@@ -273,11 +283,15 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		}
 	}
 
-	// Front (Flutter web) servido na mesma origem, quando WEB_DIR aponta para o
-	// build. Serve o arquivo pedido; se não existir, cai no index.html (SPA).
+	// Front servido na mesma origem, quando WEB_DIR aponta para o build.
+	//   /            -> landing do cliente (index.html na raiz do WEB_DIR)
+	//   /app, /app/* -> app Flutter (build com --base-href /app/, em web/app)
+	// Serve o arquivo físico pedido; se não existir, faz o fallback de SPA para
+	// o índice certo conforme o prefixo do caminho.
 	if cfg.WebDir != "" {
 		root := filepath.Clean(cfg.WebDir)
-		index := filepath.Join(root, "index.html")
+		landing := filepath.Join(root, "index.html")
+		appIndex := filepath.Join(root, "app", "index.html")
 		r.NoRoute(func(c *gin.Context) {
 			if c.Request.Method != http.MethodGet {
 				c.Status(http.StatusNotFound)
@@ -292,7 +306,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 				c.File(full)
 				return
 			}
-			c.File(index)
+			// Rotas internas do app (SPA Flutter) caem no índice do app; todo o
+			// resto — inclusive "/" — cai na landing.
+			if c.Request.URL.Path == "/app" || strings.HasPrefix(c.Request.URL.Path, "/app/") {
+				c.File(appIndex)
+				return
+			}
+			c.File(landing)
 		})
 	}
 

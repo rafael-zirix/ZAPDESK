@@ -2,10 +2,15 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"zapdesk/internal/models"
 )
+
+// ErrPhoneAlreadyUsed indica que já existe usuário com aquele telefone (no
+// auto-cadastro público) — o cliente deve fazer login, não cadastrar de novo.
+var ErrPhoneAlreadyUsed = errors.New("telefone já cadastrado")
 
 type AccountRepository struct{ db *sql.DB }
 
@@ -54,6 +59,57 @@ func (r *AccountRepository) CreateWithAdmin(req *models.CreateAccountRequest) (*
 		return nil, err
 	}
 	return a, tx.Commit()
+}
+
+// SignupCompany é o auto-cadastro público: cria a empresa e o seu admin (com
+// e-mail e/ou telefone, para o login por OTP) e já concede o saldo de trial
+// (crédito de boas-vindas), tudo numa transação. Recusa se o e-mail ou o telefone
+// (últimos 11 dígitos) já pertencerem a algum usuário. `phone` deve vir
+// normalizado (só dígitos, com DDI); qualquer um dos dois pode vir vazio.
+func (r *AccountRepository) SignupCompany(company, adminName, phone, email string, trialTokens int64) (*models.Account, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE deleted_at IS NULL AND (
+		  ($1 <> '' AND right(regexp_replace(coalesce(phone,''), '\D', '', 'g'), 11) = right($1, 11))
+		  OR ($2 <> '' AND lower(coalesce(email,'')) = lower($2))))`, phone, email).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrPhoneAlreadyUsed
+	}
+
+	now := time.Now().UTC()
+	a, err := scanAccount(tx.QueryRow(`
+		INSERT INTO accounts (name, status, phone, email, ai_token_balance, created_at, updated_at)
+		VALUES ($1, 'active', $2, $3, $4, $5, $5)
+		RETURNING `+accountCols, company, nullStr(phone), nullStr(email), trialTokens, now))
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.Exec(`INSERT INTO users (account_id, full_name, phone, email, role, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, 'admin', true, $5, $5)`, a.ID, adminName, nullStr(phone), nullStr(email), now); err != nil {
+		return nil, err
+	}
+	if trialTokens > 0 {
+		if _, err = tx.Exec(`INSERT INTO ai_token_ledger (account_id, delta, balance_after, kind, note, created_at)
+			VALUES ($1, $2, $2, 'trial', 'Crédito de boas-vindas (trial)', $3)`, a.ID, trialTokens, now); err != nil {
+			return nil, err
+		}
+	}
+	return a, tx.Commit()
+}
+
+// nullStr devolve nil para string vazia (para gravar NULL em colunas nullable).
+func nullStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // List devolve as empresas com a contagem de números.

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
@@ -7,6 +6,7 @@ import '../core/entity_form.dart';
 import '../core/file_pick.dart';
 import '../core/theme.dart';
 import '../models/whatsapp_number.dart';
+import 'whatsapp_connect_guide.dart';
 import 'whatsapp_controller.dart';
 
 class WhatsAppScreen extends StatefulWidget {
@@ -152,33 +152,30 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
   }
 
   Widget _emptyState(WhatsAppController c) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.chat_bubble_outline, size: 56, color: Color(0xFF0E9384)),
-            const SizedBox(height: 12),
-            const Text('Conecte o WhatsApp da empresa', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Text(
-              'Para receber e responder pelo painel, informe os dados do seu número '
-              'do WhatsApp Business (Meta). Você pega no painel da Meta, em WhatsApp › '
-              'Configuração da API: o WABA ID, o ID do número (phone_number_id) e o token de acesso.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade600, height: 1.5),
+    // Largura FINITA (SizedBox) e não ConstrainedBox: no CanvasKit o segundo
+    // deixa os Row/Expanded do guia colapsarem (texto na vertical).
+    return LayoutBuilder(
+      builder: (context, cons) {
+        final w = cons.maxWidth < 480 ? cons.maxWidth - 32 : 460.0;
+        return Center(
+          child: SingleChildScrollView(
+            child: SizedBox(
+              width: w,
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 20),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                // O guia dá o caminho fácil (Conectar com a Meta) quando o
+                // Embedded Signup está ligado, com o manual como alternativa.
+                child: WhatsAppConnectGuide(onManual: () => _openForm(c)),
+              ),
             ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => _openConnect(c),
-              icon: const Icon(Icons.add),
-              label: const Text('Conectar número'),
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed, minimumSize: const Size(0, 46)),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -197,47 +194,26 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
     );
   }
 
-  /// Abre a conexão de número: se o Embedded Signup estiver ligado, oferece
-  /// "Conectar com a Meta" (popup) ou "Inserir manualmente"; senão, vai direto
-  /// para o formulário manual.
+  /// Abre a conexão de número num sheet com o guia (passo a passo + "Conectar
+  /// com a Meta" + formulário manual). Mesma experiência do onboarding.
   Future<void> _openConnect(WhatsAppController c) async {
-    if (!c.embeddedEnabled) {
-      await _openForm(c);
-      return;
-    }
-    final choice = await showDialog<String>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Conectar número'),
-        content: const Text(
-            'Conecte pelo login da Meta (recomendado — sem copiar tokens) ou insira os dados manualmente.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, 'manual'), child: const Text('Inserir manualmente')),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(context, 'meta'),
-            icon: const Icon(Icons.verified_outlined, size: 18),
-            label: const Text('Conectar com a Meta'),
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
-          ),
-        ],
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: WhatsAppConnectGuide(
+          showHandle: true,
+          onManual: () {
+            Navigator.pop(ctx);
+            _openForm(c);
+          },
+          onConnected: () => Navigator.pop(ctx),
+        ),
       ),
     );
-    if (!mounted) return;
-    if (choice == 'manual') {
-      await _openForm(c);
-    } else if (choice == 'meta') {
-      await _doEmbedded(c);
-    }
-  }
-
-  Future<void> _doEmbedded(WhatsAppController c) async {
-    final err = await c.connectEmbedded();
-    if (!mounted || err == 'cancelado') return;
-    if (err != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
-      return;
-    }
-    await _mostrarResultado(c); // mostra envio/recebimento (webhook) + passos manuais se faltar
   }
 
   Future<void> _openForm(WhatsAppController c) async {
@@ -264,7 +240,7 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
     );
     // conta como ficou envio e recebimento, e mostra o PIN (que pode ter sido
     // sorteado no backend e não aparece de novo)
-    if (conectou && mounted) await _mostrarResultado(c);
+    if (conectou && mounted) await showConnectResultDialog(context, c);
   }
 
   /// Registra na Cloud API um número já conectado — o passo que falta quando o
@@ -302,7 +278,7 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
       return;
     }
-    await _mostrarResultado(c);
+    await showConnectResultDialog(context, c);
   }
 
   /// Define o App Secret do app PRÓPRIO do cliente. Necessário quando o número
@@ -343,99 +319,6 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(err ?? 'App Secret salvo — o recebimento passa a validar com ele.')));
-  }
-
-  /// Conta como ficaram as DUAS metades: enviar (registro na Cloud API) e receber
-  /// (webhook apontado para cá). O PIN sorteado só aparece nesta tela, uma vez.
-  Future<void> _mostrarResultado(WhatsAppController c) async {
-    final ok = c.ultimoWebhookOk;
-    await showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(ok ? 'Pronto para enviar e receber' : 'Conectado — falta configurar o recebimento'),
-        content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(ok ? Icons.check_circle : Icons.warning_amber_rounded,
-                  color: ok ? AppTheme.seed : Colors.orange, size: 22),
-              const SizedBox(width: 8),
-              Expanded(child: Text(ok
-                  ? 'O webhook deste número foi apontado para cá automaticamente — '
-                      'não precisa configurar nada no painel da Meta.'
-                  : 'O envio está liberado, mas o RECEBIMENTO não foi configurado sozinho. '
-                      'Sem ele, as mensagens que chegarem NÃO aparecem aqui até você configurar.')),
-            ]),
-            if (!ok) ...[
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Configure o webhook na Meta', style: TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 4),
-                    const Text('WhatsApp › Configuração da API › Webhooks › Editar. Cole os dados abaixo e assine o campo "messages".',
-                        style: TextStyle(fontSize: 13)),
-                    const SizedBox(height: 12),
-                    _campoCopiavel('Callback URL', c.ultimoCallbackUrl ?? '${Config.apiBaseUrl}/webhook/meta'),
-                    const SizedBox(height: 8),
-                    _campoCopiavel('Verify Token', c.ultimoVerifyToken ?? '(peça o META_VERIFY_TOKEN à plataforma)'),
-                    if ((c.ultimoWebhookMotivo ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Text('Por que não foi automático: ${c.ultimoWebhookMotivo}',
-                          style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 8),
-            Text('PIN da verificação em duas etapas: ${c.ultimoPin ?? "—"}',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            const Text('Guarde este PIN — a Meta o pede para migrar o número de provedor.',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-          ]),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Entendi'))],
-      ),
-    );
-  }
-
-  // Campo com valor selecionável + botão de copiar (para colar no painel da Meta).
-  Widget _campoCopiavel(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey)),
-        const SizedBox(height: 2),
-        Row(children: [
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(color: AppTheme.bg, borderRadius: BorderRadius.circular(6)),
-              child: SelectableText(value, style: const TextStyle(fontSize: 12.5)),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.copy, size: 18),
-            tooltip: 'Copiar',
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: value));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copiado')));
-            },
-          ),
-        ]),
-      ],
-    );
   }
 
   Future<void> _confirmDisconnect(WhatsAppController c, WhatsAppNumber n) async {

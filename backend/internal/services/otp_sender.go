@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"log/slog"
 
 	"zapdesk/internal/crypto"
 	"zapdesk/internal/repository"
@@ -48,8 +49,13 @@ func (s *WhatsAppOTPSender) SendOTP(phone, code string) error {
 			return err
 		}
 		client := NewMetaClient(s.apiBase, token, w.PhoneNumberID)
-		_, err = client.SendAuthTemplate(phone, s.template, s.lang, code)
-		return err
+		id, err := client.SendAuthTemplate(phone, s.template, s.lang, code)
+		if err != nil {
+			return err
+		}
+		slog.Info("OTP por WhatsApp aceito pela Meta", "para", phone, "wamid", id,
+			"template", s.template, "de_pnid", w.PhoneNumberID)
+		return nil
 	}
 	return errors.New("a conta de OTP não tem número conectado")
 }

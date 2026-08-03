@@ -13,16 +13,23 @@ echo "==> build backend (linux/arm64)"
 ( cd "$ROOT/backend" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o "$ROOT/deploy/zapdesk-api" ./cmd/api )
 
 echo "==> build web (Flutter)"
-( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --dart-define=API_BASE_URL="$URL" >/dev/null )
+# App servido em /app/ (a raiz "/" é a landing do cliente).
+( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --base-href /app/ --dart-define=API_BASE_URL="$URL" >/dev/null )
 
 echo "==> empacota"
 rm -rf "$ROOT/deploy/migrations" "$ROOT/deploy/web"
 cp -r "$ROOT/backend/migrations" "$ROOT/deploy/migrations"
-cp -r "$ROOT/app/build/web" "$ROOT/deploy/web"
-# SW de "auto-destruição": o build usa --pwa-strategy=none (sem SW novo), mas o SW
-# ANTIGO já registrado nos navegadores continua servindo a versão velha em cache.
-# Este arquivo substitui o flutter_service_worker.js antigo: ao atualizar, ele
-# limpa todos os caches, se desregistra e recarrega a aba — matando o cache.
+# App Flutter (base-href /app/) em web/app; a landing (start.html) vira a home "/".
+mkdir -p "$ROOT/deploy/web/app"
+cp -r "$ROOT/app/build/web/." "$ROOT/deploy/web/app/"
+mv "$ROOT/deploy/web/app/start.html" "$ROOT/deploy/web/index.html"
+# favicon acessível na raiz (a landing referencia /favicon.png).
+cp "$ROOT/app/build/web/favicon.png" "$ROOT/deploy/web/favicon.png" 2>/dev/null || true
+# SW de "auto-destruição" na RAIZ: navegadores que já abriram o app na raiz têm um
+# service worker registrado no escopo "/", que continuaria servindo o app velho em
+# cache no lugar da nova landing. Este arquivo substitui o /flutter_service_worker.js
+# antigo: limpa os caches, se desregistra e recarrega a aba. (O app novo em /app/
+# roda com --pwa-strategy=none, sem SW.)
 cat > "$ROOT/deploy/web/flutter_service_worker.js" <<'SW'
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) {

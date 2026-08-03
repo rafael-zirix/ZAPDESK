@@ -102,6 +102,13 @@ type metaPayload struct {
 					ID          string `json:"id"`     // wamid da mensagem de saída
 					Status      string `json:"status"` // sent | delivered | read | failed
 					RecipientID string `json:"recipient_id"`
+					Errors      []struct {
+						Code      int    `json:"code"`
+						Title     string `json:"title"`
+						ErrorData *struct {
+							Details string `json:"details"`
+						} `json:"error_data"`
+					} `json:"errors"`
 				} `json:"statuses"`
 			} `json:"value"`
 		} `json:"changes"`
@@ -230,6 +237,18 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 			}
 			// Status de entrega das mensagens de saída (✓✓): atualiza pelo wamid.
 			for _, st := range v.Statuses {
+				if st.Status == "failed" {
+					var code int
+					var title, details string
+					if len(st.Errors) > 0 {
+						code, title = st.Errors[0].Code, st.Errors[0].Title
+						if st.Errors[0].ErrorData != nil {
+							details = st.Errors[0].ErrorData.Details
+						}
+					}
+					slog.Warn("Mensagem de saída FALHOU na Meta", "wamid", st.ID, "para", st.RecipientID,
+						"code", code, "title", title, "details", details)
+				}
 				if err := h.support.ProcessStatus(accountID, st.ID, st.Status); err != nil {
 					slog.Error("Falha ao atualizar status da mensagem", "erro", err, "wamid", st.ID)
 				}

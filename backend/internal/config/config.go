@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -69,6 +70,10 @@ type Config struct {
 	// atingir 10%). Vazio = recarga automática por cartão desligada.
 	StripeSecretKey     string
 	StripeWebhookSecret string
+
+	// Auto-cadastro público: tokens de IA de trial concedidos ao criar a conta
+	// (crédito de boas-vindas). 0 desliga o trial.
+	SignupTrialTokens int64
 }
 
 // Load lê o .env (se existir) e monta a Config a partir do ambiente.
@@ -106,7 +111,18 @@ func Load() *Config {
 		MercadoPagoAccessToken: os.Getenv("MERCADOPAGO_ACCESS_TOKEN"),
 		StripeSecretKey:        os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret:    os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		SignupTrialTokens:      getenvInt64("SIGNUP_TRIAL_TOKENS", 50000),
 	}
+}
+
+// getenvInt64 lê um inteiro do ambiente, caindo no padrão se ausente/ inválido.
+func getenvInt64(key string, def int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 // MercadoPagoConfigured indica se a compra de tokens via Mercado Pago está ativa.

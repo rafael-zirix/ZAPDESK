@@ -12,6 +12,7 @@ import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
 import '../models/app_user.dart';
+import '../onboarding/onboarding_screen.dart';
 import '../plans/plans_screen.dart';
 import '../settings/settings_screen.dart';
 import '../templates/templates_screen.dart';
@@ -39,6 +40,7 @@ class _AppShellState extends State<AppShell> {
   int? _tokens; // saldo de tokens de IA (null = ainda não sei / não-admin)
   int _tokenPeak = 0;
   bool _aiOn = false;
+  bool _onbDone = true; // guia do 1º acesso concluído? (só admin; true evita piscar)
   Timer? _tokenPoll;
 
   @override
@@ -49,6 +51,7 @@ class _AppShellState extends State<AppShell> {
       if (label != null && mounted) setState(() => _savedLabel = label);
     });
     _loadTokens();
+    _loadOnboarding();
     // Mantém o saldo à vista no topo/logout — sempre avisa o admin (fica vermelho perto de acabar).
     _tokenPoll = Timer.periodic(const Duration(seconds: 45), (_) => _loadTokens());
   }
@@ -81,6 +84,34 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
+  // Guia do 1º acesso: só admins têm o endpoint; para os demais o 403 é ignorado
+  // e o guia nunca aparece.
+  Future<void> _loadOnboarding() async {
+    final r = await _api.get('/onboarding/status');
+    if (!mounted || !r.ok || r.data is! Map) return;
+    final done = ((r.data as Map)['done'] ?? true) == true;
+    if (done != _onbDone) setState(() => _onbDone = done);
+  }
+
+  // Leva o usuário a uma aba pelo rótulo (botões do checklist do guia).
+  void _goToLabel(String label) {
+    final me = context.read<AuthController>().me;
+    if (me == null) return;
+    final dests = _destinations(me);
+    final idx = dests.indexWhere((d) => d.label == label);
+    if (idx >= 0) _select(dests, idx);
+  }
+
+  // Conclui/dispensa o guia: some do menu e cai no Atendimento.
+  Future<void> _finishOnboarding() async {
+    await _api.post('/onboarding/done', const <String, dynamic>{});
+    if (!mounted) return;
+    setState(() {
+      _onbDone = true;
+      _index = 0;
+    });
+  }
+
   // Troca de aba: guarda a escolha para sobreviver a um reload (ex.: troca de tema).
   void _select(List<_NavDest> dests, int i) {
     _restored = true; // uma escolha manual cancela qualquer restauração pendente
@@ -96,10 +127,13 @@ class _AppShellState extends State<AppShell> {
         _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', UsageScreen()),
       ];
     }
-    final items = <_NavDest>[
-      const _NavDest(Icons.forum_outlined, Icons.forum, 'Atendimento', InboxScreen()),
-      const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()),
-    ];
+    final items = <_NavDest>[];
+    if (me.isAdmin && !_onbDone) {
+      items.add(_NavDest(Icons.rocket_launch_outlined, Icons.rocket_launch, 'Início',
+          OnboardingScreen(onGo: _goToLabel, onDone: _finishOnboarding)));
+    }
+    items.add(const _NavDest(Icons.forum_outlined, Icons.forum, 'Atendimento', InboxScreen()));
+    items.add(const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()));
     if (me.isAdmin) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
       items.add(const _NavDest(Icons.chat_outlined, Icons.chat, 'WhatsApp', WhatsAppScreen()));

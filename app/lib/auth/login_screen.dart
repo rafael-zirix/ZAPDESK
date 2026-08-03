@@ -15,15 +15,38 @@ class _LoginScreenState extends State<LoginScreen> {
   final _phone = TextEditingController();
   final _email = TextEditingController();
   final _code = TextEditingController();
+  final _company = TextEditingController();
+  final _name = TextEditingController();
 
   // Login por celular (padrão, código no WhatsApp) ou por e-mail (reserva).
   bool _useEmail = false;
+  // Modo de auto-cadastro (empresa + nome + WhatsApp), vindo de ?signup=1.
+  bool _signupMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Vindo da landing (/start.html): ?signup=1 abre o cadastro; ?phone= /
+    // ?email= pré-preenchem o identificador (o cliente não digita duas vezes).
+    final q = Uri.base.queryParameters;
+    final phone = (q['phone'] ?? '').trim();
+    final email = (q['email'] ?? '').trim();
+    if (email.isNotEmpty) {
+      _useEmail = true;
+      _email.text = email;
+    } else if (phone.isNotEmpty) {
+      _phone.text = phone;
+    }
+    if (q['signup'] == '1') _signupMode = true;
+  }
 
   @override
   void dispose() {
     _phone.dispose();
     _email.dispose();
     _code.dispose();
+    _company.dispose();
+    _name.dispose();
     super.dispose();
   }
 
@@ -55,7 +78,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 _logo(),
                 const SizedBox(height: 24),
                 Text(
-                  awaiting ? 'Digite o código' : 'Entrar',
+                  awaiting ? 'Digite o código' : (_signupMode ? 'Criar sua conta' : 'Entrar'),
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
@@ -63,12 +86,52 @@ class _LoginScreenState extends State<LoginScreen> {
                 Text(
                   awaiting
                       ? (viaWhats ? 'Enviamos um código no WhatsApp para\n$pending' : 'Enviamos um código para\n$pending')
-                      : 'Acesse o painel de atendimento',
+                      : (_signupMode ? 'Comece a atender com IA em minutos' : 'Acesse o painel de atendimento'),
                   style: TextStyle(color: Colors.grey.shade600),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
-                if (!awaiting) ...[
+                if (!awaiting && _signupMode) ...[
+                  TextField(
+                    controller: _company,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      labelText: 'Nome da empresa',
+                      prefixIcon: Icon(Icons.storefront_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _name,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      labelText: 'Seu nome',
+                      prefixIcon: Icon(Icons.person_outline),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _email,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Seu e-mail',
+                      hintText: 'voce@suaempresa.com.br',
+                      prefixIcon: Icon(Icons.mail_outline),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _phone,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Seu WhatsApp (opcional)',
+                      hintText: '(21) 99999-9999',
+                      prefixIcon: Icon(Icons.smartphone_outlined),
+                    ),
+                    onSubmitted: (_) => _submitSignup(auth),
+                  ),
+                ] else if (!awaiting) ...[
                   if (_useEmail)
                     TextField(
                       controller: _email,
@@ -117,16 +180,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
                 const SizedBox(height: 20),
                 FilledButton(
-                  onPressed: auth.busy ? null : () => awaiting ? _submitCode(auth) : _submit(auth),
+                  onPressed: auth.busy ? null : () => awaiting ? _submitCode(auth) : (_signupMode ? _submitSignup(auth) : _submit(auth)),
                   child: auth.busy
                       ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : Text(awaiting ? 'Confirmar' : 'Enviar código'),
+                      : Text(awaiting ? 'Confirmar' : (_signupMode ? 'Criar conta' : 'Enviar código')),
                 ),
                 if (awaiting) ...[
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: auth.busy ? null : auth.backToEmail,
                     child: const Text('Voltar'),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 4),
+                  TextButton(
+                    onPressed: auth.busy ? null : () => setState(() { _signupMode = !_signupMode; _useEmail = false; }),
+                    child: Text(_signupMode ? 'Já tenho conta — entrar' : 'Não tem conta? Criar agora'),
                   ),
                 ],
               ],
@@ -159,6 +228,13 @@ class _LoginScreenState extends State<LoginScreen> {
     final id = (_useEmail ? _email.text : _phone.text).trim();
     if (id.isEmpty) return;
     auth.requestCode(id);
+  }
+
+  void _submitSignup(AuthController auth) {
+    final email = _email.text.trim();
+    final phone = _phone.text.trim();
+    if (_company.text.trim().length < 2 || _name.text.trim().length < 2 || (!email.contains('@') && phone.isEmpty)) return;
+    auth.signup(_company.text, _name.text, email, phone);
   }
 
   void _submitCode(AuthController auth) {
