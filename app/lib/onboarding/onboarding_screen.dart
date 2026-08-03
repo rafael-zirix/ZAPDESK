@@ -160,7 +160,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Container(
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppTheme.border)),
-      child: Column(children: [
+      // stretch: sem isto, cada linha encolhe ao intrínseco e o Row/Expanded
+      // interno colapsa (texto na vertical, bug do CanvasKit).
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         for (var i = 0; i < steps.length; i++) _stepRow(steps[i], last: i == steps.length - 1),
       ]),
     );
@@ -196,8 +198,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppTheme.border)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: const [
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(mainAxisSize: MainAxisSize.min, children: const [
           Icon(Icons.support_agent, size: 20, color: AppTheme.seed),
           SizedBox(width: 8),
           Text('Assistente de configuração', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
