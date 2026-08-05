@@ -60,15 +60,20 @@ class _WhatsAppConnectGuideState extends State<WhatsAppConnectGuide> {
               decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
             ),
           ),
-        Row(children: [
-          Container(
-            width: 42, height: 42,
-            decoration: BoxDecoration(color: AppTheme.seed.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(11)),
-            child: const Icon(Icons.chat, color: AppTheme.seed),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(child: Text('Conecte seu WhatsApp', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800))),
-        ]),
+        LayoutBuilder(builder: (context, c) {
+          return Row(children: [
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(color: AppTheme.seed.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(11)),
+              child: const Icon(Icons.chat, color: AppTheme.seed),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: (c.maxWidth - 42 - 12).clamp(60.0, double.infinity),
+              child: const Text('Conecte seu WhatsApp', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            ),
+          ]);
+        }),
         const SizedBox(height: 6),
         Text(
           embedded
@@ -85,12 +90,17 @@ class _WhatsAppConnectGuideState extends State<WhatsAppConnectGuide> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(color: AppTheme.seed.withValues(alpha: 0.07), borderRadius: BorderRadius.circular(10)),
-            child: const Row(children: [
-              Icon(Icons.auto_awesome, size: 18, color: AppTheme.seed),
-              SizedBox(width: 8),
-              Expanded(child: Text('O resto é automático: token, webhook e registro na Meta. Você não copia nada.',
-                  style: TextStyle(fontSize: 12.5, height: 1.3))),
-            ]),
+            child: LayoutBuilder(builder: (context, c) {
+              return Row(children: [
+                const Icon(Icons.auto_awesome, size: 18, color: AppTheme.seed),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: (c.maxWidth - 18 - 8).clamp(40.0, double.infinity),
+                  child: const Text('O resto é automático: token, webhook e registro na Meta. Você não copia nada.',
+                      style: TextStyle(fontSize: 12.5, height: 1.3)),
+                ),
+              ]);
+            }),
           ),
           const SizedBox(height: 18),
           FilledButton.icon(
@@ -129,24 +139,29 @@ class _WhatsAppConnectGuideState extends State<WhatsAppConnectGuide> {
   Widget _passo(int n, IconData icon, String title, String sub) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          width: 30, height: 30,
-          alignment: Alignment.center,
-          decoration: const BoxDecoration(color: AppTheme.seed, shape: BoxShape.circle),
-          child: Text('$n', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
-            const SizedBox(height: 1),
-            Text(sub, style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.3)),
-          ]),
-        ),
-        const SizedBox(width: 8),
-        Icon(icon, color: AppTheme.seed.withValues(alpha: 0.5), size: 20),
-      ]),
+      // largura EXPLÍCITA no texto (Expanded-in-Row colapsa no CanvasKit web).
+      child: LayoutBuilder(builder: (context, c) {
+        final textW = (c.maxWidth - 30 - 12 - 8 - 20).clamp(60.0, double.infinity);
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 30, height: 30,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(color: AppTheme.seed, shape: BoxShape.circle),
+            child: Text('$n', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: textW,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+              const SizedBox(height: 1),
+              Text(sub, style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.3)),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          Icon(icon, color: AppTheme.seed.withValues(alpha: 0.5), size: 20),
+        ]);
+      }),
     );
   }
 }

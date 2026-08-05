@@ -38,12 +38,7 @@
     }
     nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
     .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: -0.3px; }
-    .logo .mark {
-      width: 34px; height: 34px; border-radius: 9px;
-      background: linear-gradient(135deg, var(--green), var(--green-d));
-      display: grid; place-items: center;
-    }
-    .logo .mark svg { width: 20px; height: 20px; }
+    .logo .mark { width: 34px; height: 34px; display: block; }
     .btn {
       display: inline-flex; align-items: center; gap: 8px;
       background: var(--green); color: #04120a; font-weight: 700;
@@ -120,9 +115,10 @@
   <nav>
     <div class="wrap">
       <div class="logo">
-        <span class="mark">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3C7 3 3 6.6 3 11c0 2 .9 3.9 2.4 5.3L4.5 20l3.9-1a10 10 0 0 0 3.6.7c5 0 9-3.6 9-8s-4-8.7-9-8.7Z" fill="#fff"/></svg>
-        </span>
+        <svg class="mark" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="128" height="128" rx="24" fill="#0E9384"/>
+          <path d="M34.9092 93.09V40.7264C34.9092 39.1264 35.4789 37.7567 36.6183 36.6173C37.7577 35.4779 39.1274 34.9082 40.7274 34.9082H87.2728C88.8728 34.9082 90.2425 35.4779 91.3819 36.6173C92.5213 37.7567 93.091 39.1264 93.091 40.7264V75.6355C93.091 77.2355 92.5213 78.6052 91.3819 79.7446C90.2425 80.884 88.8728 81.4537 87.2728 81.4537H46.5455L34.9092 93.09Z" fill="white"/>
+        </svg>
         HotZap
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
