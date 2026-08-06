@@ -1,3 +1,4 @@
+import '../core/phone.dart' show formatPhone;
 /// Uma conversa na lista do inbox.
 class TicketListItem {
   TicketListItem({
@@ -51,17 +52,8 @@ class TicketListItem {
 
   String get displayName => (contactName != null && contactName!.isNotEmpty) ? contactName! : contactPhone;
 
-  /// Telefone formatado (+55 21 99999-9999) quando possível.
-  String get prettyPhone {
-    final d = contactPhone.replaceAll(RegExp(r'\D'), '');
-    if (d.startsWith('55') && (d.length == 12 || d.length == 13)) {
-      final ddd = d.substring(2, 4);
-      final rest = d.substring(4);
-      if (rest.length == 9) return '+55 $ddd ${rest.substring(0, 5)}-${rest.substring(5)}';
-      if (rest.length == 8) return '+55 $ddd ${rest.substring(0, 4)}-${rest.substring(4)}';
-    }
-    return contactPhone;
-  }
+  /// Telefone formatado — mesmo padrão dos contatos: +55 (21) 99333-9504.
+  String get prettyPhone => formatPhone(contactPhone);
 
   String get initials {
     final s = displayName.trim();

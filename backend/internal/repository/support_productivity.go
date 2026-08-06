@@ -70,9 +70,26 @@ func (r *SupportRepository) DeleteQuickReply(accountID, id string) (bool, error)
 
 // --- Etiquetas ---
 
-// ListTags devolve as etiquetas da conta.
+// UpdateTag renomeia/recolore a etiqueta. Devolve nil se não existir.
+func (r *SupportRepository) UpdateTag(accountID, id, name, color string) (*models.SupportTag, error) {
+	var t models.SupportTag
+	err := r.db.QueryRow(`
+		UPDATE support_tags SET name=$3, color=$4 WHERE id=$1 AND account_id=$2
+		RETURNING id, name, color`, id, accountID, name, color).
+		Scan(&t.ID, &t.Name, &t.Color)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &t, err
+}
+
+// ListTags devolve as etiquetas da conta com quantos contatos e conversas as usam.
 func (r *SupportRepository) ListTags(accountID string) ([]models.SupportTag, error) {
-	rows, err := r.db.Query(`SELECT id, name, color FROM support_tags WHERE account_id=$1 ORDER BY name`, accountID)
+	rows, err := r.db.Query(`
+		SELECT t.id, t.name, t.color,
+		  (SELECT COUNT(*) FROM contact_tags ct WHERE ct.tag_id = t.id),
+		  (SELECT COUNT(*) FROM support_ticket_tags tt WHERE tt.tag_id = t.id)
+		FROM support_tags t WHERE t.account_id=$1 ORDER BY t.name`, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +97,7 @@ func (r *SupportRepository) ListTags(accountID string) ([]models.SupportTag, err
 	out := make([]models.SupportTag, 0)
 	for rows.Next() {
 		var t models.SupportTag
-		if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Color, &t.Contacts, &t.Tickets); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

@@ -18,6 +18,7 @@ import '../onboarding/onboarding_screen.dart';
 import '../plans/plans_screen.dart';
 import '../sectors/sectors_screen.dart';
 import '../settings/settings_screen.dart';
+import '../tags/tags_screen.dart';
 import '../templates/templates_screen.dart';
 import '../usage/my_usage_screen.dart';
 import '../usage/usage_screen.dart';
@@ -140,14 +141,18 @@ class _AppShellState extends State<AppShell> {
     if (me.isAdmin) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
       items.add(const _NavDest(Icons.workspaces_outline, Icons.workspaces, 'Setores', SectorsScreen()));
-      items.add(const _NavDest(Icons.chat_outlined, Icons.chat, 'WhatsApp', WhatsAppScreen()));
+      items.add(const _NavDest(Icons.local_offer_outlined, Icons.local_offer, 'Etiquetas', TagsScreen()));
+      items.add(const _NavDest(Icons.smartphone_outlined, Icons.smartphone, 'Telefones', WhatsAppScreen()));
       items.add(const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen()));
+      items.add(const _NavDest(Icons.mark_email_read_outlined, Icons.mark_email_read, 'Modelos de campanha',
+          TemplatesScreen(usage: 'campaign')));
       items.add(const _NavDest(Icons.query_stats_outlined, Icons.query_stats, 'Métricas', MetricsScreen()));
-      items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Modelos', TemplatesScreen()));
+      items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Modelos de conversa',
+          TemplatesScreen(usage: 'chat')));
       items.add(const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen()));
       items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
-      items.add(const _NavDest(Icons.settings_outlined, Icons.settings, 'Configurações', SettingsScreen()));
+      items.add(const _NavDest(Icons.key_outlined, Icons.key, 'Tipo de login', SettingsScreen()));
     }
     return items;
   }
@@ -244,13 +249,13 @@ class _AppShellState extends State<AppShell> {
       label: 'Cadastros',
       icon: Icons.app_registration_outlined,
       activeIcon: Icons.app_registration,
-      members: {'Contatos', 'Usuários', 'Setores', 'Modelos'},
+      members: {'Contatos', 'Usuários', 'Setores', 'Etiquetas', 'Modelos de conversa'},
     ),
     (
       label: 'Configurações',
       icon: Icons.settings_outlined,
       activeIcon: Icons.settings,
-      members: {'WhatsApp', 'Planos', 'Consumo', 'Configurações'},
+      members: {'Telefones', 'Planos', 'Consumo', 'Tipo de login'},
     ),
   ];
 
@@ -428,23 +433,36 @@ class _RailGroupState extends State<_RailGroup> {
   final _overlay = OverlayPortalController();
   Timer? _closeTimer;
 
+  /// Só UM flyout aberto por vez: ao abrir um grupo, o anterior fecha NA HORA
+  /// (sem esperar o timer) — senão um sobrepõe o outro nos grupos vizinhos.
+  static _RailGroupState? _openNow;
+
   bool get _groupActive => widget.entries.any((e) => e.$1 == widget.currentIndex);
 
   void _open() {
     _closeTimer?.cancel();
+    if (_openNow != null && _openNow != this) _openNow!._hideNow();
+    _openNow = this;
     if (!_overlay.isShowing) _overlay.show();
+  }
+
+  void _hideNow() {
+    _closeTimer?.cancel();
+    if (_overlay.isShowing) _overlay.hide();
+    if (_openNow == this) _openNow = null;
   }
 
   void _scheduleClose() {
     _closeTimer?.cancel();
     _closeTimer = Timer(const Duration(milliseconds: 250), () {
-      if (mounted && _overlay.isShowing) _overlay.hide();
+      if (mounted) _hideNow();
     });
   }
 
   @override
   void dispose() {
     _closeTimer?.cancel();
+    if (_openNow == this) _openNow = null;
     super.dispose();
   }
 
@@ -502,24 +520,17 @@ class _RailGroupState extends State<_RailGroup> {
               message: widget.label,
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                onTap: () => _overlay.isShowing ? _overlay.hide() : _open(),
+                onTap: () => _overlay.isShowing ? _hideNow() : _open(),
                 child: Container(
                   height: 52,
+                  // Visual IDÊNTICO ao dos botões comuns do rail (pedido do
+                  // usuário) — o flyout é a única diferença.
                   decoration: BoxDecoration(
                     color: sel ? Colors.white.withValues(alpha: 0.12) : null,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Icon(sel ? widget.activeIcon : widget.icon,
-                          color: sel ? Colors.white : Colors.white70, size: 24),
-                      Positioned(
-                        right: 3,
-                        child: Icon(Icons.chevron_right, size: 12, color: Colors.white.withValues(alpha: 0.55)),
-                      ),
-                    ],
-                  ),
+                  child: Icon(sel ? widget.activeIcon : widget.icon,
+                      color: sel ? Colors.white : Colors.white70, size: 24),
                 ),
               ),
             ),
@@ -535,7 +546,7 @@ class _RailGroupState extends State<_RailGroup> {
     final active = index == widget.currentIndex;
     return InkWell(
       onTap: () {
-        _overlay.hide();
+        _hideNow();
         widget.onSelect(index);
       },
       child: Container(

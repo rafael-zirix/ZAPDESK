@@ -5,11 +5,14 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"zapdesk/internal/models"
+	"zapdesk/internal/repository"
 )
 
 var (
@@ -33,6 +36,8 @@ func (s *SupportService) CreateCampaign(accountID, userID string, req models.Cre
 	if req.ScheduledAt != nil {
 		sched = req.ScheduledAt.UTC()
 	}
+	// Categoria do modelo: define quanto a Meta cobra por mensagem entregue.
+	req.TemplateCategory = s.templateCategory(accountID, req.TemplateName)
 	c, err := s.repo.CreateCampaign(accountID, userID, req, sched)
 	if err != nil {
 		return nil, err
@@ -69,6 +74,26 @@ func (s *SupportService) ListCampaignRecipients(accountID, id string, limit int)
 		limit = 200
 	}
 	return s.repo.ListCampaignRecipients(accountID, id, limit)
+}
+
+// DeleteCampaign apaga a campanha (e seus destinatários). Uma campanha em
+// execução é cancelada antes, para o worker não continuar enviando.
+func (s *SupportService) DeleteCampaign(accountID, id string) error {
+	c, err := s.GetCampaign(accountID, id)
+	if err != nil {
+		return err
+	}
+	if c.Status == models.CampaignRunning || c.Status == models.CampaignScheduled {
+		_, _ = s.repo.SetCampaignStatus(accountID, id, models.CampaignCanceled)
+	}
+	ok, err := s.repo.DeleteCampaign(accountID, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrCampaignNotFound
+	}
+	return nil
 }
 
 // SetCampaignAction aplica pausar/retomar/cancelar com as transições válidas.
@@ -160,7 +185,9 @@ func (s *SupportService) campaignTick() {
 			continue
 		}
 		for _, rec := range recs {
-			wamid, sendErr := client.SendTemplate(rec.Phone, j.TemplateName, j.TemplateLang)
+			// {nome} nos parâmetros vira o nome do contato (personalização).
+			params := personalizeParams(j.Params, rec)
+			wamid, sendErr := client.SendTemplateParams(rec.Phone, j.TemplateName, j.TemplateLang, params, j.ImageURL)
 			if sendErr != nil {
 				msg := sendErr.Error()
 				_ = s.repo.MarkRecipientSent(rec.ID, nil, &msg)
@@ -171,9 +198,96 @@ func (s *SupportService) campaignTick() {
 				ext = &wamid
 			}
 			_ = s.repo.MarkRecipientSent(rec.ID, ext, nil)
+			// Registra na CONVERSA do contato: o cliente recebeu esta mensagem,
+			// então ela precisa aparecer no histórico do atendimento (e é onde a
+			// resposta dele vai chegar).
+			s.logCampaignMessage(j, rec, ext)
 		}
 		_ = s.repo.FinishCampaignIfDone(j.ID)
 	}
+}
+
+// logCampaignMessage grava o disparo na conversa do contato, para o atendente
+// ver no histórico o que foi enviado (e a resposta cair na mesma thread).
+func (s *SupportService) logCampaignMessage(j repository.CampaignJob, rec models.CampaignRecipient, wamid *string) {
+	ticketID, err := s.repo.TicketForCampaign(j.AccountID, rec.ContactID)
+	if err != nil || ticketID == "" {
+		return
+	}
+	// Texto: o corpo do modelo com as variáveis já substituídas (o que o
+	// cliente realmente recebeu).
+	content := j.TemplateName
+	if j.BodyText != "" {
+		content = j.BodyText
+		for i, p := range personalizeParams(j.Params, rec) {
+			content = strings.ReplaceAll(content, placeholder(i+1), p)
+		}
+	}
+	tplName := j.TemplateName
+	msg := &models.SupportMessage{
+		AccountID:    j.AccountID,
+		TicketID:     ticketID,
+		Direction:    models.DirectionOut,
+		Type:         "template",
+		Content:      &content,
+		Status:       "sent",
+		ExternalID:   wamid,
+		TemplateName: &tplName,
+	}
+	if j.TemplateCategory != "" {
+		cat := j.TemplateCategory
+		msg.TemplateCategory = &cat
+	}
+	if j.ImageURL != "" {
+		url := j.ImageURL
+		msg.MediaURL = &url
+		msg.Type = "image"
+	}
+	_, _ = s.repo.InsertMessage(msg)
+}
+
+// WithPublicURL informa a URL pública da API (base dos links de mídia de campanha).
+func (s *SupportService) WithPublicURL(url string) *SupportService {
+	s.publicURL = strings.TrimRight(url, "/")
+	return s
+}
+
+// SaveCampaignMedia grava a foto da campanha na pasta de mídia e devolve a URL
+// PÚBLICA (a Meta baixa a imagem por este link ao entregar o template).
+func (s *SupportService) SaveCampaignMedia(data []byte, filename string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+		return "", errors.New("envie uma imagem JPG ou PNG")
+	}
+	name, err := s.saveMedia(data, ext)
+	if err != nil {
+		return "", err
+	}
+	if s.publicURL == "" {
+		return "/media/" + name, nil // dev sem PUBLIC_URL: link relativo (Meta não baixa)
+	}
+	return s.publicURL + "/media/" + name, nil
+}
+
+// placeholder devolve o marcador de variável do modelo ({{1}}, {{2}}…).
+func placeholder(n int) string { return fmt.Sprintf("{{%d}}", n) }
+
+// personalizeParams troca o curinga {nome} pelo nome do contato (ou "cliente").
+func personalizeParams(params []string, rec models.CampaignRecipient) []string {
+	if len(params) == 0 {
+		return nil
+	}
+	name := "cliente"
+	if rec.ContactName != nil && strings.TrimSpace(*rec.ContactName) != "" {
+		name = strings.TrimSpace(*rec.ContactName)
+	}
+	out := make([]string, len(params))
+	for i, p := range params {
+		p = strings.ReplaceAll(p, "{nome}", name)
+		p = strings.ReplaceAll(p, "{NOME}", name)
+		out[i] = p
+	}
+	return out
 }
 
 // isOptOutMessage detecta o pedido de descadastro ("SAIR" e variações).

@@ -5,6 +5,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/lib/pq"
@@ -31,14 +32,44 @@ const campaignFunnelJoin = `
 
 func scanCampaign(row interface{ Scan(...any) error }) (*models.Campaign, error) {
 	var c models.Campaign
+	var params, audience, audienceRef sql.NullString
 	err := row.Scan(&c.ID, &c.Name, &c.TemplateName, &c.TemplateLang, &c.BodyText, &c.Status,
-		&c.ScheduledAt, &c.RatePerMin, &c.CreatedBy, &c.CreatedAt,
+		&c.ScheduledAt, &c.RatePerMin, &params, &c.ImageURL, &audience, &audienceRef, &c.CreatedBy, &c.CreatedAt,
 		&c.Funnel.Total, &c.Funnel.Pending, &c.Funnel.Sent, &c.Funnel.Delivered,
 		&c.Funnel.Read, &c.Funnel.Replied, &c.Funnel.Failed, &c.Funnel.Skipped)
 	if err != nil {
 		return nil, err
 	}
+	if params.Valid && params.String != "" {
+		_ = json.Unmarshal([]byte(params.String), &c.Params)
+	}
+	c.Audience = audience.String
+	if audienceRef.Valid && audienceRef.String != "" {
+		var ref models.AudienceRef
+		if json.Unmarshal([]byte(audienceRef.String), &ref) == nil {
+			c.GroupIDs, c.TagID, c.ContactIDs = ref.GroupIDs, ref.TagID, ref.ContactIDs
+		}
+	}
 	return &c, nil
+}
+
+// marshalAudienceRef serializa o público escolhido (para copiar a campanha).
+func marshalAudienceRef(req models.CreateCampaignRequest) any {
+	ref := models.AudienceRef{GroupIDs: req.GroupIDs, TagID: req.TagID, ContactIDs: req.ContactIDs}
+	if len(ref.GroupIDs) == 0 && ref.TagID == nil && len(ref.ContactIDs) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(ref)
+	return string(b)
+}
+
+// marshalParams serializa os valores das variáveis (nil → NULL).
+func marshalParams(params []string) any {
+	if len(params) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(params)
+	return string(b)
 }
 
 // CreateCampaign grava a campanha e RESOLVE a audiência na hora (snapshot):
@@ -53,11 +84,12 @@ func (r *SupportRepository) CreateCampaign(accountID, createdBy string, req mode
 	now := time.Now().UTC()
 	var id string
 	err = tx.QueryRow(`
-		INSERT INTO campaigns (account_id, name, template_name, template_lang, body_text, status, scheduled_at, rate_per_min, created_by, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,NULLIF($5,''),'scheduled',$6,$7,$8,$9,$9)
+		INSERT INTO campaigns (account_id, name, template_name, template_lang, body_text, status, scheduled_at, rate_per_min, params, image_url, audience, audience_ref, template_category, created_by, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,NULLIF($5,''),'scheduled',$6,$7,$8,NULLIF($9,''),$10,$11,NULLIF($12,''),$13,$14,$14)
 		RETURNING id`,
 		accountID, req.Name, req.TemplateName, req.TemplateLang, req.BodyText,
-		scheduledAt, req.RatePerMin, createdBy, now).Scan(&id)
+		scheduledAt, req.RatePerMin, marshalParams(req.Params), req.ImageURL,
+		req.Audience, marshalAudienceRef(req), req.TemplateCategory, createdBy, now).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -81,14 +113,21 @@ func (r *SupportRepository) CreateCampaign(accountID, createdBy string, req mode
 			WHERE ct.account_id=$2::uuid AND ct.opted_out=false AND gm.group_id = ANY($4::uuid[])
 			ON CONFLICT DO NOTHING`, id, accountID, now, pq.Array(req.GroupIDs))
 	case "tag":
-		// Casts explícitos: com DISTINCT o Postgres não deduz o tipo dos params.
+		// Etiqueta no CONTATO (permanente) OU em alguma conversa dele (histórico
+		// anterior às etiquetas de contato). Casts explícitos: com DISTINCT o
+		// Postgres não deduz o tipo dos parâmetros.
 		_, err = tx.Exec(`
 			INSERT INTO campaign_recipients (campaign_id, account_id, contact_id, phone, created_at)
 			SELECT DISTINCT $1::uuid, $2::uuid, ct.id, ct.phone, $3::timestamp
 			FROM support_contacts ct
-			JOIN support_tickets t ON t.contact_id = ct.id
-			JOIN support_ticket_tags tt ON tt.ticket_id = t.id
-			WHERE ct.account_id=$2::uuid AND ct.opted_out=false AND tt.tag_id=$4::uuid
+			WHERE ct.account_id=$2::uuid AND ct.opted_out=false
+			  AND (
+			    EXISTS (SELECT 1 FROM contact_tags ctg
+			            WHERE ctg.contact_id = ct.id AND ctg.tag_id = $4::uuid)
+			    OR EXISTS (SELECT 1 FROM support_tickets t
+			               JOIN support_ticket_tags tt ON tt.ticket_id = t.id
+			               WHERE t.contact_id = ct.id AND tt.tag_id = $4::uuid)
+			  )
 			ON CONFLICT DO NOTHING`, id, accountID, now, req.TagID)
 	case "manual":
 		for _, cid := range req.ContactIDs {
@@ -114,7 +153,7 @@ func (r *SupportRepository) CreateCampaign(accountID, createdBy string, req mode
 func (r *SupportRepository) ListCampaigns(accountID string) ([]models.Campaign, error) {
 	rows, err := r.db.Query(`
 		SELECT c.id, c.name, c.template_name, c.template_lang, c.body_text, c.status,
-		       c.scheduled_at, c.rate_per_min, c.created_by, c.created_at, `+campaignFunnelSQL+`
+		       c.scheduled_at, c.rate_per_min, c.params, c.image_url, c.audience, c.audience_ref, c.created_by, c.created_at, `+campaignFunnelSQL+`
 		FROM campaigns c `+campaignFunnelJoin+`
 		WHERE c.account_id=$1
 		ORDER BY c.created_at DESC`, accountID)
@@ -137,7 +176,7 @@ func (r *SupportRepository) ListCampaigns(accountID string) ([]models.Campaign, 
 func (r *SupportRepository) GetCampaign(accountID, id string) (*models.Campaign, error) {
 	c, err := scanCampaign(r.db.QueryRow(`
 		SELECT c.id, c.name, c.template_name, c.template_lang, c.body_text, c.status,
-		       c.scheduled_at, c.rate_per_min, c.created_by, c.created_at, `+campaignFunnelSQL+`
+		       c.scheduled_at, c.rate_per_min, c.params, c.image_url, c.audience, c.audience_ref, c.created_by, c.created_at, `+campaignFunnelSQL+`
 		FROM campaigns c `+campaignFunnelJoin+`
 		WHERE c.id=$1 AND c.account_id=$2`, id, accountID))
 	if err == sql.ErrNoRows {
@@ -150,6 +189,48 @@ func (r *SupportRepository) GetCampaign(accountID, id string) (*models.Campaign,
 func (r *SupportRepository) SetCampaignStatus(accountID, id, status string) (bool, error) {
 	res, err := r.db.Exec(`UPDATE campaigns SET status=$3, updated_at=$4 WHERE id=$1 AND account_id=$2`,
 		id, accountID, status, time.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// TicketForCampaign devolve a conversa onde registrar um disparo de campanha:
+// usa a ativa do contato SEM mexer no status (não reabre resolvidas em massa) e,
+// se não houver, cria uma como "aguardando cliente" — nós é que falamos primeiro.
+func (r *SupportRepository) TicketForCampaign(accountID, contactID string) (string, error) {
+	var id string
+	err := r.db.QueryRow(`SELECT id FROM support_tickets
+		WHERE contact_id=$1 AND status<>'closed' ORDER BY last_message_at DESC LIMIT 1`, contactID).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC()
+	protocol, err := r.nextProtocol(tx, accountID, now.Year())
+	if err != nil {
+		return "", err
+	}
+	if err := tx.QueryRow(`
+		INSERT INTO support_tickets (account_id, contact_id, protocol, status, last_message_at, created_at, updated_at)
+		VALUES ($1,$2,$3,'pending',$4,$4,$4) RETURNING id`,
+		accountID, contactID, protocol, now).Scan(&id); err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
+}
+
+// DeleteCampaign remove a campanha e seus destinatários (cascata).
+func (r *SupportRepository) DeleteCampaign(accountID, id string) (bool, error) {
+	res, err := r.db.Exec(`DELETE FROM campaigns WHERE id=$1 AND account_id=$2`, id, accountID)
 	if err != nil {
 		return false, err
 	}
@@ -191,6 +272,10 @@ type CampaignJob struct {
 	TemplateName string
 	TemplateLang string
 	RatePerMin   int
+	Params       []string
+	ImageURL     string
+	BodyText     string // corpo do modelo (registrado na conversa do contato)
+	TemplateCategory string
 }
 
 // DueCampaigns devolve as campanhas que devem enviar agora (todas as contas):
@@ -200,7 +285,8 @@ func (r *SupportRepository) DueCampaigns() ([]CampaignJob, error) {
 	_, _ = r.db.Exec(`UPDATE campaigns SET status='running', updated_at=$1
 		WHERE status='scheduled' AND scheduled_at <= $1`, now)
 	rows, err := r.db.Query(`
-		SELECT id, account_id, template_name, template_lang, rate_per_min
+		SELECT id, account_id, template_name, template_lang, rate_per_min, params, image_url,
+		       COALESCE(body_text,''), COALESCE(template_category,'')
 		FROM campaigns WHERE status='running'`)
 	if err != nil {
 		return nil, err
@@ -209,9 +295,15 @@ func (r *SupportRepository) DueCampaigns() ([]CampaignJob, error) {
 	out := make([]CampaignJob, 0)
 	for rows.Next() {
 		var j CampaignJob
-		if err := rows.Scan(&j.ID, &j.AccountID, &j.TemplateName, &j.TemplateLang, &j.RatePerMin); err != nil {
+		var params, img sql.NullString
+		if err := rows.Scan(&j.ID, &j.AccountID, &j.TemplateName, &j.TemplateLang, &j.RatePerMin, &params, &img,
+			&j.BodyText, &j.TemplateCategory); err != nil {
 			return nil, err
 		}
+		if params.Valid && params.String != "" {
+			_ = json.Unmarshal([]byte(params.String), &j.Params)
+		}
+		j.ImageURL = img.String
 		out = append(out, j)
 	}
 	return out, rows.Err()
@@ -228,9 +320,11 @@ func (r *SupportRepository) SentInLastMinute(campaignID string) (int, error) {
 // NextPendingRecipients pega o próximo lote a enviar (com trava, p/ segurança).
 func (r *SupportRepository) NextPendingRecipients(campaignID string, limit int) ([]models.CampaignRecipient, error) {
 	rows, err := r.db.Query(`
-		SELECT id, contact_id, phone FROM campaign_recipients
-		WHERE campaign_id=$1 AND status='pending'
-		ORDER BY created_at
+		SELECT r.id, r.contact_id, r.phone, ct.name
+		FROM campaign_recipients r
+		JOIN support_contacts ct ON ct.id = r.contact_id
+		WHERE r.campaign_id=$1 AND r.status='pending'
+		ORDER BY r.created_at
 		FOR UPDATE SKIP LOCKED
 		LIMIT $2`, campaignID, limit)
 	if err != nil {
@@ -240,7 +334,7 @@ func (r *SupportRepository) NextPendingRecipients(campaignID string, limit int) 
 	out := make([]models.CampaignRecipient, 0)
 	for rows.Next() {
 		var rec models.CampaignRecipient
-		if err := rows.Scan(&rec.ID, &rec.ContactID, &rec.Phone); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.ContactID, &rec.Phone, &rec.ContactName); err != nil {
 			return nil, err
 		}
 		out = append(out, rec)

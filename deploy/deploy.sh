@@ -23,6 +23,11 @@ cp -r "$ROOT/backend/migrations" "$ROOT/deploy/migrations"
 mkdir -p "$ROOT/deploy/web/app"
 cp -r "$ROOT/app/build/web/." "$ROOT/deploy/web/app/"
 mv "$ROOT/deploy/web/app/start.html" "$ROOT/deploy/web/index.html"
+# Páginas legais na RAIZ do site (a Meta exige política de privacidade e
+# instruções de exclusão de dados; o router serve com URL limpa: /privacidade…).
+for f in privacidade.html termos.html exclusao-de-dados.html legal.css; do
+  mv "$ROOT/deploy/web/app/$f" "$ROOT/deploy/web/$f" 2>/dev/null || true
+done
 # favicon acessível na raiz (a landing referencia /favicon.png).
 cp "$ROOT/app/build/web/favicon.png" "$ROOT/deploy/web/favicon.png" 2>/dev/null || true
 # SW de "auto-destruição" na RAIZ: navegadores que já abriram o app na raiz têm um

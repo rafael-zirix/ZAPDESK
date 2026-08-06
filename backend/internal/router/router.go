@@ -75,7 +75,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	aiActionRepo := repository.NewAIActionRepository(db)
 	aiClient := services.NewAIClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient).
-		WithAI(aiClient, aiRepo, aiActionRepo)
+		WithAI(aiClient, aiRepo, aiActionRepo).
+		WithPublicURL(cfg.PublicURL).
+		WithMetaApp(cfg.MetaAppID)
 
 	// Cobrança: PIX/cartão avulso via Mercado Pago; recarga automática por cartão
 	// via Stripe (off-session). Dormentes sem credencial.
@@ -98,6 +100,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	}
 	// Worker de campanhas: envia os disparos agendados no ritmo configurado.
 	supportSvc.StartCampaignWorker()
+	// Mantém a tabela de custo da Meta atualizada (diária) para o super-admin.
+	supportSvc.StartMetaPricingWorker()
 	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher).
 		WithEmbeddedSignup(cfg.MetaAPIBase, cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaESConfigID, cfg.GraphVersion()).
 		WithWebhookAutoConfig(cfg.PublicURL, cfg.MetaVerifyToken)
@@ -111,7 +115,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 	authH := handlers.NewAuthHandler(authSvc)
 	userH := handlers.NewUserHandler(userSvc)
-	supportH := handlers.NewSupportHandler(supportSvc)
+	supportH := handlers.NewSupportHandler(supportSvc).WithAIModel(cfg.AIModel)
 	adminH := handlers.NewAdminHandler(accountSvc, userSvc)
 	waH := handlers.NewWhatsAppHandler(accountSvc)
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
@@ -151,6 +155,25 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Mídia (foto/anexo): rota pública, o nome do arquivo é aleatório (segredo).
 	r.GET("/media/:name", supportH.ServeMedia)
 
+	// URL amigável de cadastro (p/ anúncios, bio, QR code): /cadastro → formulário.
+	r.GET("/cadastro", func(c *gin.Context) { c.Redirect(http.StatusFound, "/app/?signup=1") })
+	r.GET("/signup", func(c *gin.Context) { c.Redirect(http.StatusFound, "/app/?signup=1") })
+
+	// Páginas legais com URL limpa. A Meta EXIGE estes links (política de
+	// privacidade e instruções de exclusão de dados) para verificar o app e
+	// aprovar as permissões do WhatsApp.
+	if cfg.WebDir != "" {
+		legal := map[string]string{
+			"/privacidade":       "privacidade.html",
+			"/termos":            "termos.html",
+			"/exclusao-de-dados": "exclusao-de-dados.html",
+		}
+		for route, file := range legal {
+			path := filepath.Join(filepath.Clean(cfg.WebDir), file)
+			r.GET(route, func(c *gin.Context) { c.File(path) })
+		}
+	}
+
 	// Rotas autenticadas.
 	api := r.Group("")
 	api.Use(middleware.Auth(jwtSvc))
@@ -183,7 +206,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/forward", supportH.ForwardMessage)                        // encaminha uma mensagem a outro contato
 			support.GET("/templates", supportH.ListTemplates)                        // modelos da conta (todos os status)
 			support.POST("/templates", supportH.CreateTemplate)                      // cria um modelo (vai p/ aprovação da Meta)
+			support.POST("/templates/full", middleware.RequireAdmin(), supportH.CreateTemplateFull)   // modelo completo (cabeçalho/variáveis/botões)
+			support.POST("/templates/image", middleware.RequireAdmin(), supportH.UploadTemplateImage) // imagem de exemplo do cabeçalho
 			support.PUT("/templates/:name/enabled", supportH.SetTemplateEnabled)     // liga/desliga na barra de mensagens prontas
+			support.PUT("/templates/:name/usage", supportH.SetTemplateUsage)         // conversa × campanha
 			support.GET("/ai-state", supportH.AIState)                               // Atendente IA ligado na empresa? (exibe o toggle na conversa)
 			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)        // consumo/valores da própria empresa (admin)
 			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                    // liga/pausa a IA nesta conversa
@@ -206,6 +232,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.DELETE("/quick-replies/:id", supportH.DeleteQuickReply)
 			support.GET("/tags", supportH.ListTags)                       // etiquetas da empresa
 			support.POST("/tags", supportH.CreateTag)
+			support.PUT("/tags/:id", middleware.RequireAdmin(), supportH.UpdateTag)
 			support.DELETE("/tags/:id", middleware.RequireAdmin(), supportH.DeleteTag)
 			support.PUT("/presence", supportH.SetMyPresence)              // disponível / ausente
 			// Fase 4: dashboard de métricas de atendimento (admin).
@@ -220,6 +247,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			contacts.PUT("/:id", supportH.UpdateContact)
 			contacts.DELETE("/:id", supportH.DeleteContact)
 			contacts.PUT("/:id/groups", supportH.SetContactGroups) // grupos do contato
+			contacts.PUT("/:id/tags", supportH.SetContactTags)     // etiquetas do contato
 		}
 
 		// Grupos de contatos (listas de marketing — audiência das campanhas).
@@ -296,6 +324,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			campaigns.GET("/:id", supportH.GetCampaign)
 			campaigns.GET("/:id/recipients", supportH.CampaignRecipients)
 			campaigns.POST("/:id/action", supportH.CampaignAction) // pause | resume | cancel
+			campaigns.DELETE("/:id", supportH.DeleteCampaign)     // exclui a campanha
+			campaigns.POST("/media", supportH.AddCampaignMedia) // foto p/ modelo com cabeçalho de imagem
 		}
 
 		// Onboarding do 1º acesso (admin): checklist + assistente de IA (por conta do HotZap).
@@ -312,6 +342,14 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		{
 			admin.GET("/usage", supportH.AdminUsage) // consumo/gastos por empresa e número
 			admin.GET("/pricing", supportH.GetPricing)
+			// Tabela de custo da META por categoria (referência do dono; o cliente
+			// paga a Meta na conta dele e NUNCA vê estes valores).
+			admin.GET("/meta-pricing", supportH.MetaPricing)
+			admin.PUT("/meta-pricing", supportH.SetMetaPricing)
+			admin.POST("/meta-pricing/refresh", supportH.RefreshMetaPricing)
+			// Custo dos modelos de IA (o que NÓS pagamos ao provedor).
+			admin.GET("/ai-costs", supportH.AICosts)
+			admin.PUT("/ai-costs", supportH.SetAICosts)
 			admin.PUT("/pricing", supportH.SetPricing)
 			admin.GET("/accounts", adminH.ListAccounts)
 			admin.POST("/accounts", adminH.CreateAccount)

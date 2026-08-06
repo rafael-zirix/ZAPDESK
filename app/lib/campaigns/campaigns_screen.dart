@@ -5,11 +5,13 @@ import 'package:intl/intl.dart';
 
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
+import '../core/file_pick.dart';
 import '../core/theme.dart';
 import '../models/campaign.dart';
 import '../models/contact.dart';
 import '../models/message_template.dart';
 import '../models/support.dart';
+import 'campaign_detail.dart';
 
 /// Campanhas de WhatsApp (admin): dispara um modelo aprovado para uma audiência,
 /// com ritmo controlado. Autocontida (estado local + polling do funil).
@@ -27,6 +29,9 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
   bool loading = false;
   String? error;
   Timer? _poll;
+
+  /// Campanha aberta na tela de detalhe (null = lista).
+  Campaign? selected;
 
   @override
   void initState() {
@@ -63,6 +68,21 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final sel = selected;
+    if (sel != null) {
+      return CampaignDetailScreen(
+        campaign: sel,
+        onBack: () => setState(() => selected = null),
+        onCopy: (c) {
+          setState(() => selected = null);
+          _openWizard(copyOf: c);
+        },
+        onChanged: ({bool deleted = false}) {
+          if (deleted) setState(() => selected = null);
+          _load(silent: true);
+        },
+      );
+    }
     return Container(
       color: AppTheme.bg,
       child: Column(
@@ -102,7 +122,7 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
     final f = c.funnel;
     final progress = f.total == 0 ? 0.0 : f.done / f.total;
     return InkWell(
-      onTap: () => _openDetail(c),
+      onTap: () => setState(() => selected = c),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         child: Column(
@@ -121,18 +141,38 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
                   child: Text(c.statusLabel,
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _statusColor(c))),
                 ),
-                if (c.isActive)
-                  PopupMenuButton<String>(
-                    tooltip: 'Ações',
-                    onSelected: (a) => _action(c, a),
-                    itemBuilder: (_) => [
-                      if (c.status != 'paused')
-                        const PopupMenuItem(value: 'pause', child: Text('Pausar')),
-                      if (c.status == 'paused')
-                        const PopupMenuItem(value: 'resume', child: Text('Retomar')),
-                      const PopupMenuItem(value: 'cancel', child: Text('Cancelar campanha')),
-                    ],
-                  ),
+                PopupMenuButton<String>(
+                  tooltip: 'Ações',
+                  onSelected: (a) => _action(c, a),
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                        value: 'open',
+                        child: ListTile(leading: Icon(Icons.open_in_new), title: Text('Abrir'), dense: true)),
+                    const PopupMenuItem(
+                        value: 'copy',
+                        child: ListTile(leading: Icon(Icons.copy_outlined), title: Text('Copiar campanha'), dense: true)),
+                    if (c.isActive) const PopupMenuDivider(),
+                    if (c.isActive && c.status != 'paused')
+                      const PopupMenuItem(
+                          value: 'pause',
+                          child: ListTile(leading: Icon(Icons.pause), title: Text('Pausar'), dense: true)),
+                    if (c.status == 'paused')
+                      const PopupMenuItem(
+                          value: 'resume',
+                          child: ListTile(leading: Icon(Icons.play_arrow), title: Text('Retomar'), dense: true)),
+                    if (c.isActive)
+                      const PopupMenuItem(
+                          value: 'cancel',
+                          child: ListTile(leading: Icon(Icons.stop), title: Text('Cancelar'), dense: true)),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(
+                        value: 'delete',
+                        child: ListTile(
+                            leading: Icon(Icons.delete_outline, color: Colors.red),
+                            title: Text('Excluir', style: TextStyle(color: Colors.red)),
+                            dense: true)),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 4),
@@ -164,6 +204,18 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
   }
 
   Future<void> _action(Campaign c, String action) async {
+    if (action == 'open') {
+      setState(() => selected = c);
+      return;
+    }
+    if (action == 'copy') {
+      await _openWizard(copyOf: c);
+      return;
+    }
+    if (action == 'delete') {
+      await _confirmDelete(c);
+      return;
+    }
     final r = await _api.post('/campaigns/${c.id}/action', {'action': action});
     if (!r.ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(r.message ?? 'Não foi possível')));
@@ -171,99 +223,35 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
     await _load(silent: true);
   }
 
-  // ---------- Detalhe ----------
-  Future<void> _openDetail(Campaign c) async {
-    final r = await _api.get('/campaigns/${c.id}/recipients?limit=200');
-    if (!mounted) return;
-    final recipients = (r.ok && r.data is List)
-        ? (r.data as List).map((e) => CampaignRecipient.fromJson(e as Map<String, dynamic>)).toList()
-        : <CampaignRecipient>[];
-    final failed = recipients.where((x) => x.status == 'failed').toList();
-    await showDialog<void>(
+  /// Confirma e exclui a campanha (o histórico de envios vai junto).
+  Future<void> _confirmDelete(Campaign c) async {
+    final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(c.name),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (c.bodyText != null && c.bodyText!.isNotEmpty) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                      color: AppTheme.bg, borderRadius: BorderRadius.circular(8)),
-                  child: Text(c.bodyText!, style: const TextStyle(fontSize: 13)),
-                ),
-                const SizedBox(height: 12),
-              ],
-              _funnelRow('Destinatários', c.funnel.total, c.funnel.total),
-              _funnelRow('Enviadas', c.funnel.reachedSent, c.funnel.total),
-              _funnelRow('Entregues', c.funnel.reachedDelivered, c.funnel.total),
-              _funnelRow('Lidas', c.funnel.reachedRead, c.funnel.total),
-              _funnelRow('Responderam', c.funnel.replied, c.funnel.total, highlight: true),
-              if (c.funnel.failed > 0) _funnelRow('Falhas', c.funnel.failed, c.funnel.total, isError: true),
-              if (failed.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                const Text('Falhas:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 140),
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final x in failed.take(20))
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Text('${x.displayName} — ${x.error ?? 'erro'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12, color: Color(0xFFEF4444))),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
-      ),
-    );
-  }
-
-  Widget _funnelRow(String label, int value, int total, {bool highlight = false, bool isError = false}) {
-    final pct = total == 0 ? 0 : (value * 100 / total).round();
-    final color = isError ? const Color(0xFFEF4444) : (highlight ? AppTheme.seed : null);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          SizedBox(width: 120, child: Text(label, style: TextStyle(fontSize: 13, color: color))),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                value: total == 0 ? 0 : value / total,
-                minHeight: 8,
-                backgroundColor: Colors.grey.withValues(alpha: 0.15),
-                color: color ?? const Color(0xFF2563EB),
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 88,
-            child: Text('  $value ($pct%)',
-                style: TextStyle(fontSize: 12.5, fontWeight: highlight ? FontWeight.w700 : FontWeight.w500, color: color)),
+        title: const Text('Excluir campanha'),
+        content: Text('Excluir "${c.name}"? O histórico de envios dela também é apagado. '
+            'As conversas com os contatos permanecem.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Excluir'),
           ),
         ],
       ),
     );
+    if (ok != true) return;
+    final r = await _api.delete('/campaigns/${c.id}');
+    if (!mounted) return;
+    if (!r.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(r.message ?? 'Não foi possível excluir')));
+    }
+    await _load();
   }
 
   // ---------- Nova campanha ----------
-  Future<void> _openWizard() async {
+  Future<void> _openWizard({Campaign? copyOf}) async {
     // Carrega modelos aprovados, grupos, etiquetas e contatos antes de abrir.
     final rt = await _api.get('/support/templates');
     final rg = await _api.get('/support/tags');
@@ -292,7 +280,8 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
     }
     final created = await showDialog<bool>(
       context: context,
-      builder: (_) => _CampaignWizard(templates: templates, tags: tags, contacts: contacts, groups: groups),
+      builder: (_) => _CampaignWizard(
+          templates: templates, tags: tags, contacts: contacts, groups: groups, copyOf: copyOf),
     );
     if (created == true) await _load();
   }
@@ -320,12 +309,21 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
 
 /// Formulário da nova campanha: nome + modelo + audiência + ritmo + agendamento.
 class _CampaignWizard extends StatefulWidget {
-  const _CampaignWizard({required this.templates, required this.tags, required this.contacts, required this.groups});
+  const _CampaignWizard({
+    required this.templates,
+    required this.tags,
+    required this.contacts,
+    required this.groups,
+    this.copyOf,
+  });
 
   final List<MessageTemplate> templates;
   final List<TicketTag> tags;
   final List<Contact> contacts;
   final List<ContactGroup> groups;
+
+  /// Campanha de origem ao COPIAR: o formulário abre já preenchido.
+  final Campaign? copyOf;
 
   @override
   State<_CampaignWizard> createState() => _CampaignWizardState();
@@ -344,15 +342,86 @@ class _CampaignWizardState extends State<_CampaignWizard> {
   DateTime? scheduledAt; // null = agora
   bool saving = false;
 
+  // Variáveis do modelo ({{1}}, {{2}}…): um campo por variável.
+  final paramCtrls = <TextEditingController>[];
+
+  // Foto (modelos com CABEÇALHO de imagem): sobe agora, envia a URL na criação.
+  String? imageUrl;
+  String? imageName;
+  bool uploadingImage = false;
+
   @override
   void initState() {
     super.initState();
-    template = widget.templates.first;
+    final src = widget.copyOf;
+    // Copiar: repete modelo, textos, público, foto e ritmo — só o agendamento
+    // volta para "agora" (a cópia é um novo disparo).
+    template = widget.templates.firstWhere(
+      (t) => src != null && t.name == src.templateName,
+      orElse: () => widget.templates.first,
+    );
+    _syncParams();
+    if (src != null) {
+      name.text = '${src.name} (cópia)';
+      audience = src.audience ?? 'all';
+      selectedGroups.addAll(src.groupIds);
+      tagId = src.tagId;
+      selectedContacts.addAll(src.contactIds);
+      rate = src.ratePerMin.toDouble().clamp(1, 60);
+      imageUrl = src.imageUrl;
+      imageName = src.imageUrl != null ? 'foto da campanha copiada' : null;
+      for (var i = 0; i < paramCtrls.length && i < src.params.length; i++) {
+        paramCtrls[i].text = src.params[i];
+      }
+    }
+  }
+
+  /// Quantas variáveis {{n}} o corpo do modelo tem (maior índice).
+  int _varCount(MessageTemplate? t) {
+    final body = t?.bodyText ?? '';
+    var max = 0;
+    for (final m in RegExp(r'\{\{(\d+)\}\}').allMatches(body)) {
+      final n = int.tryParse(m.group(1)!) ?? 0;
+      if (n > max) max = n;
+    }
+    return max;
+  }
+
+  void _syncParams() {
+    final n = _varCount(template);
+    while (paramCtrls.length < n) {
+      paramCtrls.add(TextEditingController());
+    }
+    while (paramCtrls.length > n) {
+      paramCtrls.removeLast().dispose();
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final f = await pickFile(accept: 'image/png,image/jpeg');
+    if (f == null) return;
+    setState(() => uploadingImage = true);
+    final r = await _api.uploadFile('/campaigns/media',
+        bytes: f.bytes, filename: f.name, contentType: f.mimeType);
+    if (!mounted) return;
+    setState(() {
+      uploadingImage = false;
+      if (r.ok && r.data is Map) {
+        imageUrl = (r.data as Map)['url'] as String?;
+        imageName = f.name;
+      }
+    });
+    if (!r.ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(r.message ?? 'Não foi possível enviar a foto')));
+    }
   }
 
   @override
   void dispose() {
     name.dispose();
+    for (final c in paramCtrls) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -376,6 +445,12 @@ class _CampaignWizardState extends State<_CampaignWizard> {
     if (audience == 'groups' && selectedGroups.isEmpty) return;
     if (audience == 'tag' && tagId == null) return;
     if (audience == 'manual' && selectedContacts.isEmpty) return;
+    // Modelo com variáveis: todas precisam de valor (a Meta rejeita sem — #132000).
+    if (paramCtrls.any((c) => c.text.trim().isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Preencha o valor de todas as variáveis do modelo')));
+      return;
+    }
     setState(() => saving = true);
     final r = await _api.post('/campaigns', {
       'name': name.text.trim(),
@@ -388,6 +463,8 @@ class _CampaignWizardState extends State<_CampaignWizard> {
       if (audience == 'manual') 'contact_ids': selectedContacts.toList(),
       if (scheduledAt != null) 'scheduled_at': scheduledAt!.toUtc().toIso8601String(),
       'rate_per_min': rate.round(),
+      if (paramCtrls.isNotEmpty) 'params': [for (final c in paramCtrls) c.text.trim()],
+      'image_url': ?imageUrl,
     });
     if (!mounted) return;
     setState(() => saving = false);
@@ -401,7 +478,7 @@ class _CampaignWizardState extends State<_CampaignWizard> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Nova campanha'),
+      title: Text(widget.copyOf == null ? 'Nova campanha' : 'Copiar campanha'),
       content: SizedBox(
         width: 440,
         child: SingleChildScrollView(
@@ -424,7 +501,10 @@ class _CampaignWizardState extends State<_CampaignWizard> {
                   for (final t in widget.templates)
                     DropdownMenuItem(value: t, child: Text(t.name, overflow: TextOverflow.ellipsis)),
                 ],
-                onChanged: (v) => setState(() => template = v),
+                onChanged: (v) => setState(() {
+                  template = v;
+                  _syncParams();
+                }),
               ),
               if (template?.bodyText != null && template!.bodyText!.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -436,6 +516,63 @@ class _CampaignWizardState extends State<_CampaignWizard> {
                   child: Text(template!.bodyText!, style: TextStyle(fontSize: 12.5, color: Colors.grey.shade700)),
                 ),
               ],
+              // Variáveis do modelo: um campo por {{n}} (obrigatórios).
+              if (paramCtrls.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('Valores das variáveis', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text('Dica: use {nome} para inserir o nome de cada contato automaticamente.',
+                    style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+                for (var i = 0; i < paramCtrls.length; i++) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: paramCtrls[i],
+                    decoration: InputDecoration(
+                      labelText: 'Valor de {{${i + 1}}}',
+                      hintText: i == 0 ? 'Ex.: {nome} ou Central Zirix' : 'Texto que substitui {{${i + 1}}}',
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
+              ],
+              // Foto: só p/ modelos com CABEÇALHO de imagem aprovado na Meta.
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: (saving || uploadingImage) ? null : _pickImage,
+                    icon: uploadingImage
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.image_outlined, size: 18),
+                    label: Text(imageUrl == null ? 'Adicionar foto' : 'Trocar foto'),
+                  ),
+                  const SizedBox(width: 8),
+                  if (imageUrl != null)
+                    SizedBox(
+                      width: 150,
+                      child: Row(children: [
+                        const Icon(Icons.check_circle, size: 16, color: Color(0xFF1F9D57)),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 110,
+                          child: Text(imageName ?? 'foto', maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12)),
+                        ),
+                        InkWell(
+                          onTap: () => setState(() {
+                            imageUrl = null;
+                            imageName = null;
+                          }),
+                          child: const Icon(Icons.close, size: 15),
+                        ),
+                      ]),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text('A foto só é entregue se o modelo tiver CABEÇALHO de imagem aprovado na Meta.',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
               const SizedBox(height: 14),
               const Text('Audiência', style: TextStyle(fontWeight: FontWeight.w600)),
               RadioGroup<String>(
@@ -491,8 +628,8 @@ class _CampaignWizardState extends State<_CampaignWizard> {
                       value: 'tag',
                       enabled: widget.tags.isNotEmpty,
                       title: Text(widget.tags.isEmpty
-                          ? 'Por etiqueta (crie etiquetas nas conversas)'
-                          : 'Conversas com uma etiqueta'),
+                          ? 'Por etiqueta (marque etiquetas nos contatos)'
+                          : 'Contatos com uma etiqueta'),
                     ),
                     if (audience == 'tag')
                       Padding(

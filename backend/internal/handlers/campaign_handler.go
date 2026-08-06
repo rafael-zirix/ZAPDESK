@@ -4,6 +4,7 @@ package handlers
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -71,6 +72,50 @@ func (h *SupportHandler) CampaignRecipients(c *gin.Context) {
 		return
 	}
 	RespondSuccess(c, http.StatusOK, "Destinatários", list)
+}
+
+// AddCampaignMedia sobe a FOTO da campanha (JPG/PNG) e devolve a URL pública —
+// usada como cabeçalho de imagem no template.
+func (h *SupportHandler) AddCampaignMedia(c *gin.Context) {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Nenhum arquivo enviado", nil)
+		return
+	}
+	if fh.Size > 5*1024*1024 {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Imagem muito grande (máx. 5 MB)", nil)
+		return
+	}
+	f, err := fh.Open()
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao ler o arquivo", nil)
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao ler o arquivo", nil)
+		return
+	}
+	url, err := h.support.SaveCampaignMedia(data, fh.Filename)
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, err.Error(), nil)
+		return
+	}
+	RespondSuccess(c, http.StatusCreated, "Foto enviada", gin.H{"url": url})
+}
+
+// DeleteCampaign exclui a campanha e o histórico de destinatários dela.
+func (h *SupportHandler) DeleteCampaign(c *gin.Context) {
+	if err := h.support.DeleteCampaign(middleware.AccountID(c), c.Param("id")); err != nil {
+		if errors.Is(err, services.ErrCampaignNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Campanha não encontrada", nil)
+			return
+		}
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao excluir a campanha", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Campanha excluída", nil)
 }
 
 // CampaignAction pausa/retoma/cancela uma campanha.

@@ -119,6 +119,25 @@ func (s *SupportService) CreateTag(accountID string, req models.TagRequest) (*mo
 	return t, err
 }
 
+// UpdateTag renomeia/recolore uma etiqueta.
+func (s *SupportService) UpdateTag(accountID, id string, req models.TagRequest) (*models.SupportTag, error) {
+	color := strings.TrimSpace(req.Color)
+	if color == "" {
+		color = "#0E9384"
+	}
+	t, err := s.repo.UpdateTag(accountID, id, strings.TrimSpace(req.Name), color)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			return nil, ErrTagExists
+		}
+		return nil, err
+	}
+	if t == nil {
+		return nil, ErrTagNotFound
+	}
+	return t, nil
+}
+
 func (s *SupportService) DeleteTag(accountID, id string) error {
 	ok, err := s.repo.DeleteTag(accountID, id)
 	if err != nil {
@@ -229,6 +248,30 @@ func (s *SupportService) AddContactsToGroupByPhones(accountID, groupID string, p
 		}
 	}
 	return s.repo.AddGroupMembersByPhone(accountID, groupID, norm)
+}
+
+// SetContactTags substitui as etiquetas de um contato e devolve-o atualizado.
+func (s *SupportService) SetContactTags(accountID, userID, contactID string, tagIDs []string) (*models.SupportContact, error) {
+	ok, err := s.repo.ContactExists(accountID, contactID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrContactNotFound
+	}
+	if err := s.repo.SetContactTags(accountID, contactID, tagIDs); err != nil {
+		return nil, err
+	}
+	list, err := s.repo.ListContactsWithGroups(accountID, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].ID == contactID {
+			return &list[i], nil
+		}
+	}
+	return nil, ErrContactNotFound
 }
 
 // SetContactGroups substitui os grupos de um contato e devolve-o atualizado.

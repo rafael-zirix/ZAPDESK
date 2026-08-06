@@ -87,6 +87,7 @@ class _UsageScreenState extends State<UsageScreen> {
       padding: const EdgeInsets.all(20),
       children: [
         _PricingCard(c),
+        _MetaPricingCard(c),
         for (final co in c.companies) _companyCard(co, c.pricing),
       ],
     );
@@ -237,6 +238,267 @@ class _UsageScreenState extends State<UsageScreen> {
 }
 
 /// Card de preços da plataforma (super-admin): R$ por conversa e por 1k tokens.
+/// Tabela de custo da META por categoria + custo da IA — REFERÊNCIA DO DONO.
+/// O cliente nunca vê isto: a Meta cobra na conta de WhatsApp dele e a IA é
+/// custo nosso. Serve para saber a margem de cada serviço.
+class _MetaPricingCard extends StatelessWidget {
+  const _MetaPricingCard(this.c);
+  final UsageController c;
+
+  String _money(double v, String cur) => '${cur == 'BRL' ? 'R\$' : cur} ${v.toStringAsFixed(4)}';
+
+  @override
+  Widget build(BuildContext context) {
+    final t = c.metaPricing;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.public, size: 20, color: Color(0xFF2F80ED)),
+            const SizedBox(width: 8),
+            const Text('Meus custos (Meta e IA)',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const Spacer(),
+            if (t.updatedAt != null)
+              Text('Meta atualizada às ${t.updatedAt!.hour.toString().padLeft(2, '0')}:${t.updatedAt!.minute.toString().padLeft(2, '0')}',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500)),
+            IconButton(
+              tooltip: 'Consultar a Meta agora',
+              onPressed: c.refreshingMeta
+                  ? null
+                  : () async {
+                      final err = await c.refreshMetaPricing();
+                      if (err != null && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                      }
+                    },
+              icon: c.refreshingMeta
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh, size: 20),
+            ),
+          ]),
+          const SizedBox(height: 2),
+          Text('Somente para o seu controle — o cliente paga a Meta na conta de WhatsApp dele e '
+              'não vê estes valores. A tabela da Meta atualiza sozinha uma vez por dia.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.35)),
+          const SizedBox(height: 14),
+          Text('WHATSAPP (META) — CUSTO OBSERVADO NOS ÚLTIMOS 30 DIAS', style: _th),
+          const SizedBox(height: 8),
+          if (t.rows.isEmpty)
+            Text(t.note.isNotEmpty ? t.note : 'Sem dados da Meta ainda — clique em atualizar.',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600))
+          else ...[
+            Row(children: [
+              SizedBox(width: 150, child: Text('CATEGORIA', style: _th)),
+              SizedBox(width: 130, child: Text('CUSTO UNITÁRIO', style: _th)),
+              SizedBox(width: 110, child: Text('CONVERSAS', style: _th)),
+              SizedBox(width: 120, child: Text('CUSTO TOTAL', style: _th)),
+            ]),
+            const Divider(height: 14),
+            for (final r in t.rows)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(children: [
+                  SizedBox(
+                      width: 150,
+                      child: Text(r.label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600))),
+                  SizedBox(
+                      width: 130,
+                      child: Text(r.price == 0 ? 'grátis' : _money(r.price, t.currency),
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: r.price == 0 ? const Color(0xFF12B76A) : null))),
+                  SizedBox(width: 110, child: Text('${r.count}', style: const TextStyle(fontSize: 13))),
+                  SizedBox(
+                      width: 120,
+                      child: Text(_money(r.cost, t.currency), style: const TextStyle(fontSize: 13))),
+                ]),
+              ),
+            if (t.note.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(t.note, style: TextStyle(fontSize: 11.5, color: Colors.orange.shade800)),
+            ],
+          ],
+          const SizedBox(height: 18),
+          Text('INTELIGÊNCIA ARTIFICIAL — CUSTO DO PROVEDOR', style: _th),
+          const SizedBox(height: 8),
+          _AICostRow(c),
+        ],
+      ),
+    );
+  }
+}
+
+/// Custos de IA: tabela de MODELOS (vários provedores) + o resumo do período
+/// com margem. O cliente não vê nada disto — ele paga a nossa régua por token.
+class _AICostRow extends StatefulWidget {
+  const _AICostRow(this.c);
+  final UsageController c;
+
+  @override
+  State<_AICostRow> createState() => _AICostRowState();
+}
+
+class _AICostRowState extends State<_AICostRow> {
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.c;
+    final tokens = c.totalAITokens;
+    final custo = tokens / 1000.0 * c.aiCosts.activePer1k;
+    final receita = tokens / 1000.0 * c.pricing.per1kTokens;
+    final margem = receita - custo;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (c.aiCosts.models.isEmpty)
+          Text('Nenhum modelo cadastrado — adicione o custo do provedor para ver a margem.',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600))
+        else ...[
+          Row(children: [
+            SizedBox(width: 230, child: Text('MODELO', style: _th)),
+            SizedBox(width: 120, child: Text('PROVEDOR', style: _th)),
+            SizedBox(width: 150, child: Text('CUSTO / 1.000 TOKENS', style: _th)),
+            SizedBox(width: 90, child: Text('EM USO', style: _th)),
+          ]),
+          const Divider(height: 14),
+          for (final m in c.aiCosts.models)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(children: [
+                SizedBox(
+                    width: 230,
+                    child: Text(m.model,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: m.active ? FontWeight.w800 : FontWeight.w500,
+                            color: m.active ? AppTheme.seed : null))),
+                SizedBox(width: 120, child: Text(m.provider, style: _td)),
+                SizedBox(width: 150, child: Text('R\$ ${m.per1k.toStringAsFixed(4)}', style: _tdBold)),
+                SizedBox(
+                    width: 90,
+                    child: m.active
+                        ? const Icon(Icons.check_circle, size: 18, color: AppTheme.seed)
+                        : IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 17),
+                            tooltip: 'Remover',
+                            onPressed: () async {
+                              final rest = c.aiCosts.models.where((x) => x.model != m.model).toList();
+                              await c.saveAICosts(rest);
+                              if (mounted) setState(() {});
+                            })),
+              ]),
+            ),
+        ],
+        const SizedBox(height: 10),
+        TextButton.icon(
+          onPressed: () => _addModel(context),
+          icon: const Icon(Icons.add, size: 17),
+          label: const Text('Adicionar modelo'),
+          style: TextButton.styleFrom(foregroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: AppTheme.bg, borderRadius: BorderRadius.circular(8)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('No período: $tokens tokens', style: _tdBold),
+              const SizedBox(height: 4),
+              Row(children: [
+                SizedBox(width: 190, child: Text('Custo do provedor', style: _td)),
+                Text('R\$ ${custo.toStringAsFixed(2)}', style: _tdBold),
+              ]),
+              Row(children: [
+                SizedBox(width: 190, child: Text('Você cobra dos clientes', style: _td)),
+                Text('R\$ ${receita.toStringAsFixed(2)}', style: _tdBold),
+              ]),
+              Row(children: [
+                SizedBox(width: 190, child: Text('Margem', style: _td)),
+                Text('R\$ ${margem.toStringAsFixed(2)}',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: margem >= 0 ? AppTheme.seed : Colors.red)),
+              ]),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _addModel(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final model = TextEditingController(text: widget.c.aiCosts.activeModel);
+    final provider = TextEditingController();
+    final price = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dc) => AlertDialog(
+        title: const Text('Custo de um modelo de IA'),
+        content: SizedBox(
+          width: 380,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: model,
+              decoration: const InputDecoration(
+                  labelText: 'Modelo', hintText: 'ex.: gemini-flash-lite-latest', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: provider,
+              decoration: const InputDecoration(
+                  labelText: 'Provedor', hintText: 'ex.: Google, OpenAI, Anthropic', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: price,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                  labelText: 'Custo por 1.000 tokens', prefixText: 'R\$ ', border: OutlineInputBorder()),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dc, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            onPressed: () => Navigator.pop(dc, true),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || model.text.trim().isEmpty) return;
+    final novo = AIModelCost(
+      model: model.text.trim(),
+      provider: provider.text.trim(),
+      per1k: double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0,
+    );
+    final lista = [...widget.c.aiCosts.models.where((m) => m.model != novo.model), novo];
+    final err = await widget.c.saveAICosts(lista);
+    if (!mounted) return;
+    if (err != null) messenger.showSnackBar(SnackBar(content: Text(err)));
+    setState(() {});
+  }
+}
+
+const _th = TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.grey, letterSpacing: 0.4);
+const _td = TextStyle(fontSize: 13, color: Colors.grey);
+const _tdBold = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700);
+
 class _PricingCard extends StatefulWidget {
   const _PricingCard(this.c);
   final UsageController c;
@@ -246,6 +508,9 @@ class _PricingCard extends StatefulWidget {
 }
 
 class _PricingCardState extends State<_PricingCard> {
+  late final TextEditingController _mkt = TextEditingController(text: _init(widget.c.pricing.marketing));
+  late final TextEditingController _util = TextEditingController(text: _init(widget.c.pricing.utility));
+  late final TextEditingController _auth = TextEditingController(text: _init(widget.c.pricing.authentication));
   late final TextEditingController _conv = TextEditingController(text: _init(widget.c.pricing.conversation));
   late final TextEditingController _tok = TextEditingController(text: _init(widget.c.pricing.per1kTokens));
   late final TextEditingController _pkgs = TextEditingController(
@@ -256,6 +521,9 @@ class _PricingCardState extends State<_PricingCard> {
 
   @override
   void dispose() {
+    _mkt.dispose();
+    _util.dispose();
+    _auth.dispose();
     _conv.dispose();
     _tok.dispose();
     _pkgs.dispose();
@@ -270,7 +538,9 @@ class _PricingCardState extends State<_PricingCard> {
         .map((s) => double.tryParse(s.trim().replaceAll(',', '.')) ?? 0)
         .where((v) => v > 0)
         .toList();
-    final err = await widget.c.savePricing(conv, tok, pkgs);
+    double v(TextEditingController c) => double.tryParse(c.text.trim().replaceAll(',', '.')) ?? 0;
+    final err = await widget.c.savePricing(conv, tok, pkgs,
+        marketing: v(_mkt), utility: v(_util), authentication: v(_auth));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err ?? 'Preços e planos salvos')));
   }
@@ -294,8 +564,9 @@ class _PricingCardState extends State<_PricingCard> {
             const Text('Preços da plataforma', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
           ]),
           const SizedBox(height: 2),
-          Text('O que você cobra de cada empresa pelo uso. Ao salvar, os valores abaixo recalculam.',
-              style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+          Text('O que você cobra de cada empresa pelo uso. A Meta cobra POR MENSAGEM DE MODELO '
+              'ENTREGUE, com preço por categoria — reflita isso aqui. Ao salvar, os valores abaixo recalculam.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.35)),
           const SizedBox(height: 14),
           Wrap(
             spacing: 16,
@@ -303,11 +574,36 @@ class _PricingCardState extends State<_PricingCard> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               SizedBox(
+                width: 200,
+                child: TextField(
+                  controller: _mkt,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'por msg de marketing', prefixText: 'R\$ '),
+                ),
+              ),
+              SizedBox(
+                width: 200,
+                child: TextField(
+                  controller: _util,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'por msg de utilidade', prefixText: 'R\$ '),
+                ),
+              ),
+              SizedBox(
                 width: 210,
+                child: TextField(
+                  controller: _auth,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'por msg de autenticação', prefixText: 'R\$ '),
+                ),
+              ),
+              SizedBox(
+                width: 230,
                 child: TextField(
                   controller: _conv,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'por conversa WhatsApp', prefixText: 'R\$ '),
+                  decoration: const InputDecoration(
+                      labelText: 'por conversa (modelo antigo)', prefixText: 'R\$ '),
                 ),
               ),
               SizedBox(

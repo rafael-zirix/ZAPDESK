@@ -37,14 +37,81 @@ class UsageController extends ChangeNotifier {
       error = r.message ?? 'Erro ao carregar o consumo';
     }
     notifyListeners();
+    loadMetaPricing(); // tabela de custo da Meta (referência do dono)
+    loadAICosts(); // custo dos modelos de IA
   }
 
   /// Salva os preços da plataforma e recarrega (recalcula os valores). Retorna erro.
-  Future<String?> savePricing(double conversation, double per1kTokens, List<double> packages) async {
+  /// Tabela de custo da META (referência do dono; nunca vai ao cliente).
+  MetaPricingTable metaPricing = MetaPricingTable();
+  bool refreshingMeta = false;
+
+  /// Custos dos modelos de IA (o que pagamos ao provedor).
+  AICostTable aiCosts = AICostTable();
+
+  Future<void> loadAICosts() async {
+    final r = await _api.get('/admin/ai-costs');
+    if (r.ok && r.data is Map) {
+      aiCosts = AICostTable.fromJson((r.data as Map).cast<String, dynamic>());
+      notifyListeners();
+    }
+  }
+
+  /// Salva a tabela de custos de IA (lista de modelos).
+  Future<String?> saveAICosts(List<AIModelCost> models) async {
+    final r = await _api.put('/admin/ai-costs', {'models': models.map((m) => m.toJson()).toList()});
+    if (r.ok && r.data is Map) {
+      aiCosts = AICostTable.fromJson((r.data as Map).cast<String, dynamic>());
+      notifyListeners();
+      return null;
+    }
+    return r.message ?? 'Não foi possível salvar os custos de IA';
+  }
+
+  /// Tokens de IA consumidos por todas as empresas no período.
+  int get totalAITokens => companies.fold<int>(0, (a, u) => a + u.aiTokens);
+
+  Future<void> loadMetaPricing() async {
+    final r = await _api.get('/admin/meta-pricing');
+    if (r.ok && r.data is Map) {
+      metaPricing = MetaPricingTable.fromJson((r.data as Map).cast<String, dynamic>());
+      notifyListeners();
+    }
+  }
+
+  /// Consulta a Meta agora (a atualização também roda sozinha, 1x por dia).
+  Future<String?> refreshMetaPricing() async {
+    refreshingMeta = true;
+    notifyListeners();
+    final r = await _api.post('/admin/meta-pricing/refresh');
+    refreshingMeta = false;
+    if (r.ok && r.data is Map) {
+      metaPricing = MetaPricingTable.fromJson((r.data as Map).cast<String, dynamic>());
+      notifyListeners();
+      return null;
+    }
+    notifyListeners();
+    return r.message ?? 'Não foi possível consultar a Meta';
+  }
+
+  Future<String?> savePricing(
+    double conversation,
+    double per1kTokens,
+    List<double> packages, {
+    double marketing = 0,
+    double utility = 0,
+    double authentication = 0,
+  }) async {
     savingPricing = true;
     notifyListeners();
-    final r = await _api.put('/admin/pricing',
-        {'price_conversation': conversation, 'price_1k_tokens': per1kTokens, 'packages': packages});
+    final r = await _api.put('/admin/pricing', {
+      'price_conversation': conversation,
+      'price_1k_tokens': per1kTokens,
+      'price_marketing': marketing,
+      'price_utility': utility,
+      'price_authentication': authentication,
+      'packages': packages,
+    });
     savingPricing = false;
     if (!r.ok) {
       notifyListeners();

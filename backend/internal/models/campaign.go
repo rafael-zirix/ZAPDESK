@@ -44,9 +44,24 @@ type Campaign struct {
 	Status       string         `json:"status"`
 	ScheduledAt  time.Time      `json:"scheduled_at"`
 	RatePerMin   int            `json:"rate_per_min"`
-	CreatedBy    *string        `json:"created_by,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	Funnel       CampaignFunnel `json:"funnel"`
+	Params       []string       `json:"params,omitempty"`    // valores das variáveis {{1}}, {{2}}…
+	ImageURL     *string        `json:"image_url,omitempty"` // foto (modelo com cabeçalho de imagem)
+	// Público escolhido — guardado para reabrir a campanha ao COPIAR.
+	Audience   string   `json:"audience,omitempty"` // all | groups | tag | manual
+	GroupIDs   []string `json:"group_ids,omitempty"`
+	TagID      *string  `json:"tag_id,omitempty"`
+	ContactIDs []string `json:"contact_ids,omitempty"`
+
+	CreatedBy *string        `json:"created_by,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	Funnel    CampaignFunnel `json:"funnel"`
+}
+
+// AudienceRef é o público escolhido (serializado em campaigns.audience_ref).
+type AudienceRef struct {
+	GroupIDs   []string `json:"group_ids,omitempty"`
+	TagID      *string  `json:"tag_id,omitempty"`
+	ContactIDs []string `json:"contact_ids,omitempty"`
 }
 
 // CreateCampaignRequest cria uma campanha com a audiência resolvida na hora.
@@ -61,6 +76,11 @@ type CreateCampaignRequest struct {
 	ContactIDs   []string   `json:"contact_ids"` // audience=manual
 	ScheduledAt  *time.Time `json:"scheduled_at"` // null = começa agora
 	RatePerMin   int        `json:"rate_per_min"` // default 12; 1..60
+	Params       []string   `json:"params"`       // um valor por variável do modelo; {nome} = nome do contato
+	ImageURL     string     `json:"image_url"`    // foto p/ modelo com cabeçalho de imagem (URL pública nossa)
+	// Preenchido pelo service (não vem do cliente): categoria do modelo, que
+	// define o preço cobrado pela Meta por mensagem entregue.
+	TemplateCategory string `json:"-"`
 }
 
 // CampaignRecipient é um destinatário (linha do detalhe da campanha).

@@ -125,3 +125,23 @@ func (r *WhatsAppRepository) SetPhoto(id, accountID, photoURL string) (bool, err
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
+
+// ConnectedWhatsAppAccounts devolve TODOS os números conectados da plataforma
+// (de todas as empresas) — usado pelo super-admin para consultar a tabela de
+// preços da Meta.
+func (r *WhatsAppRepository) ConnectedAll() ([]models.WhatsAppAccount, error) {
+	rows, err := r.db.Query(`SELECT ` + waColumns + ` FROM whatsapp_accounts WHERE status='connected'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]models.WhatsAppAccount, 0)
+	for rows.Next() {
+		w, err := scanWA(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
+}

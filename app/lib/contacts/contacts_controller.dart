@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
 import '../models/contact.dart';
+import '../models/support.dart';
 
 class ContactsController extends ChangeNotifier {
   final _api = ApiClient.instance;
@@ -76,15 +77,55 @@ class ContactsController extends ChangeNotifier {
 
   List<ContactGroup> groups = [];
   String? groupFilter; // id do grupo (null = todos)
+  List<TicketTag> tags = []; // etiquetas da empresa (mesmas das conversas)
+  String? tagFilter; // id da etiqueta (null = todas)
 
-  /// Contatos após o filtro por grupo.
-  List<Contact> get filtered => groupFilter == null
-      ? contacts
-      : contacts.where((c) => c.groups.any((g) => g.id == groupFilter)).toList();
+  /// Contatos após os filtros de grupo e etiqueta.
+  List<Contact> get filtered => contacts.where((c) {
+        if (groupFilter != null && !c.groups.any((g) => g.id == groupFilter)) return false;
+        if (tagFilter != null && !c.tags.any((t) => t.id == tagFilter)) return false;
+        return true;
+      }).toList();
 
   void setGroupFilter(String? id) {
     groupFilter = id;
     notifyListeners();
+  }
+
+  void setTagFilter(String? id) {
+    tagFilter = id;
+    notifyListeners();
+  }
+
+  Future<void> loadTags() async {
+    final r = await _api.get('/support/tags');
+    if (r.ok && r.data is List) {
+      tags = (r.data as List).map((e) => TicketTag.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
+  /// Cria uma etiqueta (mesma lista usada nas conversas).
+  Future<TicketTag?> createTag(String name) async {
+    final r = await _api.post('/support/tags', {'name': name});
+    if (r.ok && r.data is Map) {
+      final t = TicketTag.fromJson((r.data as Map).cast<String, dynamic>());
+      tags = [...tags, t];
+      notifyListeners();
+      return t;
+    }
+    return null;
+  }
+
+  /// Substitui as etiquetas de um contato.
+  Future<String?> setContactTags(Contact ct, List<String> tagIds) async {
+    final r = await _api.put('/contacts/${ct.id}/tags', {'tag_ids': tagIds});
+    if (r.ok && r.data is Map) {
+      ct.tags = Contact.fromJson(r.data as Map<String, dynamic>).tags;
+      notifyListeners();
+      return null;
+    }
+    return r.message ?? 'Não foi possível salvar as etiquetas';
   }
 
   Future<void> loadGroups() async {

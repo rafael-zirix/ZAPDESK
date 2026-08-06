@@ -33,6 +33,7 @@ type SupportContact struct {
 	Phone     string
 	Name      *string
 	Groups    []ContactGroupRef // grupos de marketing (preenchido na listagem)
+	Tags      []SupportTag      // etiquetas do contato (filtro de campanha)
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -58,6 +59,11 @@ type ContactGroupRequest struct {
 // SetContactGroupsRequest substitui os grupos de um contato.
 type SetContactGroupsRequest struct {
 	GroupIDs []string `json:"group_ids"`
+}
+
+// SetContactTagsRequest substitui as etiquetas de um contato.
+type SetContactTagsRequest struct {
+	TagIDs []string `json:"tag_ids"`
 }
 
 // SupportTicket é uma conversa (com protocolo) de um contato.
@@ -90,6 +96,10 @@ type SupportMessage struct {
 	SenderID   *string
 	SenderName *string // nome do atendente (join; exibido nas notas internas)
 	Internal   bool    // nota interna: só a equipe vê, nunca vai à Meta
+	// Cobrança da Meta: qual modelo foi enviado e em que categoria
+	// (marketing/utility/authentication). Vazio nas mensagens comuns.
+	TemplateName     *string
+	TemplateCategory *string
 	CreatedAt  time.Time
 }
 
@@ -181,6 +191,9 @@ type SupportTag struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Color string `json:"color"`
+	// Uso da etiqueta (preenchido na listagem de gestão).
+	Contacts int `json:"contacts,omitempty"`
+	Tickets  int `json:"tickets,omitempty"`
 }
 
 // TagRequest cria uma etiqueta.
@@ -258,12 +271,13 @@ type ContactResponse struct {
 	Phone     string            `json:"phone"`
 	Name      *string           `json:"name,omitempty"`
 	Groups    []ContactGroupRef `json:"groups,omitempty"`
+	Tags      []SupportTag      `json:"tags,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 }
 
 // ToResponse converte o contato para a resposta pública.
 func (c *SupportContact) ToResponse() ContactResponse {
-	return ContactResponse{ID: c.ID, Phone: c.Phone, Name: c.Name, Groups: c.Groups, CreatedAt: c.CreatedAt}
+	return ContactResponse{ID: c.ID, Phone: c.Phone, Name: c.Name, Groups: c.Groups, Tags: c.Tags, CreatedAt: c.CreatedAt}
 }
 
 // CreateContactRequest cadastra um contato manualmente.

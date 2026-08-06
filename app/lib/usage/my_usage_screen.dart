@@ -170,17 +170,55 @@ class _MyUsageScreenState extends State<MyUsageScreen> {
             _stat('Tokens IA', u.aiTokens, Icons.smart_toy_outlined, const Color(0xFFB54708)),
           ],
         ),
+        const SizedBox(height: 16),
+        const Divider(height: 1),
+        const SizedBox(height: 14),
+        const Text('Cobrado pela Meta (mensagens entregues)',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 18,
+          runSpacing: 10,
+          children: [
+            _stat('Marketing', u.marketing, Icons.campaign_outlined, const Color(0xFFD92D20)),
+            _stat('Utilidade', u.utility, Icons.receipt_long_outlined, const Color(0xFF2F80ED)),
+            _stat('Autenticação', u.authentication, Icons.lock_outline, const Color(0xFF7B4DFF)),
+            _stat('Atendimento (grátis)', u.serviceFree, Icons.support_agent, const Color(0xFF12B76A)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'A Meta cobra por mensagem de modelo ENTREGUE, com preço por categoria. '
+          'Conversas iniciadas pelo cliente (atendimento) são gratuitas.',
+          style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600, height: 1.35),
+        ),
       ]);
 
   Widget _valuesCard(CompanyUsage u) => _card([
         const Text('Valores', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         const SizedBox(height: 2),
         Text(
-          'Preços: R\$ ${_pricing.conversation.toStringAsFixed(2)}/conversa · R\$ ${_pricing.per1kTokens.toStringAsFixed(2)} por 1.000 tokens de IA.',
-          style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600),
+          'Preços por mensagem entregue: marketing R\$ ${_pricing.marketing.toStringAsFixed(2)} · '
+          'utilidade R\$ ${_pricing.utility.toStringAsFixed(2)} · '
+          'autenticação R\$ ${_pricing.authentication.toStringAsFixed(2)}. '
+          'IA: R\$ ${_pricing.per1kTokens.toStringAsFixed(2)} por 1.000 tokens.',
+          style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.35),
         ),
         const SizedBox(height: 14),
-        _valueLine('WhatsApp (${u.conversations} conversas)', u.valueWhatsApp),
+        if (u.marketing > 0 || u.utility > 0 || u.authentication > 0) ...[
+          if (u.marketing > 0) _valueLine('Marketing (${u.marketing} mensagens)', u.valueMarketing),
+          if (u.utility > 0) ...[
+            if (u.marketing > 0) const Divider(height: 18),
+            _valueLine('Utilidade (${u.utility} mensagens)', u.valueUtility),
+          ],
+          if (u.authentication > 0) ...[
+            const Divider(height: 18),
+            _valueLine('Autenticação (${u.authentication} mensagens)', u.valueAuthentication),
+          ],
+          const Divider(height: 18),
+          _valueLine('Atendimento (${u.serviceFree} conversas)', 0),
+        ] else
+          _valueLine('WhatsApp (${u.conversations} conversas)', u.valueWhatsApp),
         const Divider(height: 18),
         _valueLine('IA (${u.aiTokens} tokens)', u.valueAI),
         const Divider(height: 18),
@@ -194,8 +232,11 @@ class _MyUsageScreenState extends State<MyUsageScreen> {
           child: Text(label,
               style: TextStyle(fontSize: big ? 15 : 13.5, fontWeight: big ? FontWeight.w700 : FontWeight.w500)),
         ),
-        Text('R\$ ${v.toStringAsFixed(2)}',
-            style: TextStyle(fontSize: big ? 20 : 15, fontWeight: FontWeight.w800, color: big ? AppTheme.seed : null)),
+        Text(v == 0 && !big ? 'grátis' : 'R\$ ${v.toStringAsFixed(2)}',
+            style: TextStyle(
+                fontSize: big ? 20 : 15,
+                fontWeight: FontWeight.w800,
+                color: big ? AppTheme.seed : (v == 0 ? const Color(0xFF12B76A) : null))),
       ],
     );
   }

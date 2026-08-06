@@ -49,6 +49,12 @@ class TemplatesController extends ChangeNotifier {
 
   /// Liga/desliga um modelo na barra de mensagens prontas da conversa. Atualiza
   /// na hora (otimista) e persiste; reverte se o backend recusar.
+  /// Define se o modelo serve à conversa ('chat') ou à campanha ('campaign').
+  Future<void> setUsage(String name, String usage) async {
+    final r = await _api.put('/support/templates/$name/usage', {'usage': usage});
+    if (r.ok) await load();
+  }
+
   Future<void> setEnabled(String name, bool enabled) async {
     final i = templates.indexWhere((t) => t.name == name);
     if (i < 0) return;

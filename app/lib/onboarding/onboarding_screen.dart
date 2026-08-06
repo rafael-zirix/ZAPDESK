@@ -69,7 +69,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       sub: 'Entre com o Facebook da empresa — a gente configura o resto.',
       done: _b('has_whatsapp'),
       optional: false,
-      go: 'WhatsApp',
+      go: 'Telefones',
       embedded: true,
     ),
     (
@@ -150,7 +150,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           showHandle: true,
           onManual: () {
             Navigator.pop(ctx);
-            widget.onGo('WhatsApp'); // formulário manual vive na aba WhatsApp
+            widget.onGo('Telefones'); // formulário manual vive na aba Telefones
           },
           onConnected: () => Navigator.pop(ctx),
         ),

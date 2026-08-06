@@ -58,7 +58,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       color: AppTheme.bg,
       child: Column(
         children: [
-          const ListHeader(title: 'Configurações'),
+          const ListHeader(title: 'Tipo de login'),
           const Divider(height: 1),
           Expanded(
             child: _loading

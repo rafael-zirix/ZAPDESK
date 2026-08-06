@@ -7,6 +7,7 @@ class MessageTemplate {
     this.category,
     this.status,
     this.enabled = true,
+    this.usage = 'chat',
   });
 
   final String name;
@@ -19,6 +20,12 @@ class MessageTemplate {
   /// (preferência local; só vale para os aprovados). Default true.
   final bool enabled;
 
+  /// Para que serve: 'chat' (mensagens prontas do atendimento) ou 'campaign'
+  /// (disparo em massa). Impede um modelo de promoção poluir as conversas.
+  final String usage;
+
+  bool get isCampaign => usage == 'campaign';
+
   bool get isApproved => (status ?? '').toUpperCase() == 'APPROVED';
 
   factory MessageTemplate.fromJson(Map<String, dynamic> j) => MessageTemplate(
@@ -28,5 +35,6 @@ class MessageTemplate {
         category: j['category'],
         status: j['status'],
         enabled: j['enabled'] ?? true,
+        usage: j['usage'] ?? 'chat',
       );
 }

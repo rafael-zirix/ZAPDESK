@@ -134,6 +134,9 @@ type TemplateInfo struct {
 	Category string `json:"category"`
 	BodyText string `json:"body_text"`
 	Enabled  bool   `json:"enabled"`
+	// Para que serve: "chat" (mensagens prontas do atendimento) ou "campaign"
+	// (disparo em massa). Evita um modelo de promoção poluir as conversas.
+	Usage string `json:"usage"`
 }
 
 // ListTemplates devolve os templates da WABA (só os APPROVED).
@@ -322,17 +325,42 @@ func (c *MetaClient) ConversationAnalytics(wabaID string, start, end int64) (int
 
 // SendTemplate envia uma mensagem de template (fura a janela de 24h).
 func (c *MetaClient) SendTemplate(to, name, lang string) (string, error) {
+	return c.SendTemplateParams(to, name, lang, nil, "")
+}
+
+// SendTemplateParams envia um template COM parâmetros do corpo ({{1}}, {{2}}…)
+// e, opcionalmente, a imagem do CABEÇALHO (modelos com header de imagem).
+// A Meta exige exatamente o nº de parâmetros do modelo (erro #132000 sem eles).
+func (c *MetaClient) SendTemplateParams(to, name, lang string, params []string, imageURL string) (string, error) {
 	if lang == "" {
 		lang = "pt_BR"
+	}
+	tpl := map[string]any{
+		"name":     name,
+		"language": map[string]string{"code": lang},
+	}
+	components := []map[string]any{}
+	if imageURL != "" {
+		components = append(components, map[string]any{
+			"type":       "header",
+			"parameters": []map[string]any{{"type": "image", "image": map[string]string{"link": imageURL}}},
+		})
+	}
+	if len(params) > 0 {
+		ps := make([]map[string]string, 0, len(params))
+		for _, p := range params {
+			ps = append(ps, map[string]string{"type": "text", "text": p})
+		}
+		components = append(components, map[string]any{"type": "body", "parameters": ps})
+	}
+	if len(components) > 0 {
+		tpl["components"] = components
 	}
 	body := map[string]any{
 		"messaging_product": "whatsapp",
 		"to":                to,
 		"type":              "template",
-		"template": map[string]any{
-			"name":     name,
-			"language": map[string]string{"code": lang},
-		},
+		"template":          tpl,
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s/messages", c.apiBase, c.phoneNumberID), bytes.NewReader(raw))

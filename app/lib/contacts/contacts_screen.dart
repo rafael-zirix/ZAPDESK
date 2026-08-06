@@ -8,6 +8,7 @@ import '../core/entity_form.dart';
 import '../core/file_pick.dart';
 import '../core/theme.dart';
 import '../models/contact.dart';
+import '../models/support.dart';
 import 'contacts_controller.dart';
 
 class ContactsScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
       final c = context.read<ContactsController>();
       c.load();
       c.loadGroups();
+      c.loadTags();
     });
   }
 
@@ -87,6 +89,31 @@ class _ContactsScreenState extends State<ContactsScreen> {
               label: Text(c.groups.isEmpty ? 'Criar grupos' : 'Grupos'),
               style: TextButton.styleFrom(foregroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
             ),
+            if (c.tags.isNotEmpty) ...[
+              const SizedBox(width: 4),
+              PopupMenuButton<String?>(
+                tooltip: 'Filtrar por etiqueta',
+                onSelected: (v) => c.setTagFilter(v == '' ? null : v),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: '', child: Text('Todas as etiquetas')),
+                  for (final t in c.tags) PopupMenuItem(value: t.id, child: Text(t.name)),
+                ],
+                child: Chip(
+                  avatar: Icon(Icons.label_outline, size: 15,
+                      color: c.tagFilter != null ? AppTheme.seed : Colors.grey.shade600),
+                  label: Text(
+                      c.tagFilter == null
+                          ? 'Etiqueta'
+                          : c.tags.firstWhere((t) => t.id == c.tagFilter).name,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: c.tagFilter != null ? FontWeight.w700 : FontWeight.w500,
+                          color: c.tagFilter != null ? AppTheme.seed : null)),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -122,17 +149,28 @@ class _ContactsScreenState extends State<ContactsScreen> {
         child: Text(ct.initials, style: const TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700)),
       ),
       title: Text(ct.displayName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-      subtitle: Text(
-        ct.groups.isEmpty ? ct.prettyPhone : '${ct.prettyPhone} · ${ct.groups.map((g) => g.name).join(', ')}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: Colors.grey.shade600),
+      subtitle: Row(
+        children: [
+          Flexible(
+            child: Text(
+              ct.groups.isEmpty ? ct.prettyPhone : '${ct.prettyPhone} · ${ct.groups.map((g) => g.name).join(', ')}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+          ),
+          for (final tag in ct.tags.take(3)) _tagChip(tag),
+        ],
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-              icon: Icon(Icons.label_outline, color: ct.groups.isEmpty ? null : AppTheme.seed),
+              icon: Icon(Icons.local_offer_outlined, color: ct.tags.isEmpty ? null : AppTheme.seed),
+              tooltip: 'Etiquetas do contato (filtro de campanha)',
+              onPressed: () => _contactTagsDialog(c, ct)),
+          IconButton(
+              icon: Icon(Icons.group_outlined, color: ct.groups.isEmpty ? null : AppTheme.seed),
               tooltip: 'Grupos do contato',
               onPressed: () => _contactGroupsDialog(c, ct)),
           IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Editar', onPressed: () => _openForm(c, edit: ct)),
@@ -140,6 +178,116 @@ class _ContactsScreenState extends State<ContactsScreen> {
         ],
       ),
     );
+  }
+
+  /// Chip colorido da etiqueta na linha do contato.
+  Widget _tagChip(TicketTag tag) {
+    final h = tag.color.replaceAll('#', '');
+    final v = int.tryParse(h.length == 6 ? 'FF$h' : h, radix: 16);
+    final color = v != null ? Color(v) : AppTheme.seed;
+    return Container(
+      margin: const EdgeInsets.only(left: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.8),
+      ),
+      child: Text(tag.name, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+    );
+  }
+
+  /// Etiquetas de UM contato (com criação rápida). A etiqueta fica no contato,
+  /// então serve de filtro permanente para campanhas.
+  Future<void> _contactTagsDialog(ContactsController c, Contact ct) async {
+    final selected = {for (final t in ct.tags) t.id};
+    final novo = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setLocal) => AlertDialog(
+          title: Text('Etiquetas — ${ct.displayName}'),
+          content: SizedBox(
+            width: 340,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Use etiquetas para segmentar campanhas (ex.: VIP, inadimplente, lead frio).',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                const SizedBox(height: 12),
+                if (c.tags.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text('Nenhuma etiqueta ainda — crie a primeira abaixo.',
+                        style: TextStyle(color: Colors.grey.shade600)),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final t in c.tags)
+                            FilterChip(
+                              label: Text(t.name, style: const TextStyle(fontSize: 12)),
+                              selected: selected.contains(t.id),
+                              selectedColor: AppTheme.seed.withValues(alpha: 0.2),
+                              onSelected: (v) => setLocal(() {
+                                if (v) {
+                                  selected.add(t.id);
+                                } else {
+                                  selected.remove(t.id);
+                                }
+                              }),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: novo,
+                  decoration: InputDecoration(
+                    labelText: 'Nova etiqueta',
+                    hintText: 'Ex.: VIP, orçamento, urgente',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () async {
+                        final name = novo.text.trim();
+                        if (name.isEmpty) return;
+                        final t = await c.createTag(name);
+                        if (t != null) {
+                          novo.clear();
+                          setLocal(() => selected.add(t.id));
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Cancelar')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final err = await c.setContactTags(ct, selected.toList());
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    }
   }
 
   /// Marca/desmarca os grupos de UM contato (com criação rápida de grupo).

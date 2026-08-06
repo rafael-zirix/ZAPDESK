@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -80,13 +81,24 @@ type SupportService struct {
 	cipher   *crypto.Cipher
 	apiBase  string
 	fallback *MetaClient
-	mediaDir string
+	mediaDir  string
+	publicURL string // base pública da API (links de mídia p/ a Meta baixar)
+	metaAppID string // App ID da Meta (Resumable Upload das imagens de modelo)
 	// Atendente IA (opcional). Nil = desligado.
 	ai        *AIClient
 	aiRepo    *repository.AIRepository
 	aiActions *repository.AIActionRepository // ferramentas configuráveis (function-calling)
 	// Cobrança (opcional) — dispara a recarga automática ao consumir tokens.
 	billing *BillingService
+	// Cache das categorias dos modelos por conta (para o relatório de consumo).
+	tplCacheMu sync.Mutex
+	tplCache   map[string]tplCacheEntry
+}
+
+// tplCacheEntry guarda nome→categoria dos modelos de uma conta.
+type tplCacheEntry struct {
+	at     time.Time
+	byName map[string]string
 }
 
 // WithBilling liga o serviço de cobrança (para a recarga automática a 10%).
@@ -149,14 +161,42 @@ func (s *SupportService) ListTemplates(accountID string) ([]TemplateInfo, error)
 	if err != nil {
 		return nil, err
 	}
-	disabled, err := s.repo.DisabledTemplateNames(accountID)
+	prefs, err := s.repo.TemplatePrefs(accountID)
 	if err != nil {
 		return nil, err
 	}
 	for i := range tpls {
-		tpls[i].Enabled = !disabled[tpls[i].Name]
+		p, ok := prefs[tpls[i].Name]
+		tpls[i].Enabled = !ok || p.Enabled
+		tpls[i].Usage = p.Usage
+		if tpls[i].Usage == "" {
+			tpls[i].Usage = defaultTemplateUsage(tpls[i].Category)
+		}
 	}
 	return tpls, nil
+}
+
+// Usos possíveis de um modelo.
+const (
+	TemplateUsageChat     = "chat"     // mensagens prontas da conversa
+	TemplateUsageCampaign = "campaign" // disparo de campanha
+)
+
+// defaultTemplateUsage decide o uso pela categoria da Meta quando o cliente
+// ainda não escolheu: marketing é campanha; o resto é atendimento.
+func defaultTemplateUsage(category string) string {
+	if strings.EqualFold(category, "MARKETING") {
+		return TemplateUsageCampaign
+	}
+	return TemplateUsageChat
+}
+
+// SetTemplateUsage define para que o modelo serve (chat | campaign).
+func (s *SupportService) SetTemplateUsage(accountID, name, usage string) error {
+	if usage != TemplateUsageChat && usage != TemplateUsageCampaign {
+		return errors.New("uso inválido")
+	}
+	return s.repo.SetTemplateUsage(accountID, name, usage)
 }
 
 // SetTemplateEnabled liga/desliga um modelo na barra de mensagens prontas.
@@ -187,6 +227,90 @@ func (s *SupportService) CreateTemplate(accountID, name, language, category, bod
 	return client.CreateTemplate(wabaID, name, language, category, body)
 }
 
+// WithMetaApp informa o App ID da Meta (usado no upload da imagem de exemplo
+// dos modelos com cabeçalho de imagem).
+func (s *SupportService) WithMetaApp(appID string) *SupportService {
+	s.metaAppID = appID
+	return s
+}
+
+// CreateTemplateSpec cria um modelo COMPLETO (cabeçalho texto/imagem, corpo com
+// variáveis + exemplos, rodapé e botões) na WABA da conta.
+func (s *SupportService) CreateTemplateSpec(accountID string, spec TemplateSpec) (string, error) {
+	client, wabaID, err := s.clientFor(accountID)
+	if err != nil {
+		return "", err
+	}
+	if client == nil || wabaID == "" {
+		return "", errors.New("conecte o número do WhatsApp antes de criar modelos")
+	}
+	if spec.Language == "" {
+		spec.Language = "pt_BR"
+	}
+	if spec.Category == "" {
+		spec.Category = "MARKETING"
+	}
+	if strings.EqualFold(spec.Category, "AUTHENTICATION") {
+		return client.CreateAuthTemplate(wabaID, spec.Name, spec.Language, 10)
+	}
+	// A Meta só aceita nome em minúsculas, números e "_".
+	spec.Name = normalizeTemplateName(spec.Name)
+	if spec.Name == "" {
+		return "", errors.New("informe o nome do modelo")
+	}
+	if strings.TrimSpace(spec.Body) == "" {
+		return "", errors.New("informe a mensagem do modelo")
+	}
+	if strings.EqualFold(spec.HeaderType, "IMAGE") && spec.HeaderHandle == "" {
+		return "", errors.New("envie a imagem do cabeçalho antes de criar o modelo")
+	}
+	return client.CreateTemplateFull(wabaID, spec)
+}
+
+// UploadTemplateImage sobe a imagem de exemplo do cabeçalho e devolve o handle.
+func (s *SupportService) UploadTemplateImage(accountID string, data []byte, mimeType string) (string, error) {
+	client, _, err := s.clientFor(accountID)
+	if err != nil {
+		return "", err
+	}
+	if client == nil {
+		return "", errors.New("conecte o número do WhatsApp antes de criar modelos")
+	}
+	return client.UploadSampleImage(s.metaAppID, data, mimeType)
+}
+
+// accentFold mapeia as vogais acentuadas do português para as simples.
+var accentFold = map[rune]rune{
+	'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
+	'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+	'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+	'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
+	'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+	'ç': 'c', 'ñ': 'n',
+}
+
+// normalizeTemplateName deixa o nome no formato exigido pela Meta
+// (minúsculas, dígitos e "_"; espaços viram "_" e acentos são removidos).
+func normalizeTemplateName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		if f, ok := accentFold[r]; ok {
+			r = f
+		}
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == ' ' || r == '-':
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	return strings.Trim(out, "_")
+}
+
 // --- Consumo (super-admin) ---
 
 // NumberUsage é o consumo de um número, com o custo da Meta quando disponível.
@@ -207,23 +331,44 @@ type CompanyUsage struct {
 	Templates     int           `json:"templates"`
 	Media         int           `json:"media"`
 	Conversations int           `json:"conversations"`
-	AITokens      int64         `json:"ai_tokens"`      // tokens de IA consumidos no período
-	ValueWhatsApp float64       `json:"value_whatsapp"` // R$ = conversas × preço/conversa
-	ValueAI       float64       `json:"value_ai"`       // R$ = tokens/1000 × preço/1k
-	ValueTotal    float64       `json:"value_total"`    // R$ = WhatsApp + IA
-	Numbers       []NumberUsage `json:"numbers"`
+	AITokens      int64         `json:"ai_tokens"` // tokens de IA consumidos no período
+	// Cobrança da Meta: mensagens de template ENTREGUES por categoria.
+	Marketing      int `json:"marketing"`
+	Utility        int `json:"utility"`
+	Authentication int `json:"authentication"`
+	ServiceFree    int `json:"service_free"` // conversas de atendimento (grátis)
+
+	ValueMarketing      float64       `json:"value_marketing"`
+	ValueUtility        float64       `json:"value_utility"`
+	ValueAuthentication float64       `json:"value_authentication"`
+	ValueWhatsApp       float64       `json:"value_whatsapp"` // soma das categorias
+	ValueAI             float64       `json:"value_ai"`       // R$ = tokens/1000 × preço/1k
+	ValueTotal          float64       `json:"value_total"`    // R$ = WhatsApp + IA
+	Numbers             []NumberUsage `json:"numbers"`
 }
 
-// Pricing são os preços da plataforma (super-admin cobra pelo uso).
+// Pricing são os preços da plataforma. A Meta cobra POR MENSAGEM DE TEMPLATE
+// ENTREGUE, com preço por categoria (e conversa de atendimento é gratuita).
 type Pricing struct {
-	Conversation float64   `json:"price_conversation"` // R$ por conversa WhatsApp
-	Per1kTokens  float64   `json:"price_1k_tokens"`    // R$ por 1.000 tokens de IA
-	Packages     []float64 `json:"packages"`           // valores R$ dos planos de recarga
+	Marketing      float64   `json:"price_marketing"`      // R$ por mensagem de marketing entregue
+	Utility        float64   `json:"price_utility"`        // R$ por mensagem de utilidade entregue
+	Authentication float64   `json:"price_authentication"` // R$ por mensagem de autenticação entregue
+	Conversation   float64   `json:"price_conversation"`   // legado (modelo antigo por conversa)
+	Per1kTokens    float64   `json:"price_1k_tokens"`      // R$ por 1.000 tokens de IA
+	Packages       []float64 `json:"packages"`             // valores R$ dos planos de recarga
 }
 
 // applyPricing preenche os valores em R$ de uma empresa a partir dos preços.
 func applyPricing(cu *CompanyUsage, p Pricing) {
-	cu.ValueWhatsApp = float64(cu.Conversations) * p.Conversation
+	cu.ValueMarketing = float64(cu.Marketing) * p.Marketing
+	cu.ValueUtility = float64(cu.Utility) * p.Utility
+	cu.ValueAuthentication = float64(cu.Authentication) * p.Authentication
+	cu.ValueWhatsApp = cu.ValueMarketing + cu.ValueUtility + cu.ValueAuthentication
+	// Compatibilidade: contas antigas (antes de gravarmos a categoria) seguem
+	// cobrando por conversa, senão o histórico apareceria zerado.
+	if cu.ValueWhatsApp == 0 && p.Conversation > 0 {
+		cu.ValueWhatsApp = float64(cu.Conversations) * p.Conversation
+	}
 	cu.ValueAI = float64(cu.AITokens) / 1000.0 * p.Per1kTokens
 	cu.ValueTotal = cu.ValueWhatsApp + cu.ValueAI
 }
@@ -241,7 +386,9 @@ func (s *SupportService) AdminUsage(from, to time.Time) ([]CompanyUsage, error) 
 			AccountID: r.AccountID, Name: r.AccountName,
 			MessagesOut: r.MessagesOut, MessagesIn: r.MessagesIn,
 			Templates: r.Templates, Media: r.Media, Conversations: r.Conversations,
-			Numbers: []NumberUsage{},
+			Marketing: r.Marketing, Utility: r.Utility, Authentication: r.Authentication,
+			ServiceFree: r.ServiceFree,
+			Numbers:     []NumberUsage{},
 		}
 		if s.wa != nil && s.cipher != nil {
 			nums, _ := s.wa.ListByAccount(r.AccountID)
@@ -281,14 +428,27 @@ func (s *SupportService) AdminUsage(from, to time.Time) ([]CompanyUsage, error) 
 
 // Pricing lê os preços da plataforma (+ pacotes de recarga).
 func (s *SupportService) Pricing() (Pricing, error) {
-	conv, per1k, err := s.repo.GetPricing()
+	m, err := s.repo.GetPriceMap()
 	pkgs, _ := s.repo.GetPackages()
-	return Pricing{Conversation: conv, Per1kTokens: per1k, Packages: pkgs}, err
+	return Pricing{
+		Marketing:      m["price_marketing"],
+		Utility:        m["price_utility"],
+		Authentication: m["price_authentication"],
+		Conversation:   m["price_conversation"],
+		Per1kTokens:    m["price_1k_tokens"],
+		Packages:       pkgs,
+	}, err
 }
 
 // SetPricing grava os preços da plataforma (+ pacotes).
 func (s *SupportService) SetPricing(p Pricing) error {
-	if err := s.repo.SetPricing(p.Conversation, p.Per1kTokens); err != nil {
+	if err := s.repo.SetPriceMap(map[string]float64{
+		"price_marketing":      p.Marketing,
+		"price_utility":        p.Utility,
+		"price_authentication": p.Authentication,
+		"price_conversation":   p.Conversation,
+		"price_1k_tokens":      p.Per1kTokens,
+	}); err != nil {
 		return err
 	}
 	return s.repo.SetPackages(p.Packages)
@@ -311,6 +471,8 @@ func (s *SupportService) MyUsage(accountID string, from, to time.Time) (*Company
 			cu.Name = r.AccountName
 			cu.MessagesOut, cu.MessagesIn = r.MessagesOut, r.MessagesIn
 			cu.Templates, cu.Media, cu.Conversations = r.Templates, r.Media, r.Conversations
+			cu.Marketing, cu.Utility, cu.Authentication = r.Marketing, r.Utility, r.Authentication
+			cu.ServiceFree = r.ServiceFree
 			break
 		}
 	}
@@ -347,9 +509,16 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang, b
 		content = name
 	}
 	sender := userID
+	tplName := name
 	msg := &models.SupportMessage{
 		AccountID: accountID, TicketID: ticketID, Direction: models.DirectionOut,
 		Type: "template", Content: &content, Status: "pending", SenderID: &sender,
+		TemplateName: &tplName,
+	}
+	// Categoria do modelo (marketing/utility/authentication) — é o que a Meta
+	// cobra por mensagem entregue; guardamos para o relatório de consumo.
+	if cat := s.templateCategory(accountID, name); cat != "" {
+		msg.TemplateCategory = &cat
 	}
 	if client != nil {
 		wamid, sendErr := client.SendTemplate(phone, name, lang)
@@ -369,6 +538,30 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang, b
 		return saved, sendErr
 	}
 	return s.repo.InsertMessage(msg)
+}
+
+// templateCategory descobre a categoria de um modelo pelo nome (consulta a Meta
+// e guarda em cache por 10 min — a lista muda pouco). Vazio se não achar.
+func (s *SupportService) templateCategory(accountID, name string) string {
+	s.tplCacheMu.Lock()
+	defer s.tplCacheMu.Unlock()
+	if s.tplCache == nil {
+		s.tplCache = map[string]tplCacheEntry{}
+	}
+	e, ok := s.tplCache[accountID]
+	if !ok || time.Since(e.at) > 10*time.Minute {
+		tpls, err := s.ListTemplates(accountID)
+		if err != nil {
+			return ""
+		}
+		byName := map[string]string{}
+		for _, t := range tpls {
+			byName[t.Name] = strings.ToUpper(t.Category)
+		}
+		e = tplCacheEntry{at: time.Now(), byName: byName}
+		s.tplCache[accountID] = e
+	}
+	return e.byName[name]
 }
 
 // ProcessInbound registra uma mensagem recebida: acha/cria o contato e a

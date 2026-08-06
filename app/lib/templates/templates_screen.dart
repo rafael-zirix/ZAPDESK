@@ -4,10 +4,15 @@ import 'package:provider/provider.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
 import '../models/message_template.dart';
+import 'template_editor.dart';
 import 'templates_controller.dart';
 
 class TemplatesScreen extends StatefulWidget {
-  const TemplatesScreen({super.key});
+  /// [usage] filtra a lista: 'chat' (mensagens do atendimento) ou 'campaign'
+  /// (disparo). Null mostra todos.
+  const TemplatesScreen({super.key, this.usage});
+
+  final String? usage;
 
   @override
   State<TemplatesScreen> createState() => _TemplatesScreenState();
@@ -27,7 +32,14 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       color: AppTheme.bg,
       child: Column(
         children: [
-          ListHeader(title: 'Modelos de mensagem', actionLabel: 'Novo modelo', onAction: () => _openForm(c)),
+          ListHeader(
+              title: switch (widget.usage) {
+                'campaign' => 'Modelos de campanha',
+                'chat' => 'Modelos de conversa',
+                _ => 'Modelos de mensagem',
+              },
+              actionLabel: 'Novo modelo',
+              onAction: () => _openForm(c)),
           const Divider(height: 1),
           Expanded(child: _body(c)),
         ],
@@ -42,11 +54,21 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       return _empty(Icons.article_outlined,
           'Nenhum modelo ainda.\nCrie modelos aprovados pela Meta para iniciar conversas fora da janela de 24h.');
     }
+    final list = widget.usage == null
+        ? c.templates
+        : c.templates.where((t) => t.usage == widget.usage).toList();
+    if (list.isEmpty) {
+      return _empty(
+          Icons.article_outlined,
+          widget.usage == 'campaign'
+              ? 'Nenhum modelo de campanha.\nCrie um aqui, ou mude o uso de um modelo existente para "Campanha".'
+              : 'Nenhum modelo de conversa.\nCrie um aqui para usar como mensagem pronta no atendimento.');
+    }
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: c.templates.length,
+      itemCount: list.length,
       separatorBuilder: (_, _) => const Divider(height: 1, indent: 20),
-      itemBuilder: (_, i) => _tile(c, c.templates[i]),
+      itemBuilder: (_, i) => _tile(c, list[i]),
     );
   }
 
@@ -70,7 +92,19 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(t.language, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
+          // Para que o modelo serve: campanha não aparece nas conversas.
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'chat', icon: Icon(Icons.forum_outlined, size: 16), tooltip: 'Usar nas conversas'),
+              ButtonSegment(value: 'campaign', icon: Icon(Icons.campaign_outlined, size: 16), tooltip: 'Usar em campanhas'),
+            ],
+            selected: {t.usage},
+            showSelectedIcon: false,
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            onSelectionChanged: (sel) => c.setUsage(t.name, sel.first),
+          ),
+          const SizedBox(width: 10),
           // Chave: aparecer ou não na conversa. Desabilitada p/ modelos não aprovados.
           Tooltip(
             message: canToggle
@@ -102,24 +136,16 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     );
   }
 
+  /// Editor completo: cabeçalho (texto/foto), variáveis com exemplos, rodapé e
+  /// botões — tudo enviado para a aprovação da Meta sem sair do sistema.
   Future<void> _openForm(TemplatesController c) async {
-    final ok = await showEntityForm(
-      context,
-      title: 'Novo modelo',
-      submitLabel: 'Enviar para aprovação',
-      fields: [
-        FieldSpec(key: 'title', label: 'Nome do modelo', hint: 'ex.: Saudação bom dia'),
-        FieldSpec(
-          key: 'category',
-          label: 'Categoria',
-          initial: 'UTILITY',
-          options: const [('UTILITY', 'Utilidade (atendimento)'), ('MARKETING', 'Marketing')],
-        ),
-        FieldSpec(key: 'body', label: 'Mensagem', hint: 'ex.: Olá, bom dia!'),
-      ],
-      onSubmit: (v) => c.create(title: v['title']!, body: v['body']!, category: v['category']!),
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (_) => const TemplateEditor(),
     );
-    if (ok && mounted) {
+    if (created == true && mounted) {
+      await c.load();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Modelo enviado. A Meta revisa em minutos a algumas horas — acompanhe o status aqui.')));
     }

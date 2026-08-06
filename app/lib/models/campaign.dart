@@ -51,6 +51,12 @@ class Campaign {
     required this.ratePerMin,
     required this.createdAt,
     required this.funnel,
+    this.params = const [],
+    this.imageUrl,
+    this.audience,
+    this.groupIds = const [],
+    this.tagId,
+    this.contactIds = const [],
   });
 
   final String id;
@@ -63,6 +69,12 @@ class Campaign {
   final int ratePerMin;
   final DateTime createdAt;
   final CampaignFunnel funnel;
+  final List<String> params; // valores das variáveis do modelo
+  final String? imageUrl;
+  final String? audience; // all | groups | tag | manual (p/ copiar)
+  final List<String> groupIds;
+  final String? tagId;
+  final List<String> contactIds;
 
   String get statusLabel => switch (status) {
         'scheduled' => 'Agendada',
@@ -86,6 +98,12 @@ class Campaign {
         ratePerMin: (j['rate_per_min'] as num?)?.toInt() ?? 12,
         createdAt: DateTime.tryParse(j['created_at'] ?? '')?.toLocal() ?? DateTime.now(),
         funnel: CampaignFunnel.fromJson((j['funnel'] as Map?)?.cast<String, dynamic>() ?? const {}),
+        params: ((j['params'] as List?) ?? const []).cast<String>(),
+        imageUrl: j['image_url'],
+        audience: j['audience'],
+        groupIds: ((j['group_ids'] as List?) ?? const []).cast<String>(),
+        tagId: j['tag_id'],
+        contactIds: ((j['contact_ids'] as List?) ?? const []).cast<String>(),
       );
 }
 

@@ -273,11 +273,11 @@ class InboxController extends ChangeNotifier {
   Future<void> loadTemplates() async {
     final r = await _api.get('/support/templates');
     if (r.ok && r.data is List) {
-      // Na barra de envio, só os APROVADOS e LIGADOS (os pendentes/rejeitados e
-      // os desligados aparecem/ajustam-se na tela de Modelos).
+      // Na barra de envio, só os APROVADOS, LIGADOS e de uso CONVERSA — modelo
+      // de campanha não aparece no atendimento (senão polui a barra).
       templates = (r.data as List)
           .map((e) => MessageTemplate.fromJson(e as Map<String, dynamic>))
-          .where((t) => t.isApproved && t.enabled)
+          .where((t) => t.isApproved && t.enabled && !t.isCampaign)
           .toList();
       notifyListeners();
     }

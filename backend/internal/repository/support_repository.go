@@ -209,12 +209,13 @@ func (r *SupportRepository) InsertMessage(m *models.SupportMessage) (*models.Sup
 	m.CreatedAt = now
 	err := r.db.QueryRow(`
 		INSERT INTO support_ticket_messages
-		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, internal, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, internal, template_name, template_category, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (account_id, external_id) WHERE external_id IS NOT NULL DO NOTHING
 		RETURNING id`,
 		m.AccountID, m.TicketID, m.Direction, m.Type, m.Content, m.MediaURL, m.MimeType,
-		m.FileName, m.Status, m.ExternalID, m.SenderID, m.Internal, now).Scan(&m.ID)
+		m.FileName, m.Status, m.ExternalID, m.SenderID, m.Internal,
+		m.TemplateName, m.TemplateCategory, now).Scan(&m.ID)
 	if err == sql.ErrNoRows {
 		return nil, nil // duplicata (idempotência): ignora
 	}
@@ -234,36 +235,46 @@ func (r *SupportRepository) ResetUnread(accountID, ticketID string) error {
 	return err
 }
 
-// GetPricing lê os preços da plataforma (0 se não definidos).
-func (r *SupportRepository) GetPricing() (conversation, per1kTokens float64, err error) {
-	rows, err := r.db.Query(`SELECT key, value FROM platform_settings WHERE key IN ('price_conversation','price_1k_tokens')`)
+// GetPriceMap lê todos os preços da plataforma (chave → valor).
+func (r *SupportRepository) GetPriceMap() (map[string]float64, error) {
+	rows, err := r.db.Query(`SELECT key, value FROM platform_settings WHERE key LIKE 'price_%'`)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
 	defer rows.Close()
+	out := map[string]float64{}
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
-			return 0, 0, err
+			return nil, err
 		}
 		f, _ := strconv.ParseFloat(v, 64)
-		switch k {
-		case "price_conversation":
-			conversation = f
-		case "price_1k_tokens":
-			per1kTokens = f
-		}
+		out[k] = f
 	}
-	return conversation, per1kTokens, rows.Err()
+	return out, rows.Err()
 }
 
-// SetPricing grava os preços da plataforma (upsert).
-func (r *SupportRepository) SetPricing(conversation, per1kTokens float64) error {
-	_, err := r.db.Exec(`
-		INSERT INTO platform_settings (key, value) VALUES ('price_conversation',$1),('price_1k_tokens',$2)
-		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-		strconv.FormatFloat(conversation, 'f', -1, 64), strconv.FormatFloat(per1kTokens, 'f', -1, 64))
-	return err
+// GetPricing devolve o preço por conversa e por 1k tokens (usado pelo billing,
+// que só precisa do preço da IA).
+func (r *SupportRepository) GetPricing() (conversation, per1kTokens float64, err error) {
+	m, err := r.GetPriceMap()
+	if err != nil {
+		return 0, 0, err
+	}
+	return m["price_conversation"], m["price_1k_tokens"], nil
+}
+
+// SetPriceMap grava os preços da plataforma (upsert de cada chave).
+func (r *SupportRepository) SetPriceMap(prices map[string]float64) error {
+	for k, v := range prices {
+		if _, err := r.db.Exec(`
+			INSERT INTO platform_settings (key, value) VALUES ($1,$2)
+			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+			k, strconv.FormatFloat(v, 'f', -1, 64)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetPackages lê os pacotes de recarga (valores em R$) que o cliente pode comprar.
@@ -349,6 +360,12 @@ type AccountUsageRow struct {
 	Templates     int
 	Media         int
 	Conversations int
+	// Cobrança da Meta: templates ENTREGUES por categoria (delivered/read/replied).
+	// "service" (atendimento na janela de 24h) é gratuito desde nov/2024.
+	Marketing      int
+	Utility        int
+	Authentication int
+	ServiceFree    int // conversas de atendimento (grátis) — informativo
 }
 
 // OnboardingStatus resume o progresso do primeiro acesso do cliente (checklist).
@@ -400,13 +417,37 @@ func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRo
 		  FROM support_ticket_messages
 		  WHERE created_at >= $1 AND created_at < $2 AND COALESCE(internal, false) = false
 		  GROUP BY account_id
+		),
+		bill AS (
+		  -- A Meta cobra por template ENTREGUE, com preço por categoria. Os
+		  -- disparos de campanha também viram mensagem na conversa, então esta
+		  -- única fonte cobre tudo (sem risco de contar em dobro).
+		  SELECT account_id,
+		    COUNT(*) FILTER (WHERE upper(template_category)='MARKETING') AS mkt,
+		    COUNT(*) FILTER (WHERE upper(template_category)='UTILITY') AS util,
+		    COUNT(*) FILTER (WHERE upper(template_category)='AUTHENTICATION') AS auth
+		  FROM support_ticket_messages
+		  WHERE created_at >= $1 AND created_at < $2
+		    AND template_category IS NOT NULL
+		    AND status IN ('delivered','read')
+		  GROUP BY account_id
+		),
+		svc AS (
+		  -- Conversas de atendimento (o cliente escreveu): gratuitas na Meta.
+		  SELECT account_id, COUNT(DISTINCT ticket_id) AS free_convs
+		  FROM support_ticket_messages
+		  WHERE created_at >= $1 AND created_at < $2 AND direction='in'
+		  GROUP BY account_id
 		)
 		SELECT a.id, a.name,
 		  COALESCE(m.out_count,0), COALESCE(m.in_count,0), COALESCE(m.tpl_count,0), COALESCE(m.media_count,0),
-		  COALESCE(c.conv_count,0)
+		  COALESCE(c.conv_count,0),
+		  COALESCE(b.mkt,0), COALESCE(b.util,0), COALESCE(b.auth,0), COALESCE(s.free_convs,0)
 		FROM accounts a
 		LEFT JOIN msg m ON m.account_id = a.id
 		LEFT JOIN conv c ON c.account_id = a.id
+		LEFT JOIN bill b ON b.account_id = a.id
+		LEFT JOIN svc s ON s.account_id = a.id
 		WHERE a.deleted_at IS NULL
 		ORDER BY a.name`, from, to)
 	if err != nil {
@@ -417,7 +458,8 @@ func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRo
 	for rows.Next() {
 		var u AccountUsageRow
 		if err := rows.Scan(&u.AccountID, &u.AccountName, &u.MessagesOut, &u.MessagesIn,
-			&u.Templates, &u.Media, &u.Conversations); err != nil {
+			&u.Templates, &u.Media, &u.Conversations,
+			&u.Marketing, &u.Utility, &u.Authentication, &u.ServiceFree); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -425,24 +467,39 @@ func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRo
 	return out, rows.Err()
 }
 
-// DisabledTemplateNames devolve o conjunto de nomes de modelos que a conta
-// DESLIGOU (para não aparecerem na barra de mensagens prontas). Ausência de
-// linha = habilitado.
-func (r *SupportRepository) DisabledTemplateNames(accountID string) (map[string]bool, error) {
-	rows, err := r.db.Query(`SELECT name FROM support_template_prefs WHERE account_id=$1 AND enabled=false`, accountID)
+// TemplatePref é a preferência da empresa para um modelo.
+type TemplatePref struct {
+	Enabled bool
+	Usage   string // "chat" | "campaign" | "" (não definido → decide pela categoria)
+}
+
+// TemplatePrefs devolve as preferências por nome de modelo. Ausência de linha
+// significa habilitado e uso indefinido.
+func (r *SupportRepository) TemplatePrefs(accountID string) (map[string]TemplatePref, error) {
+	rows, err := r.db.Query(`SELECT name, enabled, COALESCE(usage,'') FROM support_template_prefs WHERE account_id=$1`, accountID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	out := map[string]TemplatePref{}
 	for rows.Next() {
 		var n string
-		if err := rows.Scan(&n); err != nil {
+		var p TemplatePref
+		if err := rows.Scan(&n, &p.Enabled, &p.Usage); err != nil {
 			return nil, err
 		}
-		out[n] = true
+		out[n] = p
 	}
 	return out, rows.Err()
+}
+
+// SetTemplateUsage define para que o modelo serve (chat | campaign).
+func (r *SupportRepository) SetTemplateUsage(accountID, name, usage string) error {
+	_, err := r.db.Exec(`
+		INSERT INTO support_template_prefs (account_id, name, enabled, usage) VALUES ($1,$2,true,$3)
+		ON CONFLICT (account_id, name) DO UPDATE SET usage=EXCLUDED.usage`,
+		accountID, name, usage)
+	return err
 }
 
 // SetTemplateEnabled liga/desliga um modelo na barra de mensagens prontas (upsert).
@@ -544,4 +601,22 @@ func (r *SupportRepository) ContactPhone(ticketID string) (string, error) {
 	err := r.db.QueryRow(`SELECT c.phone FROM support_tickets t
 		JOIN support_contacts c ON c.id=t.contact_id WHERE t.id=$1`, ticketID).Scan(&phone)
 	return phone, err
+}
+
+// GetSetting lê uma configuração da plataforma (vazio se não existir).
+func (r *SupportRepository) GetSetting(key string) (string, error) {
+	var v string
+	err := r.db.QueryRow(`SELECT value FROM platform_settings WHERE key=$1`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetSetting grava uma configuração da plataforma (upsert).
+func (r *SupportRepository) SetSetting(key, value string) error {
+	_, err := r.db.Exec(`
+		INSERT INTO platform_settings (key, value) VALUES ($1,$2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, key, value)
+	return err
 }

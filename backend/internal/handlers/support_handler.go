@@ -14,10 +14,19 @@ import (
 	"zapdesk/internal/services"
 )
 
-type SupportHandler struct{ support *services.SupportService }
+type SupportHandler struct {
+	support *services.SupportService
+	aiModel string // modelo de IA em uso (marca o ativo na tabela de custos)
+}
 
 func NewSupportHandler(support *services.SupportService) *SupportHandler {
 	return &SupportHandler{support: support}
+}
+
+// WithAIModel informa qual modelo de IA está configurado na plataforma.
+func (h *SupportHandler) WithAIModel(model string) *SupportHandler {
+	h.aiModel = model
+	return h
 }
 
 // ListTickets devolve as conversas da conta (inbox).
@@ -498,6 +507,22 @@ func (h *SupportHandler) CreateTemplate(c *gin.Context) {
 		return
 	}
 	RespondSuccess(c, http.StatusCreated, "Modelo enviado para aprovação", gin.H{"status": status})
+}
+
+// SetTemplateUsage define se o modelo serve à conversa ou à campanha.
+func (h *SupportHandler) SetTemplateUsage(c *gin.Context) {
+	var req struct {
+		Usage string `json:"usage" binding:"required,oneof=chat campaign"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Uso inválido", err.Error())
+		return
+	}
+	if err := h.support.SetTemplateUsage(middleware.AccountID(c), c.Param("name"), req.Usage); err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao salvar", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Uso do modelo atualizado", gin.H{"usage": req.Usage})
 }
 
 // --- Contatos ---

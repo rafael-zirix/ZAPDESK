@@ -648,7 +648,7 @@ class _ConversationPane extends StatelessWidget {
                 Text(t.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 Text(
                   [
-                    t.contactPhone,
+                    t.prettyPhone,
                     if (t.assignedUserName != null) t.assignedUserName!,
                     if (t.sectorName != null) t.sectorName!,
                   ].join(' · '),

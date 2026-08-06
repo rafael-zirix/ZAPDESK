@@ -37,7 +37,7 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
           // Com número já conectado, o guia continua a um clique — para incluir
           // um número NOVO pelo mesmo passo a passo da Meta.
           ListHeader(
-              title: 'WhatsApp',
+              title: 'Telefones',
               actionLabel: c.numbers.isEmpty ? 'Conectar número' : 'Conectar novo número',
               onAction: () => _openConnect(c)),
           const Divider(height: 1),

@@ -1,11 +1,21 @@
+import '../core/phone.dart' show formatPhone;
+import 'support.dart' show TicketTag;
+
 /// Um contato (cliente final) da empresa.
 class Contact {
-  Contact({required this.id, required this.phone, this.name, this.groups = const []});
+  Contact({
+    required this.id,
+    required this.phone,
+    this.name,
+    this.groups = const [],
+    this.tags = const [],
+  });
 
   final String id;
   final String phone;
   final String? name;
   List<ContactGroupRef> groups; // grupos de marketing (mutável p/ atualizar em lugar)
+  List<TicketTag> tags; // etiquetas do contato (filtro de campanha)
 
   String get displayName => (name != null && name!.isNotEmpty) ? name! : phone;
 
@@ -18,16 +28,7 @@ class Contact {
   }
 
   /// Telefone formatado para exibição: +55 (21) 99333-9504 quando possível.
-  String get prettyPhone {
-    final d = phone.replaceAll(RegExp(r'\D'), '');
-    if (d.length == 13) {
-      return '+${d.substring(0, 2)} (${d.substring(2, 4)}) ${d.substring(4, 9)}-${d.substring(9)}';
-    }
-    if (d.length == 12) {
-      return '+${d.substring(0, 2)} (${d.substring(2, 4)}) ${d.substring(4, 8)}-${d.substring(8)}';
-    }
-    return phone;
-  }
+  String get prettyPhone => formatPhone(phone);
 
   factory Contact.fromJson(Map<String, dynamic> j) => Contact(
         id: j['id'] ?? '',
@@ -35,6 +36,9 @@ class Contact {
         name: j['name'],
         groups: ((j['groups'] as List?) ?? const [])
             .map((e) => ContactGroupRef.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        tags: ((j['tags'] as List?) ?? const [])
+            .map((e) => TicketTag.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 }

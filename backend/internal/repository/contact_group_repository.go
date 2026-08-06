@@ -89,6 +89,36 @@ func (r *SupportRepository) SetContactGroups(accountID, contactID string, groupI
 	return tx.Commit()
 }
 
+// SetContactTags substitui as etiquetas de um contato (valida a conta no INSERT).
+func (r *SupportRepository) SetContactTags(accountID, contactID string, tagIDs []string) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`
+		DELETE FROM contact_tags ct USING support_contacts c
+		WHERE ct.contact_id = c.id AND c.id=$1 AND c.account_id=$2`, contactID, accountID); err != nil {
+		return err
+	}
+	for _, tid := range tagIDs {
+		if _, err := tx.Exec(`
+			INSERT INTO contact_tags (contact_id, tag_id)
+			SELECT c.id, t.id FROM support_contacts c, support_tags t
+			WHERE c.id=$1::uuid AND c.account_id=$3 AND t.id=$2::uuid AND t.account_id=$3
+			ON CONFLICT DO NOTHING`, contactID, tid, accountID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// contactTagsJSON agrega as etiquetas do contato como JSON.
+const contactTagsJSON = `COALESCE((
+	SELECT json_agg(json_build_object('id', tg.id, 'name', tg.name, 'color', tg.color) ORDER BY tg.name)
+	FROM contact_tags ctg JOIN support_tags tg ON tg.id = ctg.tag_id
+	WHERE ctg.contact_id = sc.id), '[]')`
+
 // contactGroupsJSON agrega os grupos do contato como JSON (subquery da listagem).
 const contactGroupsJSON = `COALESCE((
 	SELECT json_agg(json_build_object('id', g.id, 'name', g.name) ORDER BY g.name)
@@ -98,7 +128,8 @@ const contactGroupsJSON = `COALESCE((
 // ListContactsWithGroups devolve os contatos visíveis ao usuário com os grupos.
 func (r *SupportRepository) ListContactsWithGroups(accountID, userID string) ([]models.SupportContact, error) {
 	rows, err := r.db.Query(`
-		SELECT sc.id, sc.account_id, sc.phone, sc.name, sc.created_at, sc.updated_at, `+contactGroupsJSON+`
+		SELECT sc.id, sc.account_id, sc.phone, sc.name, sc.created_at, sc.updated_at,
+		       `+contactGroupsJSON+`, `+contactTagsJSON+`
 		FROM support_contacts sc
 		WHERE sc.account_id=$1 AND (sc.owner_user_id = $2::uuid OR sc.owner_user_id IS NULL)
 		ORDER BY COALESCE(sc.name,'~'), sc.phone`, accountID, userID)
@@ -109,11 +140,12 @@ func (r *SupportRepository) ListContactsWithGroups(accountID, userID string) ([]
 	out := make([]models.SupportContact, 0)
 	for rows.Next() {
 		var c models.SupportContact
-		var groups []byte
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Phone, &c.Name, &c.CreatedAt, &c.UpdatedAt, &groups); err != nil {
+		var groups, tags []byte
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Phone, &c.Name, &c.CreatedAt, &c.UpdatedAt, &groups, &tags); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(groups, &c.Groups)
+		_ = json.Unmarshal(tags, &c.Tags)
 		out = append(out, c)
 	}
 	return out, rows.Err()
