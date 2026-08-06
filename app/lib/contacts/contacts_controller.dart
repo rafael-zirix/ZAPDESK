@@ -36,20 +36,27 @@ class ContactsController extends ChangeNotifier {
   }
 
   /// Importa vários contatos (nome/telefone), criando um a um. Duplicados e
-  /// falhas são apenas ignorados. Retorna (importados, ignorados).
-  Future<(int, int)> importContacts(List<({String name, String phone})> items) async {
+  /// falhas são apenas ignorados. Com [groupId], vincula TODOS os telefones do
+  /// arquivo ao grupo (criados e já existentes). Retorna (importados, ignorados).
+  Future<(int, int)> importContacts(List<({String name, String phone})> items, {String? groupId}) async {
     var ok = 0, skipped = 0;
+    final phones = <String>[];
     for (final it in items) {
       if (it.phone.trim().isEmpty) {
         skipped++;
         continue;
       }
+      phones.add(it.phone);
       final r = await _api.post('/contacts', {'name': it.name, 'phone': it.phone});
       if (r.ok) {
         ok++;
       } else {
         skipped++;
       }
+    }
+    if (groupId != null && phones.isNotEmpty) {
+      await _api.post('/contact-groups/$groupId/members', {'phones': phones});
+      await loadGroups();
     }
     await load();
     return (ok, skipped);
@@ -63,5 +70,64 @@ class ContactsController extends ChangeNotifier {
       return null;
     }
     return r.message ?? 'Não foi possível excluir o contato';
+  }
+
+  // --- Grupos de contatos (listas de marketing) ---
+
+  List<ContactGroup> groups = [];
+  String? groupFilter; // id do grupo (null = todos)
+
+  /// Contatos após o filtro por grupo.
+  List<Contact> get filtered => groupFilter == null
+      ? contacts
+      : contacts.where((c) => c.groups.any((g) => g.id == groupFilter)).toList();
+
+  void setGroupFilter(String? id) {
+    groupFilter = id;
+    notifyListeners();
+  }
+
+  Future<void> loadGroups() async {
+    final r = await _api.get('/contact-groups');
+    if (r.ok && r.data is List) {
+      groups = (r.data as List).map((e) => ContactGroup.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
+  /// Cria/renomeia/exclui grupo. Null em sucesso, ou o erro.
+  Future<String?> saveGroup({String? id, required String name}) async {
+    final r = id == null
+        ? await _api.post('/contact-groups', {'name': name})
+        : await _api.put('/contact-groups/$id', {'name': name});
+    if (r.ok) {
+      await loadGroups();
+      return null;
+    }
+    return r.message ?? 'Não foi possível salvar o grupo';
+  }
+
+  Future<String?> removeGroup(String id) async {
+    final r = await _api.delete('/contact-groups/$id');
+    if (r.ok) {
+      if (groupFilter == id) groupFilter = null;
+      await loadGroups();
+      await load();
+      return null;
+    }
+    return r.message ?? 'Não foi possível excluir o grupo';
+  }
+
+  /// Substitui os grupos de um contato. Null em sucesso, ou o erro.
+  Future<String?> setContactGroups(Contact ct, List<String> groupIds) async {
+    final r = await _api.put('/contacts/${ct.id}/groups', {'group_ids': groupIds});
+    if (r.ok && r.data is Map) {
+      final updated = Contact.fromJson(r.data as Map<String, dynamic>);
+      ct.groups = updated.groups;
+      notifyListeners();
+      loadGroups(); // atualiza as contagens
+      return null;
+    }
+    return r.message ?? 'Não foi possível salvar';
   }
 }

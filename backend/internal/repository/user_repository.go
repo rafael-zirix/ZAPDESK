@@ -12,13 +12,13 @@ type UserRepository struct{ db *sql.DB }
 
 func NewUserRepository(db *sql.DB) *UserRepository { return &UserRepository{db: db} }
 
-const userColumns = `id, account_id, full_name, email, phone, role, is_active, created_at, updated_at, deleted_at`
+const userColumns = `id, account_id, full_name, email, phone, role, is_active, COALESCE(presence,'available'), created_at, updated_at, deleted_at`
 
 func scanUser(row interface{ Scan(...any) error }) (*models.User, error) {
 	var u models.User
 	var accountID sql.NullString // super-admin da plataforma não tem conta
 	if err := row.Scan(&u.ID, &accountID, &u.FullName, &u.Email, &u.Phone,
-		&u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt); err != nil {
+		&u.Role, &u.IsActive, &u.Presence, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt); err != nil {
 		return nil, err
 	}
 	u.AccountID = accountID.String

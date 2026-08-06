@@ -349,6 +349,96 @@ class ConversationController extends ChangeNotifier {
     return r.ok;
   }
 
+  // --- Fase 1 de atendimento: assumir, transferir, status e histórico ---
+
+  /// Assume a conversa (puxa para si). Devolve o item atualizado ou null.
+  Future<TicketListItem?> claim() async {
+    final r = await _api.post('/support/tickets/${ticket.id}/claim');
+    if (r.ok && r.data is Map) {
+      final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
+      ticket.applyFrom(t);
+      notifyListeners();
+      return t;
+    }
+    return null;
+  }
+
+  /// Transfere para outro atendente e/ou setor (com nota). Null em falha.
+  Future<TicketListItem?> transfer({String? userId, String? sectorId, String note = ''}) async {
+    final r = await _api.post('/support/tickets/${ticket.id}/transfer', {
+      'user_id': ?userId,
+      'sector_id': ?sectorId,
+      if (note.isNotEmpty) 'note': note,
+    });
+    if (r.ok && r.data is Map) {
+      final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
+      ticket.applyFrom(t);
+      notifyListeners();
+      return t;
+    }
+    return null;
+  }
+
+  /// Muda o status (resolver/fechar/reabrir/aguardando). Null em falha.
+  Future<TicketListItem?> setStatus(String status, {String note = ''}) async {
+    final r = await _api.put('/support/tickets/${ticket.id}/status',
+        {'status': status, if (note.isNotEmpty) 'note': note});
+    if (r.ok && r.data is Map) {
+      final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
+      ticket.applyFrom(t);
+      notifyListeners();
+      return t;
+    }
+    return null;
+  }
+
+  /// Carrega a timeline (transferências, status, notas) da conversa.
+  Future<List<TicketEvent>> loadEvents() async {
+    final r = await _api.get('/support/tickets/${ticket.id}/events');
+    if (r.ok && r.data is List) {
+      return (r.data as List).map((e) => TicketEvent.fromJson(e as Map<String, dynamic>)).toList();
+    }
+    return const [];
+  }
+
+  /// Modo NOTA INTERNA do compositor: envia como nota (equipe), não ao cliente.
+  bool noteMode = false;
+
+  void toggleNoteMode() {
+    noteMode = !noteMode;
+    notifyListeners();
+  }
+
+  /// Grava a nota interna que está no compositor. Retorna false em falha.
+  Future<bool> sendNote() async {
+    final text = composer.text.trim();
+    if (text.isEmpty) return false;
+    composer.clear();
+    sending = true;
+    notifyListeners();
+    final r = await _api.post('/support/tickets/${ticket.id}/notes', {'content': text});
+    sending = false;
+    if (r.ok && r.data != null) {
+      messages = [...messages, Message.fromJson(r.data as Map<String, dynamic>)];
+      notifyListeners();
+      return true;
+    }
+    notifyListeners();
+    return false;
+  }
+
+  /// Substitui as etiquetas da conversa. Devolve o item atualizado ou null.
+  Future<TicketListItem?> setTags(List<String> tagIds) async {
+    final r = await _api.put('/support/tickets/${ticket.id}/tags', {'tag_ids': tagIds});
+    if (r.ok && r.data is Map) {
+      final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
+      ticket.applyFrom(t);
+      notifyListeners();
+      return t;
+    }
+    return null;
+  }
+
   @override
   void dispose() {
     _poll?.cancel();

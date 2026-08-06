@@ -18,6 +18,7 @@ type User struct {
 	Phone     *string
 	Role      string
 	IsActive  bool
+	Presence  string // available | away (informativo; insumo da distribuição futura)
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt *time.Time
@@ -55,6 +56,7 @@ type UserResponse struct {
 	Phone     *string   `json:"phone,omitempty"`
 	Role      string    `json:"role"`
 	IsActive  bool      `json:"is_active"`
+	Presence  string    `json:"presence"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -68,6 +70,7 @@ func (u *User) ToResponse() UserResponse {
 		Phone:     u.Phone,
 		Role:      u.Role,
 		IsActive:  u.IsActive,
+		Presence:  u.Presence,
 		CreatedAt: u.CreatedAt,
 	}
 }

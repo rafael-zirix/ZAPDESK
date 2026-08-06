@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api_client.dart';
+import '../models/app_user.dart';
 import '../models/contact.dart';
 import '../models/message_template.dart';
 import '../models/support.dart';
@@ -21,6 +22,139 @@ class InboxController extends ChangeNotifier {
   List<TicketListItem> tickets = [];
   bool loadingTickets = false;
   String? ticketsError;
+
+  // --- Filtros da lista (Fase 1 de atendimento) ---
+  /// 'all' | 'mine' | 'open' | 'pending' | 'resolved' | 'closed'
+  String statusFilter = 'all';
+  String? sectorFilter; // id do setor (null = todos)
+  String? myUserId; // preenchido pela tela (p/ o filtro "Minhas")
+
+  void setStatusFilter(String f) {
+    statusFilter = f;
+    notifyListeners();
+  }
+
+  void setSectorFilter(String? id) {
+    sectorFilter = id;
+    notifyListeners();
+  }
+
+  /// Conversas após aplicar os filtros. Fechadas só aparecem no filtro delas.
+  List<TicketListItem> get filteredTickets => tickets.where((t) {
+        if (sectorFilter != null && t.sectorId != sectorFilter) return false;
+        switch (statusFilter) {
+          case 'mine':
+            return t.assignedUserId == myUserId && t.status != 'closed';
+          case 'open':
+            return t.status == 'open';
+          case 'pending':
+            return t.status == 'pending';
+          case 'resolved':
+            return t.status == 'resolved';
+          case 'closed':
+            return t.status == 'closed';
+          default:
+            return t.status != 'closed';
+        }
+      }).toList();
+
+  // Setores e equipe (para transferir e para o filtro por setor).
+  List<Sector> sectors = [];
+  List<AppUser> team = [];
+
+  Future<void> loadSectors() async {
+    final r = await _api.get('/support/sectors');
+    if (r.ok && r.data is List) {
+      sectors = (r.data as List).map((e) => Sector.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadTeam() async {
+    final r = await _api.get('/users');
+    if (r.ok && r.data is List) {
+      team = (r.data as List).map((e) => AppUser.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
+  // Respostas rápidas e etiquetas da empresa.
+  List<QuickReply> quickReplies = [];
+  List<TicketTag> tags = [];
+
+  Future<void> loadQuickReplies() async {
+    final r = await _api.get('/support/quick-replies');
+    if (r.ok && r.data is List) {
+      quickReplies = (r.data as List).map((e) => QuickReply.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadTags() async {
+    final r = await _api.get('/support/tags');
+    if (r.ok && r.data is List) {
+      tags = (r.data as List).map((e) => TicketTag.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
+  /// Cria uma etiqueta e devolve-a (null em falha).
+  Future<TicketTag?> createTag(String name) async {
+    final r = await _api.post('/support/tags', {'name': name});
+    if (r.ok && r.data is Map) {
+      final t = TicketTag.fromJson(r.data as Map<String, dynamic>);
+      tags = [...tags, t]..sort((a, b) => a.name.compareTo(b.name));
+      notifyListeners();
+      return t;
+    }
+    return null;
+  }
+
+  /// Cria/edita/apaga resposta rápida. Devolve null em sucesso ou o erro.
+  Future<String?> saveQuickReply({String? id, required String shortcut, required String content}) async {
+    final body = {'shortcut': shortcut, 'content': content};
+    final r = id == null
+        ? await _api.post('/support/quick-replies', body)
+        : await _api.put('/support/quick-replies/$id', body);
+    if (r.ok) {
+      await loadQuickReplies();
+      return null;
+    }
+    return r.message ?? 'Não foi possível salvar';
+  }
+
+  Future<String?> deleteQuickReply(String id) async {
+    final r = await _api.delete('/support/quick-replies/$id');
+    if (r.ok) {
+      await loadQuickReplies();
+      return null;
+    }
+    return r.message ?? 'Não foi possível excluir';
+  }
+
+  /// Pega o próximo da fila (aberto sem dono). Devolve o erro, ou null e abre a conversa.
+  Future<String?> claimNext() async {
+    final r = await _api.post('/support/tickets/claim-next',
+        sectorFilter != null ? {'sector_id': sectorFilter} : null);
+    if (r.ok && r.data is Map) {
+      final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
+      applyTicketUpdate(t);
+      final idx = tickets.indexWhere((x) => x.id == t.id);
+      openTicket(idx >= 0 ? tickets[idx] : t);
+      return null;
+    }
+    return r.message ?? 'Fila vazia';
+  }
+
+  /// Aplica numa conversa da lista os campos devolvidos por claim/transfer/status.
+  void applyTicketUpdate(TicketListItem updated) {
+    final idx = tickets.indexWhere((t) => t.id == updated.id);
+    if (idx >= 0) tickets[idx].applyFrom(updated);
+    for (final c in open) {
+      if (c.ticket.id == updated.id) c.ticket.applyFrom(updated);
+    }
+    notifyListeners();
+  }
 
   /// Quantos painéis o usuário quer ver ao mesmo tempo (1..4).
   int paneCount = 1;
@@ -115,6 +249,10 @@ class InboxController extends ChangeNotifier {
     if (ticketsError == null) await _restore(); // reabre os painéis de antes do reload
     loadTemplates();
     loadAIState();
+    loadSectors();
+    loadTeam();
+    loadQuickReplies();
+    loadTags();
   }
 
   // Atendente IA da conta: define se o controle de IA aparece no header das

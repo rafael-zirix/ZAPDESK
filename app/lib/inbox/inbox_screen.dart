@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/auth_controller.dart';
 import '../core/config.dart';
 import '../core/file_pick.dart';
 import '../core/geolocation.dart';
 import '../core/theme.dart';
 import '../core/theme_controller.dart';
 import '../core/url_open.dart';
+import '../models/app_user.dart';
 import '../models/contact.dart';
 import '../models/message_template.dart';
 import '../models/support.dart';
@@ -28,6 +30,7 @@ class _InboxScreenState extends State<InboxScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final inbox = context.read<InboxController>();
+      inbox.myUserId = context.read<AuthController>().me?.id; // p/ o filtro "Minhas"
       inbox.loadTickets();
       inbox.startPolling();
     });
@@ -62,6 +65,7 @@ class _InboxScreenState extends State<InboxScreen> {
               onClose: inbox.closeAll,
               templates: inbox.templates,
               showBack: true,
+              inbox: inbox,
             );
     }
 
@@ -152,6 +156,7 @@ class _InboxScreenState extends State<InboxScreen> {
             onSelect: multi ? () => inbox.selectPane(i) : null,
             aiEnabled: inbox.aiEnabled,
             accent: multi ? _paneColors[i % _paneColors.length] : null,
+            inbox: inbox,
           )
         : _emptySlot();
     if (!multi) return pane;
@@ -213,6 +218,16 @@ class _InboxScreenState extends State<InboxScreen> {
               children: [
                 const Text('Conversas', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                 const Spacer(),
+                IconButton(
+                  onPressed: () async {
+                    final err = await inbox.claimNext();
+                    if (err != null && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                    }
+                  },
+                  tooltip: 'Pegar o próximo da fila (sem atendente)',
+                  icon: const Icon(Icons.playlist_add_check_circle_outlined, color: AppTheme.seed, size: 24),
+                ),
                 IconButton.filled(
                   onPressed: () => _newConversation(inbox),
                   tooltip: 'Nova conversa',
@@ -222,9 +237,68 @@ class _InboxScreenState extends State<InboxScreen> {
               ],
             ),
           ),
+          _filtersBar(inbox),
           const Divider(height: 1),
           Expanded(child: _listBody(inbox)),
         ],
+      ),
+    );
+  }
+
+  // Filtros da lista: status (chips) + setor (menu). "Fechadas" só aparecem
+  // escolhendo o filtro delas.
+  Widget _filtersBar(InboxController inbox) {
+    Widget chip(String label, String value) {
+      final sel = inbox.statusFilter == value;
+      return Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: ChoiceChip(
+          label: Text(label, style: TextStyle(fontSize: 12, fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
+          selected: sel,
+          onSelected: (_) => inbox.setStatusFilter(value),
+          selectedColor: AppTheme.seed.withValues(alpha: 0.18),
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      );
+    }
+
+    final sector = inbox.sectors.where((s) => s.id == inbox.sectorFilter).toList();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            chip('Todas', 'all'),
+            chip('Minhas', 'mine'),
+            chip('Novas/abertas', 'open'),
+            chip('Aguardando', 'pending'),
+            chip('Resolvidas', 'resolved'),
+            chip('Fechadas', 'closed'),
+            if (inbox.sectors.isNotEmpty)
+              PopupMenuButton<String?>(
+                tooltip: 'Filtrar por setor',
+                onSelected: (v) => inbox.setSectorFilter(v == '' ? null : v),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: '', child: Text('Todos os setores')),
+                  for (final s in inbox.sectors) PopupMenuItem(value: s.id, child: Text(s.name)),
+                ],
+                child: Chip(
+                  avatar: Icon(Icons.workspaces_outline, size: 15,
+                      color: inbox.sectorFilter != null ? AppTheme.seed : Colors.grey.shade600),
+                  label: Text(sector.isEmpty ? 'Setor' : sector.first.name,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: inbox.sectorFilter != null ? FontWeight.w700 : FontWeight.w500,
+                          color: inbox.sectorFilter != null ? AppTheme.seed : null)),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -239,15 +313,49 @@ class _InboxScreenState extends State<InboxScreen> {
     if (inbox.tickets.isEmpty) {
       return _center(Icons.forum_outlined, 'Nenhuma conversa ainda.\nQuando um cliente mandar mensagem, ela aparece aqui.');
     }
+    final list = inbox.filteredTickets;
+    if (list.isEmpty) {
+      return _center(Icons.filter_alt_outlined, 'Nenhuma conversa neste filtro.');
+    }
     return RefreshIndicator(
       onRefresh: inbox.loadTickets,
       child: ListView.separated(
-        itemCount: inbox.tickets.length,
+        itemCount: list.length,
         separatorBuilder: (_, _) => const Divider(height: 1, indent: 76),
-        itemBuilder: (_, i) => _ticketTile(inbox, inbox.tickets[i]),
+        itemBuilder: (_, i) => _ticketTile(inbox, list[i]),
       ),
     );
   }
+
+  // Chip compacto de etiqueta na lista (cor da etiqueta + nome curto).
+  Widget _tagDot(TicketTag tag) {
+    final color = _hexColor(tag.color);
+    return Container(
+      margin: const EdgeInsets.only(left: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.8),
+      ),
+      child: Text(tag.name, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+    );
+  }
+
+  static Color _hexColor(String hex) {
+    final h = hex.replaceAll('#', '');
+    final v = int.tryParse(h.length == 6 ? 'FF$h' : h, radix: 16);
+    return v != null ? Color(v) : AppTheme.seed;
+  }
+
+  // Cor do status no chip da lista/painel.
+  static Color statusColor(TicketListItem t) => switch (t.status) {
+        'open' => t.assignedUserId == null ? const Color(0xFFCA8A04) : const Color(0xFF2563EB),
+        'pending' => const Color(0xFF7C3AED),
+        'resolved' => const Color(0xFF1F9D57),
+        'closed' => Colors.grey,
+        _ => Colors.grey,
+      };
 
   Widget _ticketTile(InboxController inbox, TicketListItem t) {
     // Se a conversa está aberta num painel, o contato na lista ganha a MESMA cor
@@ -315,14 +423,39 @@ class _InboxScreenState extends State<InboxScreen> {
                           child: Text(t.unreadCount > 99 ? '99+' : '${t.unreadCount}',
                               style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
                         )
-                      else if (t.status == 'open')
+                      else
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(color: AppTheme.seed.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
-                          child: const Text('aberta', style: TextStyle(fontSize: 11, color: AppTheme.seed, fontWeight: FontWeight.w600)),
+                          decoration: BoxDecoration(
+                              color: statusColor(t).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10)),
+                          child: Text(t.statusLabel,
+                              style: TextStyle(fontSize: 11, color: statusColor(t), fontWeight: FontWeight.w600)),
                         ),
                     ],
                   ),
+                  if (t.assignedUserName != null || t.sectorName != null || t.tags.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(t.assignedUserName != null ? Icons.headset_mic_outlined : Icons.workspaces_outline,
+                            size: 12, color: Colors.grey.shade500),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            [
+                              if (t.assignedUserName != null) t.assignedUserName!,
+                              if (t.sectorName != null) t.sectorName!,
+                            ].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                          ),
+                        ),
+                        for (final tag in t.tags.take(3)) _tagDot(tag),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -374,6 +507,7 @@ class _ConversationPane extends StatelessWidget {
     this.onSelect,
     this.aiEnabled = false,
     this.accent,
+    this.inbox,
   });
 
   final ConversationController conv;
@@ -384,6 +518,7 @@ class _ConversationPane extends StatelessWidget {
   final VoidCallback? onSelect;
   final bool aiEnabled; // Atendente IA ligado na empresa → mostra o toggle no header
   final Color? accent; // cor-identidade do painel (multi) — tinge o cabeçalho e o avatar
+  final InboxController? inbox; // setores/equipe p/ transferir + espelhar updates na lista
 
   @override
   Widget build(BuildContext context) {
@@ -511,12 +646,23 @@ class _ConversationPane extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(t.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                Text(t.contactPhone, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                Text(
+                  [
+                    t.contactPhone,
+                    if (t.assignedUserName != null) t.assignedUserName!,
+                    if (t.sectorName != null) t.sectorName!,
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
               ],
             ),
           ),
+          _statusChip(),
           if (aiEnabled) _aiToggle(),
           _windowChip(),
+          _actionsMenu(context),
           if (!showBack)
             IconButton(
               icon: const Icon(Icons.close, size: 20),
@@ -524,6 +670,160 @@ class _ConversationPane extends StatelessWidget {
               onPressed: onClose,
             ),
         ],
+      ),
+    );
+  }
+
+  /// Chip com o status atual da conversa (Novo / Em atendimento / Aguardando…).
+  Widget _statusChip() {
+    final t = conv.ticket;
+    final color = _InboxScreenState.statusColor(t);
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(t.statusLabel, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+    );
+  }
+
+  /// Menu de ações da Fase 1: assumir, transferir, mudar status e histórico.
+  Widget _actionsMenu(BuildContext context) {
+    final t = conv.ticket;
+    final closed = t.status == 'closed';
+    return PopupMenuButton<String>(
+      tooltip: 'Ações da conversa',
+      icon: const Icon(Icons.more_vert, size: 20),
+      onSelected: (v) => _runAction(context, v),
+      itemBuilder: (_) => [
+        if (!closed) ...[
+          const PopupMenuItem(
+              value: 'claim',
+              child: ListTile(leading: Icon(Icons.pan_tool_alt_outlined), title: Text('Assumir conversa'), dense: true)),
+          const PopupMenuItem(
+              value: 'transfer',
+              child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Transferir…'), dense: true)),
+          const PopupMenuDivider(),
+          if (t.status != 'pending')
+            const PopupMenuItem(
+                value: 'pending',
+                child: ListTile(leading: Icon(Icons.hourglass_empty), title: Text('Aguardando cliente'), dense: true)),
+          if (t.status != 'resolved')
+            const PopupMenuItem(
+                value: 'resolved',
+                child: ListTile(leading: Icon(Icons.task_alt), title: Text('Marcar como resolvida'), dense: true)),
+          const PopupMenuItem(
+              value: 'closed',
+              child: ListTile(leading: Icon(Icons.lock_outline), title: Text('Fechar conversa'), dense: true)),
+        ] else
+          const PopupMenuItem(
+              value: 'open',
+              child: ListTile(leading: Icon(Icons.lock_open_outlined), title: Text('Reabrir conversa'), dense: true)),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+            value: 'tags',
+            child: ListTile(leading: Icon(Icons.label_outline), title: Text('Etiquetas…'), dense: true)),
+        const PopupMenuItem(
+            value: 'events',
+            child: ListTile(leading: Icon(Icons.history), title: Text('Histórico da conversa'), dense: true)),
+      ],
+    );
+  }
+
+  Future<void> _runAction(BuildContext context, String action) async {
+    TicketListItem? updated;
+    switch (action) {
+      case 'claim':
+        updated = await conv.claim();
+      case 'transfer':
+        await _transferDialog(context);
+        return;
+      case 'pending':
+      case 'resolved':
+      case 'open':
+      case 'closed':
+        updated = await conv.setStatus(action);
+      case 'tags':
+        await _tagsDialog(context);
+        return;
+      case 'events':
+        await _showEvents(context);
+        return;
+    }
+    if (updated != null) {
+      inbox?.applyTicketUpdate(updated);
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível concluir a ação')));
+    }
+  }
+
+  Future<void> _transferDialog(BuildContext context) async {
+    final result = await showDialog<({String? userId, String? sectorId, String note})>(
+      context: context,
+      builder: (_) => _TransferDialog(
+        team: inbox?.team ?? const [],
+        sectors: inbox?.sectors ?? const [],
+        currentUserId: conv.ticket.assignedUserId,
+        currentSectorId: conv.ticket.sectorId,
+      ),
+    );
+    if (result == null) return;
+    final updated = await conv.transfer(userId: result.userId, sectorId: result.sectorId, note: result.note);
+    if (updated != null) {
+      inbox?.applyTicketUpdate(updated);
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível transferir')));
+    }
+  }
+
+  Future<void> _showEvents(BuildContext context) async {
+    final events = await conv.loadEvents();
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Histórico — ${conv.ticket.protocol}'),
+        content: SizedBox(
+          width: 420,
+          child: events.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('Nenhum evento ainda.\nTransferências e mudanças de status aparecem aqui.'),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: events.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final e = events[i];
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(
+                        switch (e.kind) {
+                          'assigned' => Icons.pan_tool_alt_outlined,
+                          'transferred' => Icons.swap_horiz,
+                          'status_changed' => Icons.flag_outlined,
+                          'reopened' => Icons.replay,
+                          _ => Icons.notes,
+                        },
+                        size: 18,
+                      ),
+                      title: Text(e.describe, style: const TextStyle(fontSize: 13)),
+                      subtitle: Text(
+                        [
+                          DateFormat('dd/MM HH:mm').format(e.createdAt),
+                          if (e.note != null && e.note!.isNotEmpty) '“${e.note!}”',
+                        ].join(' — '),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
       ),
     );
   }
@@ -614,6 +914,7 @@ class _ConversationPane extends StatelessWidget {
   }
 
   Widget _bubble(BuildContext context, Message m) {
+    if (m.internal) return _noteBubble(m);
     final out = m.isOutbound;
     // Localização: guardamos o link do mapa no conteúdo — vira um card clicável.
     final mapUrl = _mapUrl(m.content);
@@ -660,6 +961,49 @@ class _ConversationPane extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Bolha de NOTA INTERNA: amarela, com autor — só a equipe vê (nada foi ao cliente).
+  Widget _noteBubble(Message m) {
+    final amber = const Color(0xFFB45309);
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 420),
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+        decoration: BoxDecoration(
+          color: Colors.amber.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.amber.withValues(alpha: 0.55)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.push_pin, size: 13, color: amber),
+              const SizedBox(width: 4),
+              Text('Nota interna${m.senderName != null ? ' — ${m.senderName}' : ''}',
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: amber)),
+            ]),
+            const SizedBox(height: 3),
+            Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(m.content ?? '', style: const TextStyle(fontSize: 14, height: 1.3)),
+                ),
+                Text(DateFormat('HH:mm').format(m.createdAt),
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -851,10 +1195,72 @@ class _ConversationPane extends StatelessWidget {
 
   Widget _composer(BuildContext context) {
     Future<void> doSend() async {
-      final ok = await conv.send();
+      // Modo NOTA: grava a nota interna (nunca vai à Meta/cliente).
+      final ok = conv.noteMode ? await conv.sendNote() : await conv.send();
       if (!ok && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível enviar a mensagem')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(conv.noteMode ? 'Não foi possível salvar a nota' : 'Não foi possível enviar a mensagem')));
       }
+    }
+
+    // Popup de respostas rápidas ACIMA do botão ⚡: toque insere o texto no campo.
+    Future<void> openQuickReplies(BuildContext btnCtx) async {
+      final replies = inbox?.quickReplies ?? const <QuickReply>[];
+      final box = btnCtx.findRenderObject() as RenderBox;
+      final overlayBox = Overlay.of(btnCtx).context.findRenderObject() as RenderBox;
+      final position = RelativeRect.fromRect(
+        Rect.fromPoints(
+          box.localToGlobal(Offset.zero, ancestor: overlayBox),
+          box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlayBox),
+        ),
+        Offset.zero & overlayBox.size,
+      );
+      final choice = await showMenu<String>(
+        context: btnCtx,
+        position: position,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        items: [
+          if (replies.isEmpty)
+            const PopupMenuItem<String>(
+                enabled: false, child: Text('Nenhum atalho ainda.\nCrie em "Gerenciar atalhos".')),
+          for (final q in replies)
+            PopupMenuItem<String>(
+              value: 'use:${q.id}',
+              height: 44,
+              child: SizedBox(
+                width: 300,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('/${q.shortcut}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.seed)),
+                    Text(q.content, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                  ],
+                ),
+              ),
+            ),
+          const PopupMenuDivider(),
+          const PopupMenuItem<String>(
+            value: 'manage',
+            height: 40,
+            child: Row(children: [
+              Icon(Icons.settings_outlined, size: 16),
+              SizedBox(width: 8),
+              Text('Gerenciar atalhos', style: TextStyle(fontSize: 13)),
+            ]),
+          ),
+        ],
+      );
+      if (choice == null || !btnCtx.mounted) return;
+      if (choice == 'manage') {
+        await _manageQuickReplies(btnCtx);
+        return;
+      }
+      final q = replies.firstWhere((x) => 'use:${x.id}' == choice);
+      final t = conv.composer;
+      t.text = t.text.isEmpty ? q.content : '${t.text} ${q.content}';
+      t.selection = TextSelection.collapsed(offset: t.text.length);
     }
 
     Future<void> pickAndSend(String? accept) async {
@@ -1037,21 +1443,38 @@ class _ConversationPane extends StatelessWidget {
     if (conv.recording) return _recordingBar(context);
 
     // Fora da janela de 24h a Meta só entrega MODELO aprovado → bloqueia o texto
-    // livre e direciona para os modelos.
-    if (!conv.windowOpen) return _closedWindowComposer(context);
+    // livre e direciona para os modelos. NOTA interna pode sempre (não vai à Meta).
+    if (!conv.windowOpen && !conv.noteMode) return _closedWindowComposer(context);
 
     return Container(
-      color: AppTheme.surface,
+      color: conv.noteMode ? Colors.amber.withValues(alpha: 0.12) : AppTheme.surface,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Row(
         children: [
           // "+" abre o menu de anexos (popup acima), como o WhatsApp.
-          Builder(
-            builder: (btnCtx) => IconButton(
-              onPressed: conv.sending ? null : () => openAttachMenu(btnCtx),
-              tooltip: 'Anexar',
-              icon: Icon(Icons.add, color: Colors.grey.shade700),
+          if (!conv.noteMode)
+            Builder(
+              builder: (btnCtx) => IconButton(
+                onPressed: conv.sending ? null : () => openAttachMenu(btnCtx),
+                tooltip: 'Anexar',
+                icon: Icon(Icons.add, color: Colors.grey.shade700),
+              ),
             ),
+          // ⚡ respostas rápidas (atalhos de texto da empresa).
+          if (!conv.noteMode)
+            Builder(
+              builder: (btnCtx) => IconButton(
+                onPressed: conv.sending ? null : () => openQuickReplies(btnCtx),
+                tooltip: 'Respostas rápidas',
+                icon: Icon(Icons.bolt_outlined, color: Colors.grey.shade700),
+              ),
+            ),
+          // 📌 alterna o modo NOTA INTERNA (amarelo = ligado).
+          IconButton(
+            onPressed: conv.sending ? null : conv.toggleNoteMode,
+            tooltip: conv.noteMode ? 'Voltar a responder o cliente' : 'Nota interna (só a equipe vê)',
+            icon: Icon(conv.noteMode ? Icons.push_pin : Icons.push_pin_outlined,
+                color: conv.noteMode ? const Color(0xFFB45309) : Colors.grey.shade700),
           ),
           Expanded(
             child: TextField(
@@ -1061,7 +1484,7 @@ class _ConversationPane extends StatelessWidget {
               textInputAction: TextInputAction.send,
               onSubmitted: (_) => doSend(),
               decoration: InputDecoration(
-                hintText: 'Mensagem…',
+                hintText: conv.noteMode ? 'Nota interna — o cliente NÃO vê…' : 'Mensagem…',
                 isDense: true,
                 contentPadding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
                 filled: true,
@@ -1086,13 +1509,14 @@ class _ConversationPane extends StatelessWidget {
             valueListenable: conv.composer,
             builder: (_, value, _) {
               final hasText = value.text.trim().isNotEmpty;
+              final note = conv.noteMode;
               return IconButton.filled(
-                onPressed: conv.sending ? null : (hasText ? doSend : startRec),
-                tooltip: hasText ? 'Enviar' : 'Gravar áudio',
-                style: IconButton.styleFrom(backgroundColor: AppTheme.seed),
+                onPressed: conv.sending ? null : (hasText ? doSend : (note ? null : startRec)),
+                tooltip: note ? 'Salvar nota interna' : (hasText ? 'Enviar' : 'Gravar áudio'),
+                style: IconButton.styleFrom(backgroundColor: note ? const Color(0xFFB45309) : AppTheme.seed),
                 icon: conv.sending
                     ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Icon(hasText ? Icons.send : Icons.mic, color: Colors.white, size: 20),
+                    : Icon(note ? Icons.push_pin : (hasText ? Icons.send : Icons.mic), color: Colors.white, size: 20),
               );
             },
           ),
@@ -1142,9 +1566,219 @@ class _ConversationPane extends StatelessWidget {
               ),
             ),
           ],
+          const SizedBox(height: 8),
+          // Nota interna funciona mesmo com a janela fechada (não vai à Meta).
+          OutlinedButton.icon(
+            onPressed: conv.toggleNoteMode,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFB45309),
+              side: BorderSide(color: Colors.amber.withValues(alpha: 0.7)),
+              minimumSize: const Size(0, 40),
+            ),
+            icon: const Icon(Icons.push_pin_outlined, size: 17),
+            label: const Text('Escrever nota interna'),
+          ),
         ],
       ),
     );
+  }
+
+  /// Diálogo de gestão das respostas rápidas (criar/editar/excluir atalhos).
+  Future<void> _manageQuickReplies(BuildContext context) async {
+    final ib = inbox;
+    if (ib == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setLocal) {
+          Future<void> edit({QuickReply? q}) async {
+            final shortcut = TextEditingController(text: q?.shortcut ?? '');
+            final content = TextEditingController(text: q?.content ?? '');
+            final ok = await showDialog<bool>(
+              context: dialogCtx,
+              builder: (c2) => AlertDialog(
+                title: Text(q == null ? 'Novo atalho' : 'Editar atalho'),
+                content: SizedBox(
+                  width: 360,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: shortcut,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                            labelText: 'Atalho (sem espaços)', prefixText: '/', hintText: 'boleto',
+                            border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: content,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                            labelText: 'Texto da resposta', border: OutlineInputBorder()),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(c2, false), child: const Text('Cancelar')),
+                  FilledButton(
+                    style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+                    onPressed: () => Navigator.pop(c2, true),
+                    child: const Text('Salvar'),
+                  ),
+                ],
+              ),
+            );
+            if (ok == true && shortcut.text.trim().isNotEmpty && content.text.trim().isNotEmpty) {
+              final err = await ib.saveQuickReply(id: q?.id, shortcut: shortcut.text.trim(), content: content.text.trim());
+              if (err != null && dialogCtx.mounted) {
+                ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(content: Text(err)));
+              }
+              setLocal(() {});
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Respostas rápidas'),
+            content: SizedBox(
+              width: 420,
+              child: ib.quickReplies.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text('Nenhum atalho ainda.\nCrie textos prontos como /boleto, /horario, /pix…'),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: ib.quickReplies.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (_, i) {
+                        final q = ib.quickReplies[i];
+                        return ListTile(
+                          dense: true,
+                          title: Text('/${q.shortcut}',
+                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.seed)),
+                          subtitle: Text(q.content, maxLines: 2, overflow: TextOverflow.ellipsis),
+                          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                            IconButton(
+                                icon: const Icon(Icons.edit_outlined, size: 18),
+                                onPressed: () => edit(q: q)),
+                            IconButton(
+                                icon: const Icon(Icons.delete_outline, size: 18),
+                                onPressed: () async {
+                                  await ib.deleteQuickReply(q.id);
+                                  setLocal(() {});
+                                }),
+                          ]),
+                        );
+                      },
+                    ),
+            ),
+            actions: [
+              TextButton.icon(
+                onPressed: () => edit(),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Novo atalho'),
+              ),
+              TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Fechar')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Diálogo de etiquetas: marca/desmarca as da conversa e cria novas na hora.
+  Future<void> _tagsDialog(BuildContext context) async {
+    final ib = inbox;
+    if (ib == null) return;
+    final selected = {for (final t in conv.ticket.tags) t.id};
+    final newTag = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setLocal) => AlertDialog(
+          title: const Text('Etiquetas da conversa'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (ib.tags.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text('Nenhuma etiqueta ainda — crie a primeira abaixo.',
+                        style: TextStyle(color: Colors.grey.shade600)),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final t in ib.tags)
+                            FilterChip(
+                              label: Text(t.name, style: const TextStyle(fontSize: 12)),
+                              selected: selected.contains(t.id),
+                              selectedColor: AppTheme.seed.withValues(alpha: 0.2),
+                              onSelected: (v) => setLocal(() {
+                                if (v) {
+                                  selected.add(t.id);
+                                } else {
+                                  selected.remove(t.id);
+                                }
+                              }),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: newTag,
+                  decoration: InputDecoration(
+                    labelText: 'Nova etiqueta',
+                    hintText: 'Ex.: VIP, orçamento, urgente',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () async {
+                        final name = newTag.text.trim();
+                        if (name.isEmpty) return;
+                        final t = await ib.createTag(name);
+                        if (t != null) {
+                          newTag.clear();
+                          setLocal(() => selected.add(t.id));
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Cancelar')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('Aplicar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final updated = await conv.setTags(selected.toList());
+    if (updated != null) {
+      inbox?.applyTicketUpdate(updated);
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível salvar as etiquetas')));
+    }
   }
 
   // Barra que substitui o compositor durante a gravação de áudio.
@@ -1710,6 +2344,113 @@ class _RecordingDotState extends State<_RecordingDot> with SingleTickerProviderS
         height: 11,
         decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
       ),
+    );
+  }
+}
+
+/// Diálogo de transferência: escolhe atendente e/ou setor, com nota opcional.
+/// Escolher SÓ o setor devolve a conversa à fila dele (sem dono).
+class _TransferDialog extends StatefulWidget {
+  const _TransferDialog({
+    required this.team,
+    required this.sectors,
+    this.currentUserId,
+    this.currentSectorId,
+  });
+
+  final List<AppUser> team;
+  final List<Sector> sectors;
+  final String? currentUserId;
+  final String? currentSectorId;
+
+  @override
+  State<_TransferDialog> createState() => _TransferDialogState();
+}
+
+class _TransferDialogState extends State<_TransferDialog> {
+  String? userId;
+  String? sectorId;
+  final note = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    sectorId = widget.currentSectorId;
+  }
+
+  @override
+  void dispose() {
+    note.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canSend = userId != null || (sectorId != null && sectorId != widget.currentSectorId);
+    return AlertDialog(
+      title: const Text('Transferir conversa'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String?>(
+              initialValue: userId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Atendente', border: OutlineInputBorder()),
+              items: [
+                const DropdownMenuItem(value: null, child: Text('— manter / devolver à fila —')),
+                for (final u in widget.team)
+                  if (u.id != widget.currentUserId)
+                    DropdownMenuItem(
+                        value: u.id,
+                        child: Text('${u.fullName}${u.isAway ? '  (ausente)' : ''}',
+                            overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: (v) => setState(() => userId = v),
+            ),
+            const SizedBox(height: 12),
+            if (widget.sectors.isNotEmpty) ...[
+              DropdownButtonFormField<String?>(
+                initialValue: sectorId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Setor', border: OutlineInputBorder()),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('— sem setor —')),
+                  for (final s in widget.sectors)
+                    DropdownMenuItem(value: s.id, child: Text(s.name, overflow: TextOverflow.ellipsis)),
+                ],
+                onChanged: (v) => setState(() => sectorId = v),
+              ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: note,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Nota para quem recebe (opcional)',
+                hintText: 'Ex.: cliente quer falar sobre o boleto',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+          onPressed: !canSend
+              ? null
+              : () => Navigator.pop(context, (
+                    userId: userId,
+                    sectorId: sectorId != widget.currentSectorId ? sectorId : null,
+                    note: note.text.trim(),
+                  )),
+          child: const Text('Transferir'),
+        ),
+      ],
     );
   }
 }

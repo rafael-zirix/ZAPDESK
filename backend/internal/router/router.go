@@ -96,6 +96,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	if cfg.AIConfigured() {
 		log.Printf("[info] Atendente IA ativo (modelo: %s)", cfg.AIModel)
 	}
+	// Worker de campanhas: envia os disparos agendados no ritmo configurado.
+	supportSvc.StartCampaignWorker()
 	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher).
 		WithEmbeddedSignup(cfg.MetaAPIBase, cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaESConfigID, cfg.GraphVersion()).
 		WithWebhookAutoConfig(cfg.PublicURL, cfg.MetaVerifyToken)
@@ -185,6 +187,29 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.GET("/ai-state", supportH.AIState)                               // Atendente IA ligado na empresa? (exibe o toggle na conversa)
 			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)        // consumo/valores da própria empresa (admin)
 			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                    // liga/pausa a IA nesta conversa
+			// Fase 1 de atendimento: assumir, transferir, ciclo de vida e histórico.
+			support.POST("/tickets/:id/claim", supportH.ClaimTicket)                // assumir a conversa (puxar p/ si)
+			support.POST("/tickets/:id/transfer", supportH.TransferTicket)          // transferir p/ atendente e/ou setor
+			support.PUT("/tickets/:id/status", supportH.SetTicketStatus)            // resolver / fechar / reabrir…
+			support.GET("/tickets/:id/events", supportH.ListTicketEvents)           // timeline (transferências, status, notas)
+			support.GET("/sectors", supportH.ListSectors)                           // setores (todos veem, p/ transferir)
+			support.POST("/sectors", middleware.RequireAdmin(), supportH.CreateSector)
+			support.PUT("/sectors/:id", middleware.RequireAdmin(), supportH.UpdateSector)
+			support.DELETE("/sectors/:id", middleware.RequireAdmin(), supportH.DeleteSector)
+			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
+			support.POST("/tickets/:id/notes", supportH.AddNote)          // nota interna (só a equipe vê)
+			support.PUT("/tickets/:id/tags", supportH.SetTicketTags)      // etiqueta a conversa
+			support.POST("/tickets/claim-next", supportH.ClaimNext)       // pega o próximo da fila
+			support.GET("/quick-replies", supportH.ListQuickReplies)      // atalhos de texto (/boleto…)
+			support.POST("/quick-replies", supportH.CreateQuickReply)
+			support.PUT("/quick-replies/:id", supportH.UpdateQuickReply)
+			support.DELETE("/quick-replies/:id", supportH.DeleteQuickReply)
+			support.GET("/tags", supportH.ListTags)                       // etiquetas da empresa
+			support.POST("/tags", supportH.CreateTag)
+			support.DELETE("/tags/:id", middleware.RequireAdmin(), supportH.DeleteTag)
+			support.PUT("/presence", supportH.SetMyPresence)              // disponível / ausente
+			// Fase 4: dashboard de métricas de atendimento (admin).
+			support.GET("/metrics", middleware.RequireAdmin(), supportH.SupportMetrics)
 		}
 
 		// Contatos (clientes finais da empresa).
@@ -194,6 +219,17 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			contacts.POST("", supportH.CreateContact)
 			contacts.PUT("/:id", supportH.UpdateContact)
 			contacts.DELETE("/:id", supportH.DeleteContact)
+			contacts.PUT("/:id/groups", supportH.SetContactGroups) // grupos do contato
+		}
+
+		// Grupos de contatos (listas de marketing — audiência das campanhas).
+		groups := api.Group("/contact-groups")
+		{
+			groups.GET("", supportH.ListContactGroups)
+			groups.POST("", supportH.CreateContactGroup)
+			groups.PUT("/:id", supportH.RenameContactGroup)
+			groups.DELETE("/:id", supportH.DeleteContactGroup)
+			groups.POST("/:id/members", supportH.AddGroupMembers) // vincula por telefone (importação)
 		}
 
 		// Área do CLIENTE: a própria empresa (admin) conecta os seus números.
@@ -250,6 +286,16 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.POST("/subscription", billingH.Subscribe)           // recarga automática (assinatura MP)
 			ai.GET("/subscription", billingH.Subscription)         // estado da assinatura
 			ai.DELETE("/subscription", billingH.Unsubscribe)       // cancela a recarga automática
+		}
+
+		// Campanhas de WhatsApp (admin): disparo de template com ritmo controlado.
+		campaigns := api.Group("/campaigns", middleware.RequireAdmin())
+		{
+			campaigns.GET("", supportH.ListCampaigns)
+			campaigns.POST("", supportH.CreateCampaign)
+			campaigns.GET("/:id", supportH.GetCampaign)
+			campaigns.GET("/:id/recipients", supportH.CampaignRecipients)
+			campaigns.POST("/:id/action", supportH.CampaignAction) // pause | resume | cancel
 		}
 
 		// Onboarding do 1º acesso (admin): checklist + assistente de IA (por conta do HotZap).

@@ -394,6 +394,12 @@ func (s *SupportService) ProcessInbound(accountID, phone string, name *string, w
 		Status:     "received",
 		ExternalID: &extID,
 	})
+	// Campanhas: resposta do contato conta no funil ("respondeu"); "SAIR" (e
+	// variações) descadastra o contato de qualquer campanha futura.
+	_ = s.repo.MarkRecipientRepliedByContact(accountID, contact.ID)
+	if isOptOutMessage(text) {
+		_ = s.repo.OptOutContact(accountID, contact.ID)
+	}
 	return ticket.ID, err
 }
 
@@ -423,6 +429,9 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 		start = len(msgs) - 12
 	}
 	for _, m := range msgs[start:] {
+		if m.Internal { // nota interna: a equipe vê, a IA não
+			continue
+		}
 		if m.Content == nil || *m.Content == "" {
 			continue
 		}
@@ -670,11 +679,13 @@ func (s *SupportService) OnboardingAsk(question string) (string, error) {
 }
 
 // ProcessStatus aplica um status de entrega recebido no webhook da Meta
-// (sent/delivered/read/failed) à mensagem de saída identificada pelo wamid.
+// (sent/delivered/read/failed) à mensagem de saída identificada pelo wamid —
+// e também ao destinatário de campanha correspondente (funil).
 func (s *SupportService) ProcessStatus(accountID, externalID, status string) error {
 	if externalID == "" || status == "" {
 		return nil
 	}
+	_ = s.repo.UpdateRecipientStatusByExternalID(accountID, externalID, status)
 	return s.repo.UpdateMessageStatusByExternalID(accountID, externalID, status)
 }
 
@@ -1045,6 +1056,16 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 	if s.aiRepo != nil {
 		_ = s.aiRepo.SetTicketAIPaused(accountID, ticketID, true)
 	}
+	// Responder uma conversa sem dono equivale a assumi-la (auto-atribuição).
+	if ticket.AssignedUserID == nil {
+		if err := s.repo.UpdateTicketRouting(accountID, ticketID, &userID, true, nil, false); err == nil {
+			_ = s.repo.InsertTicketEvent(accountID, ticketID, &models.SupportTicketEvent{
+				Kind:        models.TicketEventAssigned,
+				ActorUserID: &userID,
+				ToUserID:    &userID,
+			})
+		}
+	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1352,7 +1373,7 @@ func (s *SupportService) ListMessages(accountID, ticketID string) ([]models.Supp
 
 // ListContacts devolve os contatos da conta.
 func (s *SupportService) ListContacts(accountID, userID string) ([]models.SupportContact, error) {
-	return s.repo.ListContacts(accountID, userID)
+	return s.repo.ListContactsWithGroups(accountID, userID) // inclui os grupos de marketing
 }
 
 // CreateContact cadastra um contato (telefone normalizado, único por conta).

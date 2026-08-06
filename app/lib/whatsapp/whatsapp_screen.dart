@@ -34,7 +34,12 @@ class _WhatsAppScreenState extends State<WhatsAppScreen> {
       color: AppTheme.bg,
       child: Column(
         children: [
-          ListHeader(title: 'WhatsApp', actionLabel: 'Conectar número', onAction: () => _openConnect(c)),
+          // Com número já conectado, o guia continua a um clique — para incluir
+          // um número NOVO pelo mesmo passo a passo da Meta.
+          ListHeader(
+              title: 'WhatsApp',
+              actionLabel: c.numbers.isEmpty ? 'Conectar número' : 'Conectar novo número',
+              onAction: () => _openConnect(c)),
           const Divider(height: 1),
           Expanded(child: _body(c)),
         ],

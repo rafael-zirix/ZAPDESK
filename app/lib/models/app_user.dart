@@ -7,7 +7,10 @@ class AppUser {
     required this.email,
     required this.role,
     this.phone,
+    this.presence = 'available',
   });
+
+  bool get isAway => presence == 'away';
 
   final String id;
   final String accountId; // vazio para super-admin
@@ -15,6 +18,7 @@ class AppUser {
   final String email;
   final String role; // superadmin | admin | agent
   final String? phone; // celular (WhatsApp) — usado no login por OTP
+  final String presence; // available | away (informativo)
 
   bool get isSuperAdmin => role == 'superadmin';
   bool get isAdmin => role == 'admin';
@@ -34,5 +38,6 @@ class AppUser {
         email: j['email'] ?? '',
         role: j['role'] ?? 'agent',
         phone: (j['phone'] == null || j['phone'] == '') ? null : j['phone'] as String,
+        presence: j['presence'] ?? 'available',
       );
 }

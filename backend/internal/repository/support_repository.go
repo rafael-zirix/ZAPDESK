@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -111,8 +112,9 @@ func (r *SupportRepository) nextProtocol(tx *sql.Tx, accountID string, year int)
 	return fmt.Sprintf("%d-%06d", year, seq), nil
 }
 
-// FindOrCreateOpenTicket devolve a conversa aberta do contato, criando (com
-// protocolo) se não houver.
+// FindOrCreateOpenTicket devolve a conversa ativa (não-fechada) do contato,
+// criando (com protocolo) se não houver. Ticket em "pending"/"resolved" volta a
+// "open" — e a reabertura de um resolvido fica registrada no histórico.
 func (r *SupportRepository) FindOrCreateOpenTicket(accountID, contactID string) (*models.SupportTicket, error) {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -120,17 +122,33 @@ func (r *SupportRepository) FindOrCreateOpenTicket(accountID, contactID string) 
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	now := time.Now().UTC()
 	var t models.SupportTicket
-	err = tx.QueryRow(`SELECT id, account_id, contact_id, protocol, status, assigned_user_id, last_message_at, created_at, updated_at
-		FROM support_tickets WHERE contact_id=$1 AND status='open'`, contactID).
-		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
+	err = tx.QueryRow(`SELECT id, account_id, contact_id, protocol, status, assigned_user_id, sector_id, last_message_at, created_at, updated_at
+		FROM support_tickets WHERE contact_id=$1 AND status<>'closed'`, contactID).
+		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.SectorID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
 	if err == nil {
+		if t.Status != models.TicketStatusOpen {
+			if _, err := tx.Exec(`UPDATE support_tickets SET status='open', updated_at=$2 WHERE id=$1`, t.ID, now); err != nil {
+				return nil, err
+			}
+			if t.Status == models.TicketStatusResolved {
+				from := t.Status
+				to := models.TicketStatusOpen
+				if _, err := tx.Exec(`
+					INSERT INTO support_ticket_events (account_id, ticket_id, kind, from_status, to_status, created_at)
+					VALUES ($1,$2,$3,$4,$5,$6)`,
+					accountID, t.ID, models.TicketEventReopened, from, to, now); err != nil {
+					return nil, err
+				}
+			}
+			t.Status = models.TicketStatusOpen
+		}
 		return &t, tx.Commit()
 	}
 	if err != sql.ErrNoRows {
 		return nil, err
 	}
-	now := time.Now().UTC()
 	protocol, err := r.nextProtocol(tx, accountID, now.Year())
 	if err != nil {
 		return nil, err
@@ -138,9 +156,9 @@ func (r *SupportRepository) FindOrCreateOpenTicket(accountID, contactID string) 
 	err = tx.QueryRow(`
 		INSERT INTO support_tickets (account_id, contact_id, protocol, status, last_message_at, created_at, updated_at)
 		VALUES ($1,$2,$3,'open',$4,$4,$4)
-		RETURNING id, account_id, contact_id, protocol, status, assigned_user_id, last_message_at, created_at, updated_at`,
+		RETURNING id, account_id, contact_id, protocol, status, assigned_user_id, sector_id, last_message_at, created_at, updated_at`,
 		accountID, contactID, protocol, now).
-		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
+		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.SectorID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -157,16 +175,32 @@ func (r *SupportRepository) ContactExists(accountID, contactID string) (bool, er
 // TicketListItem devolve uma linha do inbox (com dados do contato) por ticket.
 func (r *SupportRepository) TicketListItem(accountID, ticketID string) (*models.SupportTicketListItem, error) {
 	var it models.SupportTicketListItem
+	var tags []byte
 	err := r.db.QueryRow(`
-		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0)
-		FROM support_tickets t JOIN support_contacts c ON c.id = t.contact_id
+		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
+		       t.assigned_user_id, u.full_name, t.sector_id, s.name, `+ticketTagsJSON+`
+		FROM support_tickets t
+		JOIN support_contacts c ON c.id = t.contact_id
+		LEFT JOIN users u ON u.id = t.assigned_user_id
+		LEFT JOIN support_sectors s ON s.id = t.sector_id
 		WHERE t.id=$1 AND t.account_id=$2`, ticketID, accountID).
-		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount)
+		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
+			&it.AssignedUserID, &it.AssignedUserName, &it.SectorID, &it.SectorName, &tags)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+	if err == nil {
+		_ = json.Unmarshal(tags, &it.Tags)
+	}
 	return &it, err
 }
+
+// ticketTagsJSON agrega as etiquetas do ticket como JSON (subquery reutilizada
+// no inbox e no item individual).
+const ticketTagsJSON = `COALESCE((
+	SELECT json_agg(json_build_object('id', tg.id, 'name', tg.name, 'color', tg.color) ORDER BY tg.name)
+	FROM support_ticket_tags tt JOIN support_tags tg ON tg.id = tt.tag_id
+	WHERE tt.ticket_id = t.id), '[]')`
 
 // InsertMessage grava uma mensagem e atualiza o last_message_at da conversa.
 // Idempotente por (account_id, external_id).
@@ -175,12 +209,12 @@ func (r *SupportRepository) InsertMessage(m *models.SupportMessage) (*models.Sup
 	m.CreatedAt = now
 	err := r.db.QueryRow(`
 		INSERT INTO support_ticket_messages
-		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, internal, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (account_id, external_id) WHERE external_id IS NOT NULL DO NOTHING
 		RETURNING id`,
 		m.AccountID, m.TicketID, m.Direction, m.Type, m.Content, m.MediaURL, m.MimeType,
-		m.FileName, m.Status, m.ExternalID, m.SenderID, now).Scan(&m.ID)
+		m.FileName, m.Status, m.ExternalID, m.SenderID, m.Internal, now).Scan(&m.ID)
 	if err == sql.ErrNoRows {
 		return nil, nil // duplicata (idempotência): ignora
 	}
@@ -349,13 +383,14 @@ func (r *SupportRepository) SetOnboardingDone(accountID string) error {
 func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRow, error) {
 	rows, err := r.db.Query(`
 		WITH msg AS (
+		  -- Notas internas ficam de fora: não são mensagens enviadas/cobradas.
 		  SELECT account_id,
 		    COUNT(*) FILTER (WHERE direction='out') AS out_count,
 		    COUNT(*) FILTER (WHERE direction='in') AS in_count,
 		    COUNT(*) FILTER (WHERE type='template') AS tpl_count,
 		    COUNT(*) FILTER (WHERE type IN ('image','audio','video','document')) AS media_count
 		  FROM support_ticket_messages
-		  WHERE created_at >= $1 AND created_at < $2
+		  WHERE created_at >= $1 AND created_at < $2 AND COALESCE(internal, false) = false
 		  GROUP BY account_id
 		),
 		conv AS (
@@ -363,7 +398,7 @@ func (r *SupportRepository) UsageByAccount(from, to time.Time) ([]AccountUsageRo
 		  -- nele. Assim uma conversa iniciada antes mas usada agora é contada/cobrada.
 		  SELECT account_id, COUNT(DISTINCT ticket_id) AS conv_count
 		  FROM support_ticket_messages
-		  WHERE created_at >= $1 AND created_at < $2
+		  WHERE created_at >= $1 AND created_at < $2 AND COALESCE(internal, false) = false
 		  GROUP BY account_id
 		)
 		SELECT a.id, a.name,
@@ -422,9 +457,12 @@ func (r *SupportRepository) SetTemplateEnabled(accountID, name string, enabled b
 // ListInbox devolve as conversas da conta (mais recentes primeiro).
 func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketListItem, error) {
 	rows, err := r.db.Query(`
-		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0)
+		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
+		       t.assigned_user_id, u.full_name, t.sector_id, s.name, `+ticketTagsJSON+`
 		FROM support_tickets t
 		JOIN support_contacts c ON c.id = t.contact_id
+		LEFT JOIN users u ON u.id = t.assigned_user_id
+		LEFT JOIN support_sectors s ON s.id = t.sector_id
 		WHERE t.account_id=$1
 		ORDER BY (COALESCE(t.unread_count, 0) > 0) DESC, t.last_message_at DESC`, accountID)
 	if err != nil {
@@ -434,21 +472,27 @@ func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketL
 	out := make([]models.SupportTicketListItem, 0)
 	for rows.Next() {
 		var it models.SupportTicketListItem
-		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount); err != nil {
+		var tags []byte
+		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
+			&it.AssignedUserID, &it.AssignedUserName, &it.SectorID, &it.SectorName, &tags); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(tags, &it.Tags)
 		out = append(out, it)
 	}
 	return out, rows.Err()
 }
 
-// ListMessages devolve a thread de uma conversa (ordem cronológica).
+// ListMessages devolve a thread de uma conversa (ordem cronológica), com o nome
+// do atendente que enviou (exibido nas notas internas).
 func (r *SupportRepository) ListMessages(accountID, ticketID string) ([]models.SupportMessage, error) {
 	rows, err := r.db.Query(`
-		SELECT id, account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, created_at
-		FROM support_ticket_messages
-		WHERE account_id=$1 AND ticket_id=$2
-		ORDER BY created_at ASC`, accountID, ticketID)
+		SELECT m.id, m.account_id, m.ticket_id, m.direction, m.type, m.content, m.media_url, m.mime_type, m.file_name,
+		       m.status, m.external_id, m.sender_id, u.full_name, COALESCE(m.internal, false), m.created_at
+		FROM support_ticket_messages m
+		LEFT JOIN users u ON u.id = m.sender_id
+		WHERE m.account_id=$1 AND m.ticket_id=$2
+		ORDER BY m.created_at ASC`, accountID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +501,7 @@ func (r *SupportRepository) ListMessages(accountID, ticketID string) ([]models.S
 	for rows.Next() {
 		var m models.SupportMessage
 		if err := rows.Scan(&m.ID, &m.AccountID, &m.TicketID, &m.Direction, &m.Type, &m.Content,
-			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID, &m.CreatedAt); err != nil {
+			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID, &m.SenderName, &m.Internal, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -485,9 +529,9 @@ func (r *SupportRepository) LastInboundExternalID(accountID, ticketID string) (s
 // GetTicket busca uma conversa da conta.
 func (r *SupportRepository) GetTicket(accountID, ticketID string) (*models.SupportTicket, error) {
 	var t models.SupportTicket
-	err := r.db.QueryRow(`SELECT id, account_id, contact_id, protocol, status, assigned_user_id, last_message_at, created_at, updated_at
+	err := r.db.QueryRow(`SELECT id, account_id, contact_id, protocol, status, assigned_user_id, sector_id, last_message_at, created_at, updated_at
 		FROM support_tickets WHERE id=$1 AND account_id=$2`, ticketID, accountID).
-		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
+		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.SectorID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

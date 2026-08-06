@@ -7,13 +7,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../admin/accounts_screen.dart';
 import '../ai/ai_screen.dart';
 import '../auth/auth_controller.dart';
+import '../campaigns/campaigns_screen.dart';
 import '../core/api_client.dart';
 import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
+import '../metrics/metrics_screen.dart';
 import '../models/app_user.dart';
 import '../onboarding/onboarding_screen.dart';
 import '../plans/plans_screen.dart';
+import '../sectors/sectors_screen.dart';
 import '../settings/settings_screen.dart';
 import '../templates/templates_screen.dart';
 import '../usage/my_usage_screen.dart';
@@ -136,7 +139,10 @@ class _AppShellState extends State<AppShell> {
     items.add(const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()));
     if (me.isAdmin) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
+      items.add(const _NavDest(Icons.workspaces_outline, Icons.workspaces, 'Setores', SectorsScreen()));
       items.add(const _NavDest(Icons.chat_outlined, Icons.chat, 'WhatsApp', WhatsAppScreen()));
+      items.add(const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen()));
+      items.add(const _NavDest(Icons.query_stats_outlined, Icons.query_stats, 'Métricas', MetricsScreen()));
       items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Modelos', TemplatesScreen()));
       items.add(const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen()));
       items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
@@ -185,7 +191,7 @@ class _AppShellState extends State<AppShell> {
             child: const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 24),
           ),
           const SizedBox(height: 24),
-          for (var i = 0; i < dests.length; i++) _railButton(dests, i),
+          ..._railItems(dests),
           const Spacer(),
           if (_tokens != null && (_aiOn || _tokens! > 0)) _tokenChip(dests),
           _userMenu(me),
@@ -231,6 +237,63 @@ class _AppShellState extends State<AppShell> {
     return '$n';
   }
 
+  /// Grupos do rail (flyout à direita). Um grupo só é montado quando o perfil
+  /// tem 2+ das abas dele — senão a aba fica solta (ex.: atendente só com Contatos).
+  static const _railGroups = [
+    (
+      label: 'Cadastros',
+      icon: Icons.app_registration_outlined,
+      activeIcon: Icons.app_registration,
+      members: {'Contatos', 'Usuários', 'Setores', 'Modelos'},
+    ),
+    (
+      label: 'Configurações',
+      icon: Icons.settings_outlined,
+      activeIcon: Icons.settings,
+      members: {'WhatsApp', 'Planos', 'Consumo', 'Configurações'},
+    ),
+  ];
+
+  /// Monta os itens do rail: abas soltas viram botão; as de cada grupo viram UM
+  /// item com flyout, na posição da primeira delas.
+  List<Widget> _railItems(List<_NavDest> dests) {
+    // label da aba → grupo dono (só grupos com 2+ abas presentes).
+    final owner = <String, int>{};
+    for (var g = 0; g < _railGroups.length; g++) {
+      final present = [
+        for (final d in dests)
+          if (_railGroups[g].members.contains(d.label)) d.label,
+      ];
+      if (present.length >= 2) {
+        for (final l in present) {
+          owner[l] = g;
+        }
+      }
+    }
+    // Abas soltas primeiro; os GRUPOS vão para o FIM da coluna.
+    final out = <Widget>[
+      for (var i = 0; i < dests.length; i++)
+        if (owner[dests[i].label] == null) _railButton(dests, i),
+    ];
+    for (var g = 0; g < _railGroups.length; g++) {
+      final entries = [
+        for (var j = 0; j < dests.length; j++)
+          if (owner[dests[j].label] == g) (j, dests[j]),
+      ];
+      if (entries.isEmpty) continue;
+      final spec = _railGroups[g];
+      out.add(_RailGroup(
+        label: spec.label,
+        icon: spec.icon,
+        activeIcon: spec.activeIcon,
+        entries: entries,
+        currentIndex: _index,
+        onSelect: (j) => _select(dests, j),
+      ));
+    }
+    return out;
+  }
+
   Widget _railButton(List<_NavDest> dests, int i) {
     final dest = dests[i];
     final sel = _index == i;
@@ -254,11 +317,23 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  // Presença do atendente (manual): bolinha verde (disponível) / laranja (ausente)
+  // no avatar; muda pelo menu. Informativa — aparece na transferência.
+  String? _presence;
+
   Widget _userMenu(AppUser me) {
+    final presence = _presence ?? me.presence;
+    final away = presence == 'away';
+    final dotColor = away ? const Color(0xFFF79009) : const Color(0xFF25D366);
     return PopupMenuButton<String>(
-      tooltip: me.fullName,
+      tooltip: '${me.fullName} — ${away ? 'ausente' : 'disponível'}',
       onSelected: (v) {
         if (v == 'logout') context.read<AuthController>().logout();
+        if (v == 'presence') {
+          final target = away ? 'available' : 'away';
+          setState(() => _presence = target);
+          _api.put('/support/presence', {'presence': target});
+        }
       },
       itemBuilder: (_) => [
         PopupMenuItem(
@@ -274,12 +349,37 @@ class _AppShellState extends State<AppShell> {
           ),
         ),
         const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'presence',
+          child: Row(children: [
+            Icon(away ? Icons.check_circle_outline : Icons.schedule, size: 18, color: away ? const Color(0xFF25D366) : const Color(0xFFF79009)),
+            const SizedBox(width: 8),
+            Text(away ? 'Ficar disponível' : 'Ficar ausente'),
+          ]),
+        ),
         const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, size: 18), SizedBox(width: 8), Text('Sair')])),
       ],
-      child: CircleAvatar(
-        radius: 20,
-        backgroundColor: AppTheme.seed,
-        child: Text(me.initials, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: AppTheme.seed,
+            child: Text(me.initials, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: dotColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFF111B21), width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -297,4 +397,167 @@ class _NavDest {
   final IconData activeIcon;
   final String label;
   final Widget page;
+}
+
+/// Item do rail que agrupa abas num FLYOUT à direita: abre no hover (desktop)
+/// e também no clique (touch). Uma tolerância de ~250ms deixa o mouse viajar
+/// do botão até o flyout sem ele fechar.
+class _RailGroup extends StatefulWidget {
+  const _RailGroup({
+    required this.label,
+    required this.icon,
+    required this.activeIcon,
+    required this.entries,
+    required this.currentIndex,
+    required this.onSelect,
+  });
+
+  final String label;
+  final IconData icon;
+  final IconData activeIcon;
+  final List<(int, _NavDest)> entries; // (índice na lista de abas, aba)
+  final int currentIndex;
+  final void Function(int index) onSelect;
+
+  @override
+  State<_RailGroup> createState() => _RailGroupState();
+}
+
+class _RailGroupState extends State<_RailGroup> {
+  final _link = LayerLink();
+  final _overlay = OverlayPortalController();
+  Timer? _closeTimer;
+
+  bool get _groupActive => widget.entries.any((e) => e.$1 == widget.currentIndex);
+
+  void _open() {
+    _closeTimer?.cancel();
+    if (!_overlay.isShowing) _overlay.show();
+  }
+
+  void _scheduleClose() {
+    _closeTimer?.cancel();
+    _closeTimer = Timer(const Duration(milliseconds: 250), () {
+      if (mounted && _overlay.isShowing) _overlay.hide();
+    });
+  }
+
+  @override
+  void dispose() {
+    _closeTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = _groupActive;
+    return CompositedTransformTarget(
+      link: _link,
+      child: OverlayPortal(
+        controller: _overlay,
+        overlayChildBuilder: (_) => CompositedTransformFollower(
+          link: _link,
+          targetAnchor: Alignment.topRight,
+          followerAnchor: Alignment.topLeft,
+          offset: const Offset(6, -4),
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: MouseRegion(
+              onEnter: (_) => _open(),
+              onExit: (_) => _scheduleClose(),
+              child: Material(
+                elevation: 8,
+                borderRadius: BorderRadius.circular(12),
+                color: AppTheme.surface,
+                child: Container(
+                  width: 200,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
+                        child: Text(widget.label.toUpperCase(),
+                            style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.6,
+                                color: Colors.grey.shade500)),
+                      ),
+                      for (final e in widget.entries) _flyItem(e.$1, e.$2),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        child: MouseRegion(
+          onEnter: (_) => _open(),
+          onExit: (_) => _scheduleClose(),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+            child: Tooltip(
+              message: widget.label,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _overlay.isShowing ? _overlay.hide() : _open(),
+                child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: sel ? Colors.white.withValues(alpha: 0.12) : null,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(sel ? widget.activeIcon : widget.icon,
+                          color: sel ? Colors.white : Colors.white70, size: 24),
+                      Positioned(
+                        right: 3,
+                        child: Icon(Icons.chevron_right, size: 12, color: Colors.white.withValues(alpha: 0.55)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Linha do flyout: ícone + nome, destacando a aba ativa. Larguras fixas
+  // (nada de Expanded-em-Row — colapsa no CanvasKit web).
+  Widget _flyItem(int index, _NavDest d) {
+    final active = index == widget.currentIndex;
+    return InkWell(
+      onTap: () {
+        _overlay.hide();
+        widget.onSelect(index);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        color: active ? AppTheme.seed.withValues(alpha: 0.10) : null,
+        child: Row(
+          children: [
+            Icon(active ? d.activeIcon : d.icon, size: 19, color: active ? AppTheme.seed : Colors.grey.shade600),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 140,
+              child: Text(d.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                      color: active ? AppTheme.seed : null)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
