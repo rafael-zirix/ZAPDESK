@@ -629,6 +629,14 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 		return
 	}
 	system := s.buildAISystemPrompt(accountID, cfg.Instructions)
+	// Lead de anúncio: a IA deixa de ser só suporte e vira o primeiro filtro —
+	// qualifica em poucas perguntas e entrega o resumo ao time comercial.
+	if headline, err := s.repo.TicketAdHeadline(accountID, ticketID); err == nil && headline != "" {
+		system += "\n\n# Lead de anúncio\nEste contato chegou pelo anúncio \"" + headline + "\". " +
+			"Antes de encaminhar, descubra em POUCAS perguntas (uma de cada vez): o que a pessoa precisa, " +
+			"para quando, e de onde ela fala. Não invente preço nem prazo. Assim que tiver essas respostas — " +
+			"ou se ela pedir para falar com alguém — use a ferramenta " + toolHandoff + " com o resumo."
+	}
 	msgs, err := s.repo.ListMessages(accountID, ticketID)
 	if err != nil {
 		return
@@ -655,7 +663,7 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 	if len(chat) < 2 || chat[len(chat)-1].Role != "user" {
 		return
 	}
-	reply, tokens, err := s.generateAIReply(accountID, chat)
+	reply, tokens, err := s.generateAIReply(accountID, ticketID, chat)
 	if err != nil || strings.TrimSpace(reply) == "" {
 		slog.Error("Atendente IA falhou", "erro", err, "ticket", ticketID)
 		return
@@ -675,12 +683,16 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 // entra no loop de function-calling: a IA pode pedir uma busca, o backend executa
 // a chamada HTTP configurada e devolve o resultado para a IA compor a resposta.
 // Sem ferramentas, usa o caminho simples. Devolve o texto + o total de tokens.
-func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage) (string, int, error) {
+func (s *SupportService) generateAIReply(accountID, ticketID string, chat []AIChatMessage) (string, int, error) {
 	var actions []models.AIAction
 	if s.aiActions != nil {
 		actions, _ = s.aiActions.ListEnabled(accountID)
 	}
-	if len(actions) == 0 {
+	// Ferramenta EMBUTIDA: a IA entrega o atendimento ao time humano quando o
+	// cliente pede, quando não consegue resolver ou quando o lead já está
+	// qualificado. Só existe numa conversa real (no rascunho do Cmd+I, não).
+	handoff := ticketID != ""
+	if len(actions) == 0 && !handoff {
 		return s.ai.Complete(chat, 500)
 	}
 	msgs := make([]map[string]any, 0, len(chat))
@@ -693,6 +705,17 @@ func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage)
 		name := fmt.Sprintf("acao_%d", i)
 		byName[name] = a
 		tools = append(tools, AITool{Name: name, Description: a.TriggerDesc, ParamName: a.ParamName, ParamDesc: a.ParamDesc})
+	}
+	if handoff {
+		tools = append(tools, AITool{
+			Name: toolHandoff,
+			Description: "Encaminhe a conversa para um atendente humano quando o cliente pedir uma pessoa, " +
+				"quando você não conseguir resolver, ou quando já tiver as informações que o time precisa " +
+				"(o que a pessoa quer, para quando e de onde ela é). Depois de encaminhar, avise o cliente " +
+				"em uma frase curta que um atendente vai continuar.",
+			ParamName: "resumo",
+			ParamDesc: "Resumo em 1-3 linhas do que o cliente quer e dos dados coletados, para o atendente ler",
+		})
 	}
 	// Reforça no system que a IA deve USAR as ferramentas (senão o guardrail a leva a
 	// "chamar um atendente" em vez de pedir o dado e consultar).
@@ -728,7 +751,7 @@ func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage)
 		rawMsg["role"] = "assistant"
 		msgs = append(msgs, rawMsg)
 		for _, c := range calls {
-			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": c.ID, "content": s.runAITool(byName, c)})
+			msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": c.ID, "content": s.runAITool(accountID, ticketID, byName, c)})
 		}
 	}
 	// Muitas rodadas: pede a resposta final já sem ferramentas.
@@ -739,7 +762,16 @@ func (s *SupportService) generateAIReply(accountID string, chat []AIChatMessage)
 
 // runAITool executa a ferramenta pedida pela IA (chamada HTTP configurada) e
 // devolve o resultado como texto para a IA interpretar.
-func (s *SupportService) runAITool(byName map[string]models.AIAction, c AIToolCall) string {
+func (s *SupportService) runAITool(accountID, ticketID string, byName map[string]models.AIAction, c AIToolCall) string {
+	if c.Name == toolHandoff {
+		var args map[string]any
+		_ = json.Unmarshal([]byte(c.ArgsJSON), &args)
+		resumo := ""
+		if v, ok := args["resumo"]; ok {
+			resumo = fmt.Sprintf("%v", v)
+		}
+		return s.handoffToHuman(accountID, ticketID, resumo)
+	}
 	a, ok := byName[c.Name]
 	if !ok {
 		return "Ferramenta desconhecida."

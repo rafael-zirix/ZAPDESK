@@ -44,6 +44,27 @@ func (h *SupportHandler) CreateSector(c *gin.Context) {
 }
 
 // UpdateSector renomeia o setor e define os membros (admin).
+// SetAdSector marca qual setor recebe os leads de anúncio (um por conta;
+// `ad_default: false` desmarca e os leads voltam a cair na triagem normal).
+func (h *SupportHandler) SetAdSector(c *gin.Context) {
+	var req struct {
+		AdDefault bool `json:"ad_default"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	id := c.Param("id")
+	if !req.AdDefault {
+		id = "" // desmarcar é limpar a escolha da conta
+	}
+	if err := h.support.SetAdSector(middleware.AccountID(c), id); err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao salvar o setor de anúncios", err.Error())
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Setor de anúncios atualizado", gin.H{"ad_default": req.AdDefault})
+}
+
 func (h *SupportHandler) UpdateSector(c *gin.Context) {
 	var req models.SectorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -14,7 +14,7 @@ import (
 // ListSectors devolve os setores da conta com os ids dos membros.
 func (r *SupportRepository) ListSectors(accountID string) ([]models.SupportSector, error) {
 	rows, err := r.db.Query(`
-		SELECT s.id, s.account_id, s.name, s.created_at,
+		SELECT s.id, s.account_id, s.name, s.created_at, s.ad_default,
 		       COALESCE(array_agg(m.user_id::text) FILTER (WHERE m.user_id IS NOT NULL), '{}')
 		FROM support_sectors s
 		LEFT JOIN support_sector_members m ON m.sector_id = s.id
@@ -29,7 +29,7 @@ func (r *SupportRepository) ListSectors(accountID string) ([]models.SupportSecto
 	for rows.Next() {
 		var s models.SupportSector
 		var members pq.StringArray
-		if err := rows.Scan(&s.ID, &s.AccountID, &s.Name, &s.CreatedAt, &members); err != nil {
+		if err := rows.Scan(&s.ID, &s.AccountID, &s.Name, &s.CreatedAt, &s.AdDefault, &members); err != nil {
 			return nil, err
 		}
 		s.Members = members

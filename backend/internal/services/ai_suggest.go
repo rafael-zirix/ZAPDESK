@@ -62,7 +62,9 @@ func (s *SupportService) SuggestReply(accountID, ticketID string) (string, int, 
 	// ajuda). Um empurrão final orienta a IA a redigir mesmo assim.
 	chat = append(chat, AIChatMessage{Role: "user", Content: suggestNudge})
 
-	text, tokens, err := s.generateAIReply(accountID, chat)
+	// Ticket vazio de propósito: no rascunho a IA não pode encaminhar nem mexer
+	// na conversa — ela só escreve o texto.
+	text, tokens, err := s.generateAIReply(accountID, "", chat)
 	if err != nil {
 		return "", tokens, err
 	}

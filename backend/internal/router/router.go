@@ -233,6 +233,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/sectors", middleware.RequireAdmin(), supportH.CreateSector)
 			support.PUT("/sectors/:id", middleware.RequireAdmin(), supportH.UpdateSector)
 			support.DELETE("/sectors/:id", middleware.RequireAdmin(), supportH.DeleteSector)
+			support.PUT("/sectors/:id/ad", middleware.RequireAdmin(), supportH.SetAdSector) // recebe os leads de anúncio
 			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
 			support.POST("/tickets/:id/notes", supportH.AddNote)          // nota interna (só a equipe vê)
 			support.PUT("/tickets/:id/tags", supportH.SetTicketTags)      // etiqueta a conversa

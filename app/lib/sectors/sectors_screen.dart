@@ -111,11 +111,38 @@ class _SectorsScreenState extends State<SectorsScreen> {
             child: Text('${s.members.length} atendente${s.members.length == 1 ? '' : 's'}',
                 style: const TextStyle(color: AppTheme.seed, fontSize: 12, fontWeight: FontWeight.w600)),
           ),
+          // 📣 setor que recebe os leads de anúncio (Click-to-WhatsApp).
+          IconButton(
+            icon: Icon(s.adDefault ? Icons.campaign : Icons.campaign_outlined,
+                color: s.adDefault ? const Color(0xFFF79009) : null),
+            tooltip: s.adDefault
+                ? 'Recebe os leads de anúncio — clique para desmarcar'
+                : 'Marcar como o setor que recebe os leads de anúncio',
+            onPressed: () => _toggleAd(s),
+          ),
           IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Editar', onPressed: () => _openForm(edit: s)),
           IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Excluir', onPressed: () => _confirmDelete(s)),
         ],
       ),
     );
+  }
+
+  /// Marca/desmarca o setor que recebe os leads de anúncio. É exclusivo: marcar
+  /// um desmarca o anterior (o backend garante isso).
+  Future<void> _toggleAd(Sector s) async {
+    final r = await _api.put('/support/sectors/${s.id}/ad', {'ad_default': !s.adDefault});
+    if (!mounted) return;
+    if (r.ok) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(s.adDefault
+              ? 'Leads de anúncio voltam a cair na triagem normal'
+              : '“${s.name}” passa a receber os leads de anúncio')));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(r.message ?? 'Não foi possível salvar')));
+    }
   }
 
   Future<void> _openForm({Sector? edit}) async {

@@ -92,6 +92,15 @@ type metaPayload struct {
 							Description string `json:"description"`
 						} `json:"list_reply"`
 					} `json:"interactive"`
+					// Anúncio Click-to-WhatsApp: a Meta identifica o criativo que
+					// trouxe o lead (só vem na PRIMEIRA mensagem da conversa).
+					Referral *struct {
+						SourceID   string `json:"source_id"`
+						SourceType string `json:"source_type"` // ad | post
+						SourceURL  string `json:"source_url"`
+						Headline   string `json:"headline"`
+						CtwaClid   string `json:"ctwa_clid"`
+					} `json:"referral"`
 					// Resposta a botão de TEMPLATE (quick-reply de modelo).
 					Button *struct {
 						Text    string `json:"text"`
@@ -172,6 +181,18 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 					if err != nil {
 						slog.Error("Falha ao processar mensagem recebida", "erro", err, "wamid", m.ID)
 					} else if tid != "" {
+						// Veio de anúncio: etiqueta, roteia p/ o comercial e
+						// registra a origem ANTES de a IA responder (assim ela
+						// já sabe que está falando com um lead).
+						if m.Referral != nil {
+							h.support.ApplyAdReferral(accountID, tid, services.AdReferral{
+								SourceID:   m.Referral.SourceID,
+								SourceType: m.Referral.SourceType,
+								SourceURL:  m.Referral.SourceURL,
+								Headline:   m.Referral.Headline,
+								CtwaClid:   m.Referral.CtwaClid,
+							})
+						}
 						go h.support.TriggerAIReply(accountID, tid)
 					}
 					continue

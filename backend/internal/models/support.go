@@ -130,6 +130,7 @@ type SupportSector struct {
 	AccountID string    `json:"-"`
 	Name      string    `json:"name"`
 	Members   []string  `json:"members"` // ids dos atendentes do setor
+	AdDefault bool      `json:"ad_default"` // recebe os leads de anúncio (um por conta)
 	CreatedAt time.Time `json:"created_at"`
 }
 

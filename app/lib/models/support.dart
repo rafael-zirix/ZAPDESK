@@ -108,16 +108,20 @@ class QuickReply {
 
 /// Um setor (fila de atendimento) da empresa.
 class Sector {
-  Sector({required this.id, required this.name, this.members = const []});
+  Sector({required this.id, required this.name, this.members = const [], this.adDefault = false});
 
   final String id;
   final String name;
   final List<String> members; // ids dos atendentes do setor
 
+  /// Setor que recebe os leads vindos de anúncio (Click-to-WhatsApp). Um por empresa.
+  final bool adDefault;
+
   factory Sector.fromJson(Map<String, dynamic> j) => Sector(
         id: j['id'],
         name: j['name'] ?? '',
         members: ((j['members'] as List?) ?? const []).cast<String>(),
+        adDefault: j['ad_default'] ?? false,
       );
 }
 
