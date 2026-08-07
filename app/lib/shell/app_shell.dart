@@ -12,6 +12,7 @@ import '../core/api_client.dart';
 import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
+import '../instagram/instagram_screen.dart';
 import '../metrics/metrics_screen.dart';
 import '../models/app_user.dart';
 import '../modules/module_teaser.dart';
@@ -154,6 +155,8 @@ class _AppShellState extends State<AppShell> {
       items.add(const _NavDest(Icons.workspaces_outline, Icons.workspaces, 'Setores', SectorsScreen()));
       items.add(const _NavDest(Icons.local_offer_outlined, Icons.local_offer, 'Etiquetas', TagsScreen()));
       items.add(const _NavDest(Icons.smartphone_outlined, Icons.smartphone, 'Telefones', WhatsAppScreen()));
+      items.add(_gated('instagram',
+          const _NavDest(Icons.camera_alt_outlined, Icons.camera_alt, 'Instagram', InstagramScreen())));
       items.add(_gated('campanhas',
           const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen())));
       items.add(_gated('metricas',
@@ -278,7 +281,7 @@ class _AppShellState extends State<AppShell> {
       label: 'Configurações',
       icon: Icons.settings_outlined,
       activeIcon: Icons.settings,
-      members: {'Telefones', 'Planos', 'Consumo', 'Tipo de login'},
+      members: {'Telefones', 'Instagram', 'Planos', 'Consumo', 'Tipo de login'},
     ),
   ];
 

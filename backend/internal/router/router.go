@@ -122,6 +122,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	aiH := handlers.NewAIHandler(supportSvc, cfg.AIConfigured())
 	billingH := handlers.NewBillingHandler(billingSvc)
 
+	// Canal do Instagram (Direct + Lead Ads). Compartilha o webhook da Meta.
+	igRepo := repository.NewInstagramRepository(db)
+	igSvc := services.NewInstagramService(igRepo, supportSvc, cipher, cfg.MetaAPIBase)
+	supportSvc.WithInstagramSender(igSvc.SendDirect) // resposta do atendente sai pelo Direct
+	igH := handlers.NewInstagramHandler(igSvc)
+	webhookH = webhookH.WithInstagram(igSvc)
+
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
 	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db))
 	moduleH := handlers.NewModuleHandler(moduleSvc)
@@ -289,6 +296,15 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		{
 			otp.GET("", waH.GetOTP)
 			otp.PUT("", waH.SetOTP)
+		}
+
+		// Instagram da própria empresa (admin): conectar/desconectar a conta.
+		insta := api.Group("/settings/instagram", middleware.RequireAdmin(),
+			middleware.RequireModule(moduleSvc, services.ModuleInstagram))
+		{
+			insta.GET("", igH.List)
+			insta.POST("", igH.Connect)
+			insta.DELETE("/:id", igH.Disconnect)
 		}
 
 		// Embedded Signup: conectar número via popup da Meta (admin da empresa).

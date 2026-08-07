@@ -90,6 +90,8 @@ type SupportService struct {
 	aiActions *repository.AIActionRepository // ferramentas configuráveis (function-calling)
 	// Cobrança (opcional) — dispara a recarga automática ao consumir tokens.
 	billing *BillingService
+	// Envio pelo Direct do Instagram (ligado no wiring; nil = canal desligado).
+	igSend func(accountID, recipientID, text string) (string, error)
 	// Cache das categorias dos modelos por conta (para o relatório de consumo).
 	tplCacheMu sync.Mutex
 	tplCache   map[string]tplCacheEntry
@@ -120,6 +122,13 @@ func (s *SupportService) WithAI(ai *AIClient, aiRepo *repository.AIRepository, a
 
 // AIActionsRepo expõe o repositório de ações (para os handlers de CRUD).
 func (s *SupportService) AIActionsRepo() *repository.AIActionRepository { return s.aiActions }
+
+// WithInstagramSender liga o envio pelo Direct. É uma função, e não o serviço
+// do Instagram, porque ELE depende deste aqui — passar o objeto fecharia um ciclo.
+func (s *SupportService) WithInstagramSender(fn func(accountID, recipientID, text string) (string, error)) *SupportService {
+	s.igSend = fn
+	return s
+}
 
 // clientFor devolve o cliente Meta da conta (token do número conectado) e o
 // waba_id. Cai no fallback global quando a conta não tem número. Retorna nil
@@ -1308,11 +1317,6 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 			})
 		}
 	}
-	phone, err := s.repo.ContactPhone(ticketID)
-	if err != nil {
-		return nil, err
-	}
-
 	content := text
 	sender := userID
 	msg := &models.SupportMessage{
@@ -1323,6 +1327,36 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 		Content:   &content,
 		Status:    "pending",
 		SenderID:  &sender,
+	}
+
+	// Conversa do Instagram: a resposta sai pelo Direct (não existe template lá —
+	// fora da janela de 24h a Meta recusa e a mensagem fica "failed").
+	if ch, _ := s.repo.TicketChannel(accountID, ticketID); ch == ChannelInstagram {
+		if s.igSend == nil {
+			msg.Status = "pending"
+			return s.repo.InsertMessage(msg)
+		}
+		igsid, _ := s.repo.ContactExternalID(ticketID)
+		mid, sendErr := s.igSend(accountID, igsid, text)
+		if sendErr != nil {
+			slog.Error("envio pelo Direct falhou", "conta", accountID, "ticket", ticketID, "erro", sendErr)
+			msg.Status = "failed"
+		} else {
+			msg.Status = "sent"
+			if mid != "" {
+				msg.ExternalID = &mid
+			}
+		}
+		saved, err := s.repo.InsertMessage(msg)
+		if err != nil {
+			return nil, err
+		}
+		return saved, sendErr
+	}
+
+	phone, err := s.repo.ContactPhone(ticketID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Envio roteado pelo número da conta; grava com o status resultante e o wamid.

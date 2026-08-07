@@ -65,10 +65,11 @@ func ModuleCatalog() []ModuleInfo {
 			ComingSoon:  true,
 		},
 		{
-			Key:         ModuleInstagram,
-			Name:        "Instagram",
-			Description: "Direct do Instagram na mesma caixa de entrada, com os mesmos setores e a mesma IA.",
-			ComingSoon:  true,
+			Key:  ModuleInstagram,
+			Name: "Instagram",
+			Description: "Direct e Lead Ads do Instagram na mesma caixa de entrada, com os mesmos setores, " +
+				"etiquetas e IA. Depende da aprovação das permissões do app na Meta.",
+			PriceCents: 0,
 		},
 	}
 }

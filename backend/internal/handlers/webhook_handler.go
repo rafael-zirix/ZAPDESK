@@ -24,6 +24,14 @@ type WebhookHandler struct {
 	// Nesta fase de 1 número, todas as mensagens caem numa conta fixa. Na fase
 	// multi-número, o phone_number_id do payload resolverá a conta.
 	defaultAccountID string
+	// Canal do Instagram (opcional; nil = desligado).
+	instagram *services.InstagramService
+}
+
+// WithInstagram liga o canal do Instagram neste webhook.
+func (h *WebhookHandler) WithInstagram(ig *services.InstagramService) *WebhookHandler {
+	h.instagram = ig
+	return h
 }
 
 func NewWebhookHandler(support *services.SupportService, verifyToken, appSecret, defaultAccountID string) *WebhookHandler {
@@ -131,6 +139,18 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 	// escolhe QUAL segredo valida: números sob o app PRÓPRIO do cliente são
 	// assinados com o App Secret dele (guardado por-conta), não o da plataforma.
 	// Só json.Unmarshal aqui — nada é processado antes de a assinatura conferir.
+	// O Instagram usa o MESMO webhook, com outro formato (object=instagram).
+	// A assinatura dele é a do app da plataforma (o canal não tem app próprio).
+	if isInstagramPayload(raw) {
+		if !validSignatureWith(h.appSecret, c.GetHeader("X-Hub-Signature-256"), raw) {
+			slog.Warn("webhook do Instagram: assinatura inválida — payload descartado")
+			c.Status(http.StatusUnauthorized)
+			return
+		}
+		h.handleInstagram(raw)
+		c.Status(http.StatusOK)
+		return
+	}
 	var p metaPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		c.Status(http.StatusOK) // responde 200 p/ a Meta não reenviar
