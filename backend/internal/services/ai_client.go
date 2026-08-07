@@ -41,6 +41,15 @@ type AIChatMessage struct {
 // Complete gera uma resposta e devolve o texto + o total de tokens usados
 // (prompt + completion) — para descontar do saldo da empresa.
 func (c *AIClient) Complete(messages []AIChatMessage, maxTokens int) (string, int, error) {
+	// Mesmo desvio do ChatRaw: a Anthropic não é OpenAI-compatível.
+	if c.isAnthropic() {
+		msgs := make([]map[string]any, 0, len(messages))
+		for _, m := range messages {
+			msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
+		}
+		texto, _, _, tokens, err := c.chatAnthropic(msgs, nil, maxTokens)
+		return texto, tokens, err
+	}
 	if !c.Configured() {
 		return "", 0, errors.New("motor de IA não configurado")
 	}
@@ -117,6 +126,10 @@ type AIToolCall struct {
 func (c *AIClient) ChatRaw(messages []map[string]any, tools []AITool, maxTokens int) (string, []AIToolCall, map[string]any, int, error) {
 	if !c.Configured() {
 		return "", nil, nil, 0, errors.New("motor de IA não configurado")
+	}
+	// A Anthropic fala outro protocolo: traduz em ai_client_anthropic.go.
+	if c.isAnthropic() {
+		return c.chatAnthropic(messages, tools, maxTokens)
 	}
 	if maxTokens <= 0 {
 		maxTokens = 500
