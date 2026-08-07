@@ -1,0 +1,2 @@
+ALTER TABLE ai_actions DROP COLUMN IF EXISTS content;
+ALTER TABLE ai_actions DROP COLUMN IF EXISTS kind;

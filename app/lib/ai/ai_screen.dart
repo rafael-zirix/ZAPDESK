@@ -605,7 +605,10 @@ class _AIScreenState extends State<AIScreen> {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text((a['name'] ?? '').toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-            Text('${a['method'] ?? 'GET'} · pergunta: ${a['param_desc'] ?? a['param_name'] ?? ''}',
+            Text(
+                a['kind'] == 'text'
+                    ? 'Texto fixo · ${(a['content'] ?? '').toString().replaceAll('\n', ' ')}'
+                    : '${a['method'] ?? 'GET'} · pergunta: ${a['param_desc'] ?? a['param_name'] ?? ''}',
                 maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
           ]),
         ),
@@ -659,6 +662,8 @@ class _AIScreenState extends State<AIScreen> {
     final loginUrl = TextEditingController(text: existing?['login_url']?.toString() ?? '');
     final loginBody = TextEditingController();
     final tokenField = TextEditingController(text: existing?['token_field']?.toString() ?? 'token');
+    final content = TextEditingController(text: existing?['content']?.toString() ?? '');
+    var kind = (existing?['kind']?.toString() ?? 'http'); // http = consulta API; text = conteúdo escrito
     var method = (existing?['method']?.toString() ?? 'GET').toUpperCase();
     final hasAuth = existing?['has_auth'] == true;
     final hasLogin = existing?['has_login'] == true;
@@ -673,8 +678,45 @@ class _AIScreenState extends State<AIScreen> {
             child: SingleChildScrollView(
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 TextField(controller: name, decoration: const InputDecoration(labelText: 'Nome (ex.: 2ª via de boleto)')),
+                const SizedBox(height: 10),
+                // Como a ação responde. O texto fixo é para quem não tem API:
+                // a IA consulta esse conteúdo SÓ quando o assunto aparece.
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'http', icon: Icon(Icons.cloud_outlined, size: 16), label: Text('Consulta em API')),
+                    ButtonSegment(value: 'text', icon: Icon(Icons.notes_outlined, size: 16), label: Text('Texto fixo')),
+                  ],
+                  selected: {kind},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (v) => setLocal(() => kind = v.first),
+                ),
                 const SizedBox(height: 8),
                 TextField(controller: trigger, minLines: 2, maxLines: 3, decoration: const InputDecoration(labelText: 'Quando a IA deve usar', hintText: 'Ex.: cliente pede 2ª via, boleto, fatura em aberto', alignLabelWithHint: true)),
+                if (kind == 'text') ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: content,
+                    minLines: 6,
+                    maxLines: 14,
+                    decoration: const InputDecoration(
+                      labelText: 'Conteúdo que a IA deve usar',
+                      alignLabelWithHint: true,
+                      hintText: 'Ex.: tabela de preços por cidade, prazos de instalação, o que está na garantia…',
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                          'Vale para quem não tem integração. Diferente da base de conhecimento, este texto '
+                          'não entra em toda mensagem — a IA busca aqui só quando o assunto aparece, o que sai '
+                          'mais barato e mais preciso para tabelas e listas.',
+                          style: TextStyle(fontSize: 11.5, color: Colors.grey)),
+                    ),
+                  ),
+                ],
+                if (kind != 'text') ...[
                 const SizedBox(height: 8),
                 TextField(controller: paramDesc, decoration: const InputDecoration(labelText: 'O que perguntar ao cliente', hintText: 'Ex.: CPF ou CNPJ (só números)')),
                 const SizedBox(height: 8),
@@ -715,6 +757,7 @@ class _AIScreenState extends State<AIScreen> {
                 TextField(controller: loginBody, minLines: 1, maxLines: 3, decoration: InputDecoration(labelText: 'Corpo do login (com o token)', hintText: hasLogin ? 'salvo — deixe em branco p/ manter' : '{"token":"SEU_TOKEN"}')),
                 const SizedBox(height: 8),
                 TextField(controller: tokenField, decoration: const InputDecoration(labelText: 'Campo do token na resposta', hintText: 'token')),
+                ],
               ]),
             ),
           ),
@@ -728,6 +771,8 @@ class _AIScreenState extends State<AIScreen> {
     if (ok != true) return;
     final payload = <String, dynamic>{
       'name': name.text.trim(),
+      'kind': kind,
+      'content': content.text.trim(),
       'trigger_desc': trigger.text.trim(),
       'param_desc': paramDesc.text.trim(),
       'param_name': paramName.text.trim(),

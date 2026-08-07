@@ -34,12 +34,16 @@ func sanitizeParamName(p string) string {
 }
 
 type aiActionReq struct {
-	Name         string `json:"name" binding:"required"`
-	TriggerDesc  string `json:"trigger_desc" binding:"required"`
-	ParamName    string `json:"param_name"`
-	ParamDesc    string `json:"param_desc"`
-	Method       string `json:"method"`
-	URL          string `json:"url" binding:"required"`
+	Name        string `json:"name" binding:"required"`
+	Kind        string `json:"kind"`    // http (padrão) | text
+	Content     string `json:"content"` // conteúdo da ação de texto
+	TriggerDesc string `json:"trigger_desc" binding:"required"`
+	ParamName   string `json:"param_name"`
+	ParamDesc   string `json:"param_desc"`
+	Method      string `json:"method"`
+	// Sem `required`: a ação de TEXTO não tem URL. A exigência é validada por
+	// tipo no handler, com mensagem que diz o que falta.
+	URL          string `json:"url"`
 	BodyTemplate string `json:"body_template"`
 	AuthHeader   string `json:"auth_header"`
 	LoginURL     string `json:"login_url"`
@@ -61,8 +65,14 @@ func (r aiActionReq) toModel(accountID string) models.AIAction {
 	if tokenField == "" {
 		tokenField = "token"
 	}
+	kind := strings.ToLower(strings.TrimSpace(r.Kind))
+	if kind != "text" {
+		kind = "http"
+	}
 	return models.AIAction{
 		AccountID:    accountID,
+		Kind:         kind,
+		Content:      strings.TrimSpace(r.Content),
 		Name:         strings.TrimSpace(r.Name),
 		TriggerDesc:  strings.TrimSpace(r.TriggerDesc),
 		ParamName:    sanitizeParamName(r.ParamName),
@@ -76,6 +86,21 @@ func (r aiActionReq) toModel(accountID string) models.AIAction {
 		TokenField:   tokenField,
 		Enabled:      enabled,
 	}
+}
+
+// validateAction cobra o que cada tipo precisa: a de texto exige conteúdo; a de
+// API exige URL. Devolve a mensagem pronta para o usuário ("" = ok).
+func validateAction(a models.AIAction) string {
+	if a.Kind == "text" {
+		if a.Content == "" {
+			return "Escreva o conteúdo que a IA deve usar nesta ação"
+		}
+		return ""
+	}
+	if a.URL == "" {
+		return "Informe a URL da consulta"
+	}
+	return ""
 }
 
 // ListActions devolve as Ações da IA da conta (sem o auth em texto).
@@ -95,6 +120,10 @@ func (h *AIHandler) CreateAction(c *gin.Context) {
 		return
 	}
 	a := req.toModel(middleware.AccountID(c))
+	if msg := validateAction(a); msg != "" {
+		RespondError(c, http.StatusBadRequest, ErrValidation, msg, nil)
+		return
+	}
 	if err := h.support.AIActionsRepo().Create(&a); err != nil {
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao criar a ação", nil)
 		return
@@ -111,6 +140,10 @@ func (h *AIHandler) UpdateAction(c *gin.Context) {
 	}
 	a := req.toModel(middleware.AccountID(c))
 	a.ID = c.Param("id")
+	if msg := validateAction(a); msg != "" {
+		RespondError(c, http.StatusBadRequest, ErrValidation, msg, nil)
+		return
+	}
 	// Segredos (auth_header/login_body) em branco = mantém o atual (o repo trata via CASE).
 	if err := h.support.AIActionsRepo().Update(&a); err != nil {
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao salvar a ação", nil)

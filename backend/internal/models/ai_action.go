@@ -10,6 +10,10 @@ type AIAction struct {
 	ID           string    `json:"id"`
 	AccountID    string    `json:"account_id"`
 	Name         string    `json:"name"`
+	// Como a ação responde: "http" (consulta uma API) ou "text" (conteúdo fixo
+	// escrito pelo cliente — para quem não tem integração).
+	Kind         string    `json:"kind"`
+	Content      string    `json:"content"` // usado quando Kind == "text"
 	TriggerDesc  string    `json:"trigger_desc"`
 	ParamName    string    `json:"param_name"`
 	ParamDesc    string    `json:"param_desc"`

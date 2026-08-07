@@ -15,11 +15,34 @@ import (
 	"zapdesk/internal/models"
 )
 
+// Tipos de ação. "http" consulta uma API do cliente; "text" responde com um
+// conteúdo fixo que ele escreveu (sem integração e sem rede).
+const (
+	ActionKindHTTP = "http"
+	ActionKindText = "text"
+)
+
+// maxActionOutput é o teto do que vai para o prompt (custo de token).
+const maxActionOutput = 6000
+
 // ExecuteAction faz a chamada HTTP de uma Ação da IA: substitui {param_name} pelo
 // valor coletado (na URL e no corpo), aplica o cabeçalho de auth e devolve a
 // resposta (texto, truncada) para a IA interpretar. Genérico — serve para qualquer
 // API REST, sem código por integração.
 func ExecuteAction(a models.AIAction, paramValue string) (string, error) {
+	// Ação de TEXTO: o cliente escreveu o conteúdo (tabela de preços, prazos,
+	// regras). Nada de rede — devolvemos o texto para a IA interpretar. É a
+	// saída de quem não tem API, e é a opção mais segura que existe.
+	if strings.EqualFold(strings.TrimSpace(a.Kind), ActionKindText) {
+		out := strings.TrimSpace(a.Content)
+		if out == "" {
+			return "", fmt.Errorf("a ação não tem conteúdo cadastrado")
+		}
+		if len(out) > maxActionOutput {
+			out = out[:maxActionOutput] + "\n…(conteúdo truncado)"
+		}
+		return out, nil
+	}
 	ph := "{" + strings.TrimSpace(a.ParamName) + "}"
 	target := strings.ReplaceAll(a.URL, ph, url.QueryEscape(paramValue))
 	body := strings.ReplaceAll(a.BodyTemplate, ph, jsonEscape(paramValue))
@@ -55,8 +78,7 @@ func ExecuteAction(a models.AIAction, paramValue string) (string, error) {
 			req.Header.Set(strings.TrimSpace(h[:i]), strings.TrimSpace(h[i+1:]))
 		}
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := safeHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -66,9 +88,8 @@ func ExecuteAction(a models.AIAction, paramValue string) (string, error) {
 		return "", fmt.Errorf("a API respondeu %d", resp.StatusCode)
 	}
 	out := strings.TrimSpace(string(raw))
-	const maxOut = 6000 // teto do que vai pro prompt (custo de token)
-	if len(out) > maxOut {
-		out = out[:maxOut] + "\n…(resposta truncada)"
+	if len(out) > maxActionOutput {
+		out = out[:maxActionOutput] + "\n…(resposta truncada)"
 	}
 	return out, nil
 }
@@ -130,8 +151,7 @@ func actionLoginToken(a models.AIAction) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := safeHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
