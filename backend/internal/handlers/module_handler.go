@@ -46,6 +46,25 @@ func (h *ModuleHandler) AdminList(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "OK", mods)
 }
 
+// AdminPrices lê/grava a TABELA de preços dos módulos (vale para todo mundo que
+// não tem preço negociado).
+func (h *ModuleHandler) AdminPrices(c *gin.Context) {
+	RespondSuccess(c, http.StatusOK, "OK", h.modules.TablePrices())
+}
+
+func (h *ModuleHandler) AdminSetPrices(c *gin.Context) {
+	var req map[string]int
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	if err := h.modules.SetTablePrices(req); err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao salvar os preços", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Preços atualizados", nil)
+}
+
 // AdminLimits lê a régua do plano de uma empresa (assentos, números, histórico).
 func (h *ModuleHandler) AdminLimits(c *gin.Context) {
 	l, err := h.modules.Limits(c.Param("id"))

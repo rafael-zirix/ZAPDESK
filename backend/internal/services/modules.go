@@ -90,6 +90,7 @@ var ErrModuleUnknown = errors.New("módulo desconhecido")
 type ModuleService struct {
 	repo     *repository.ModuleRepository
 	accounts *repository.AccountRepository
+	settings *repository.SupportRepository // tabela de preços da plataforma
 }
 
 func NewModuleService(repo *repository.ModuleRepository) *ModuleService {
@@ -135,8 +136,12 @@ func (s *ModuleService) ForAccount(accountID string) ([]ModuleInfo, error) {
 		return nil, err
 	}
 	now := time.Now()
+	tabela := s.TablePrices()
 	out := ModuleCatalog()
 	for i := range out {
+		if p, ok := tabela[out[i].Key]; ok && p > 0 {
+			out[i].PriceCents = p // preço de tabela (o do catálogo é só o padrão)
+		}
 		if out[i].Core {
 			out[i].Enabled = true
 			continue

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'module_prices_card.dart';
 import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
@@ -87,6 +89,7 @@ class _UsageScreenState extends State<UsageScreen> {
       padding: const EdgeInsets.all(20),
       children: [
         _PricingCard(c),
+        const ModulePricesCard(),
         _MetaPricingCard(c),
         for (final co in c.companies) _companyCard(co, c.pricing),
       ],

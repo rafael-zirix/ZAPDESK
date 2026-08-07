@@ -1,0 +1,1 @@
+ALTER TABLE accounts ALTER COLUMN max_users SET DEFAULT 3;

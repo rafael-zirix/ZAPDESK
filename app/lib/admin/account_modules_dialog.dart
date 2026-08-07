@@ -40,7 +40,7 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
     if (!mounted) return;
     if (p.ok && p.data is Map) {
       final m = p.data as Map;
-      _assentos.text = '${m['max_users'] ?? 3}';
+      _assentos.text = '${m['max_users'] ?? 2}';
       _numeros.text = '${m['max_numbers'] ?? 1}';
       _historico.text = '${m['history_days'] ?? 0}';
     }
@@ -73,7 +73,7 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
   Future<void> _salvarPlano() async {
     setState(() => salvandoPlano = true);
     final r = await _api.put('/admin/accounts/${widget.accountId}/plan', {
-      'max_users': int.tryParse(_assentos.text.trim()) ?? 3,
+      'max_users': int.tryParse(_assentos.text.trim()) ?? 2,
       'max_numbers': int.tryParse(_numeros.text.trim()) ?? 1,
       'history_days': int.tryParse(_historico.text.trim()) ?? 0,
     });
@@ -83,7 +83,7 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
         SnackBar(content: Text(r.ok ? 'Plano atualizado' : (r.message ?? 'Não foi possível salvar'))));
   }
 
-  // Limites do plano. O Free nasce 3 usuários / 1 número / 90 dias; o pago solta.
+  // Limites do plano. O Free nasce 2 usuários / 1 número / 90 dias; o pago solta.
   Widget _planoCard() => Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(12),

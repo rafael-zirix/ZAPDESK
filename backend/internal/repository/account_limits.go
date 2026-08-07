@@ -17,11 +17,11 @@ type AccountLimits struct {
 func (r *AccountRepository) Limits(accountID string) (AccountLimits, error) {
 	var l AccountLimits
 	err := r.db.QueryRow(
-		`SELECT COALESCE(max_users,3), COALESCE(max_numbers,1), COALESCE(history_days,0)
+		`SELECT COALESCE(max_users,2), COALESCE(max_numbers,1), COALESCE(history_days,0)
 		   FROM accounts WHERE id=$1 AND deleted_at IS NULL`, accountID).
 		Scan(&l.MaxUsers, &l.MaxNumbers, &l.HistoryDays)
 	if err == sql.ErrNoRows {
-		return AccountLimits{MaxUsers: 3, MaxNumbers: 1}, nil
+		return AccountLimits{MaxUsers: 2, MaxNumbers: 1}, nil
 	}
 	return l, err
 }

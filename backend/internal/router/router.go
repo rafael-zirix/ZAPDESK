@@ -132,7 +132,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	webhookH = webhookH.WithInstagram(igSvc)
 
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
-	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo)
+	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo).WithSettings(supportRepo)
 	moduleH := handlers.NewModuleHandler(moduleSvc)
 	supportSvc.WithModuleCheck(moduleSvc.Has) // regras vendidas à parte só rodam p/ quem contratou
 	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
@@ -397,6 +397,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			// Módulos contratados por empresa (liga/desliga, preço próprio, teste).
 			admin.GET("/accounts/:id/modules", moduleH.AdminList)
 			admin.PUT("/accounts/:id/modules", moduleH.AdminSet)
+			admin.GET("/module-prices", moduleH.AdminPrices) // tabela de preços dos módulos
+			admin.PUT("/module-prices", moduleH.AdminSetPrices)
 			admin.GET("/accounts/:id/plan", moduleH.AdminLimits)  // assentos, números, retenção
 			admin.PUT("/accounts/:id/plan", moduleH.AdminSetLimits)
 			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.
