@@ -14,6 +14,7 @@ import '../core/theme.dart';
 import '../inbox/inbox_screen.dart';
 import '../metrics/metrics_screen.dart';
 import '../models/app_user.dart';
+import '../modules/module_teaser.dart';
 import '../onboarding/onboarding_screen.dart';
 import '../plans/plans_screen.dart';
 import '../sectors/sectors_screen.dart';
@@ -123,6 +124,15 @@ class _AppShellState extends State<AppShell> {
     SharedPreferences.getInstance().then((p) => p.setString(_navKey, dests[i].label));
   }
 
+  /// Aba de MÓDULO: entrega a tela quando a empresa contratou; senão, a vitrine
+  /// de contratação no lugar dela (o item continua no menu — é o upsell).
+  /// Enquanto o catálogo não chegou do backend, não bloqueia nada.
+  _NavDest _gated(String moduleKey, _NavDest dest) {
+    final auth = context.read<AuthController>();
+    if (auth.modules.isEmpty || auth.has(moduleKey)) return dest;
+    return _NavDest(dest.icon, dest.activeIcon, dest.label, ModuleTeaserScreen(moduleKey: moduleKey));
+  }
+
   List<_NavDest> _destinations(AppUser me) {
     // Super-admin é o dono da plataforma: só gerencia empresas.
     if (me.isSuperAdmin) {
@@ -144,14 +154,19 @@ class _AppShellState extends State<AppShell> {
       items.add(const _NavDest(Icons.workspaces_outline, Icons.workspaces, 'Setores', SectorsScreen()));
       items.add(const _NavDest(Icons.local_offer_outlined, Icons.local_offer, 'Etiquetas', TagsScreen()));
       items.add(const _NavDest(Icons.smartphone_outlined, Icons.smartphone, 'Telefones', WhatsAppScreen()));
-      items.add(const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen()));
-      items.add(const _NavDest(Icons.query_stats_outlined, Icons.query_stats, 'Métricas', MetricsScreen()));
+      items.add(_gated('campanhas',
+          const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen())));
+      items.add(_gated('metricas',
+          const _NavDest(Icons.query_stats_outlined, Icons.query_stats, 'Métricas', MetricsScreen())));
       // Os dois vivem no flyout "Modelos" — o nome curto basta sob o cabeçalho.
       items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Conversa',
           TemplatesScreen(usage: 'chat')));
-      items.add(const _NavDest(Icons.mark_email_read_outlined, Icons.mark_email_read, 'Campanha',
-          TemplatesScreen(usage: 'campaign')));
-      items.add(const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen()));
+      items.add(_gated(
+          'campanhas',
+          const _NavDest(Icons.mark_email_read_outlined, Icons.mark_email_read, 'Campanha',
+              TemplatesScreen(usage: 'campaign'))));
+      items.add(_gated('ia',
+          const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen())));
       items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
       items.add(const _NavDest(Icons.key_outlined, Icons.key, 'Tipo de login', SettingsScreen()));

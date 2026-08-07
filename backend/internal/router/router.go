@@ -122,6 +122,11 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	aiH := handlers.NewAIHandler(supportSvc, cfg.AIConfigured())
 	billingH := handlers.NewBillingHandler(billingSvc)
 
+	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
+	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db))
+	moduleH := handlers.NewModuleHandler(moduleSvc)
+	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
+
 	// Health.
 	r.GET("/health", func(c *gin.Context) {
 		handlers.RespondSuccess(c, http.StatusOK, "ok", gin.H{"service": "hotzap", "env": cfg.Env})
@@ -180,6 +185,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	{
 		api.GET("/auth/me", authH.Me) // quem sou eu (restaura sessão no front)
 
+		// Módulos: o app monta o menu com isto e abre a vitrine no que faltar.
+		api.GET("/modules", moduleH.List)
+		api.POST("/modules/:key/interest", moduleH.Interest) // "quero contratar"
+
 		users := api.Group("/users")
 		{
 			users.GET("", userH.List)
@@ -236,7 +245,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.DELETE("/tags/:id", middleware.RequireAdmin(), supportH.DeleteTag)
 			support.PUT("/presence", supportH.SetMyPresence)              // disponível / ausente
 			// Fase 4: dashboard de métricas de atendimento (admin).
-			support.GET("/metrics", middleware.RequireAdmin(), supportH.SupportMetrics)
+			support.GET("/metrics", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleMetricas), supportH.SupportMetrics)
 		}
 
 		// Contatos (clientes finais da empresa).
@@ -288,7 +297,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 		// Atendente IA da própria empresa (admin): config, base de conhecimento,
 		// saldo/extrato de tokens.
-		ai := api.Group("/ai", middleware.RequireAdmin())
+		ai := api.Group("/ai", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleIA))
 		{
 			ai.GET("/config", aiH.GetConfig)
 			ai.PUT("/config", aiH.SetConfig)
@@ -317,7 +326,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		}
 
 		// Campanhas de WhatsApp (admin): disparo de template com ritmo controlado.
-		campaigns := api.Group("/campaigns", middleware.RequireAdmin())
+		campaigns := api.Group("/campaigns", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleCampanhas))
 		{
 			campaigns.GET("", supportH.ListCampaigns)
 			campaigns.POST("", supportH.CreateCampaign)
@@ -356,6 +365,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			admin.PUT("/accounts/:id", adminH.UpdateAccount)
 			admin.DELETE("/accounts/:id", adminH.DeleteAccount)
 			admin.GET("/accounts/:id/whatsapp", adminH.ListWhatsApp)
+			// Módulos contratados por empresa (liga/desliga, preço próprio, teste).
+			admin.GET("/accounts/:id/modules", moduleH.AdminList)
+			admin.PUT("/accounts/:id/modules", moduleH.AdminSet)
 			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.
 			admin.GET("/accounts/:id/ai", aiH.AdminAIInfo)
 			admin.POST("/accounts/:id/ai/recharge", aiH.AdminRecharge)

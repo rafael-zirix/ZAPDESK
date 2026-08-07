@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
+import '../models/app_module.dart';
 import '../models/app_user.dart';
 
 enum AuthStatus { loading, loggedOut, awaitingCode, loggedIn }
@@ -15,6 +16,29 @@ class AuthController extends ChangeNotifier {
   String? error;
   bool busy = false;
 
+  /// Módulos da empresa (catálogo do backend, já resolvido para esta conta).
+  /// Monta o menu: o que não está contratado abre a vitrine em vez da tela.
+  List<AppModule> modules = [];
+
+  AppModule? module(String key) {
+    for (final m in modules) {
+      if (m.key == key) return m;
+    }
+    return null;
+  }
+
+  bool has(String key) => module(key)?.enabled ?? false;
+
+  /// Busca os módulos da conta. Silencioso: sem resposta, o app segue com o
+  /// núcleo e nenhuma tela sobra travada.
+  Future<void> loadModules() async {
+    final r = await _api.get('/modules');
+    if (r.ok && r.data is List) {
+      modules = (r.data as List).map((e) => AppModule.fromJson(e as Map<String, dynamic>)).toList();
+      notifyListeners();
+    }
+  }
+
   /// No boot: se há token salvo, tenta restaurar a sessão via /auth/me.
   Future<void> bootstrap() async {
     await _api.load();
@@ -25,6 +49,7 @@ class AuthController extends ChangeNotifier {
     final r = await _api.get('/auth/me');
     if (r.ok && r.data != null) {
       me = AppUser.fromJson(r.data as Map<String, dynamic>);
+      await loadModules();
       _set(AuthStatus.loggedIn);
     } else {
       await _api.clear();
@@ -83,6 +108,7 @@ class AuthController extends ChangeNotifier {
       final data = r.data as Map<String, dynamic>;
       await _api.setTokens(data['access_token'], data['refresh_token']);
       me = AppUser.fromJson(data['user'] as Map<String, dynamic>);
+      await loadModules();
       _busy(false);
       _set(AuthStatus.loggedIn);
     } else {
@@ -101,6 +127,7 @@ class AuthController extends ChangeNotifier {
   Future<void> logout() async {
     await _api.clear();
     me = null;
+    modules = [];
     pendingIdentifier = null;
     _set(AuthStatus.loggedOut);
   }

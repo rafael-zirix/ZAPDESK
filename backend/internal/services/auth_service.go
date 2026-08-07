@@ -40,12 +40,22 @@ type AuthService struct {
 	mailer      Mailer         // envio de e-mail (canal reserva; pode ser nil)
 	whatsapp    WhatsAppSender // envio por WhatsApp (canal principal; pode ser nil)
 	signupTrial int64          // tokens de IA concedidos no auto-cadastro público
+	modules     *ModuleService // módulos em teste na conta recém-criada
+	moduleDays  int            // duração desse teste (0 = a conta nasce só com o núcleo)
 }
 
 // WithSignupTrial define o saldo de trial (crédito de boas-vindas) concedido a
 // cada empresa criada pelo auto-cadastro público.
 func (s *AuthService) WithSignupTrial(n int64) *AuthService {
 	s.signupTrial = n
+	return s
+}
+
+// WithModuleTrial faz a conta do auto-cadastro nascer com todos os módulos
+// entregues ligados por N dias — o cliente experimenta tudo e depois escolhe.
+func (s *AuthService) WithModuleTrial(m *ModuleService, days int) *AuthService {
+	s.modules = m
+	s.moduleDays = days
 	return s
 }
 
@@ -63,8 +73,16 @@ func (s *AuthService) Signup(company, adminName, phone, email string) error {
 	if len([]rune(company)) < 2 || len([]rune(adminName)) < 2 || (!hasEmail && !hasPhone) {
 		return ErrSignupInvalid
 	}
-	if _, err := s.accounts.SignupCompany(company, adminName, phone, email, s.signupTrial); err != nil {
+	acc, err := s.accounts.SignupCompany(company, adminName, phone, email, s.signupTrial)
+	if err != nil {
 		return err
+	}
+	// Módulos em teste: best-effort igual ao envio do código — a conta já existe
+	// e o super-admin consegue ligar à mão se isto falhar.
+	if s.modules != nil && acc != nil {
+		if err := s.modules.StartTrial(acc.ID, s.moduleDays); err != nil {
+			slog.Error("signup: falha ao ligar os módulos de teste", "erro", err, "conta", acc.ID)
+		}
 	}
 	// Conta criada. O envio do código é best-effort: se falhar (provedor fora,
 	// e-mail inválido), o cliente ainda entra no fluxo de código e reenvia pelo

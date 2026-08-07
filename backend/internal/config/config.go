@@ -74,7 +74,14 @@ type Config struct {
 	// Auto-cadastro público: tokens de IA de trial concedidos ao criar a conta
 	// (crédito de boas-vindas). 0 desliga o trial.
 	SignupTrialTokens int64
+
+	// Dias de teste dos MÓDULOS no auto-cadastro: a conta nova nasce com todos
+	// os módulos entregues ligados por esse período. 0 = só o núcleo.
+	SignupTrialModuleDays int
 }
+
+// SignupTrialDays diz por quantos dias a conta nova experimenta os módulos.
+func (c *Config) SignupTrialDays() int { return c.SignupTrialModuleDays }
 
 // Load lê o .env (se existir) e monta a Config a partir do ambiente.
 func Load() *Config {
@@ -112,6 +119,7 @@ func Load() *Config {
 		StripeSecretKey:        os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret:    os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		SignupTrialTokens:      getenvInt64("SIGNUP_TRIAL_TOKENS", 50000),
+		SignupTrialModuleDays:  int(getenvInt64("SIGNUP_TRIAL_MODULE_DAYS", 14)),
 	}
 }
 
