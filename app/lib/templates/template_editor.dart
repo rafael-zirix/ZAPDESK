@@ -12,7 +12,9 @@ import '../core/theme.dart';
 ///  • nome em minúsculas_com_underscore (normalizado no backend);
 ///  • toda variável {{n}} precisa de um EXEMPLO na criação;
 ///  • cabeçalho de imagem exige uma imagem de exemplo (upload → handle);
-///  • categoria certa: Marketing (promoção) × Utilidade (aviso de serviço).
+///  • categoria certa: Utilidade só quando a mensagem se refere a algo que o
+///    cliente já tem (pedido, fatura, atendimento aberto); saudação e convite
+///    são Marketing — a Meta rebaixa na revisão e o preço muda.
 class TemplateEditor extends StatefulWidget {
   const TemplateEditor({super.key});
 
@@ -207,22 +209,16 @@ class _TemplateEditorState extends State<TemplateEditor> {
           DropdownButtonFormField<String>(
             initialValue: category,
             isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Categoria', border: OutlineInputBorder(), isDense: true),
+            decoration: const InputDecoration(
+                labelText: 'Categoria na Meta', border: OutlineInputBorder(), isDense: true),
             items: const [
-              DropdownMenuItem(value: 'MARKETING', child: Text('Marketing — promoção, novidade, convite')),
-              DropdownMenuItem(value: 'UTILITY', child: Text('Utilidade — aviso sobre algo que o cliente contratou')),
+              DropdownMenuItem(value: 'UTILITY', child: Text('Utilidade — sobre algo que o cliente JÁ tem')),
+              DropdownMenuItem(value: 'MARKETING', child: Text('Marketing — abordagem, oferta, novidade')),
             ],
             onChanged: (v) => setState(() => category = v ?? 'MARKETING'),
           ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              category == 'MARKETING'
-                  ? 'Marketing: qualquer oferta ou divulgação. Custa mais por conversa.'
-                  : 'Utilidade: aviso de pedido, cobrança, agendamento… Só para quem já é cliente — a Meta rejeita promoção aqui.',
-              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
-            ),
-          ),
+          const SizedBox(height: 8),
+          _categoryGuide(),
           const SizedBox(height: 16),
           const Text('Cabeçalho (opcional)', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
@@ -387,6 +383,92 @@ class _TemplateEditorState extends State<TemplateEditor> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  /// Palavras que mostram que a mensagem se refere a algo que o cliente JÁ tem
+  /// — é o gancho que a Meta exige para aceitar Utilidade. Sem nenhuma delas a
+  /// revisão rebaixa para Marketing (foi o que aconteceu com o
+  /// `mensagem_atendente`: enviado como Utilidade, voltou Marketing).
+  static const _utilityCues = [
+    'protocolo', 'atendimento', 'chamado', 'pedido', 'compra', 'fatura', 'boleto', 'cobran',
+    'vencimento', 'pagamento', 'agendament', 'agendad', 'contrato', 'assinatura', 'entrega',
+    'rastrei', 'veícul', 'veicul', 'placa', 'ordem de serviço', 'solicita', 'senha', 'código',
+  ];
+
+  /// Marcou Utilidade mas o texto não cita nada concreto do cliente?
+  bool get _utilityWeak {
+    final t = body.text.toLowerCase();
+    if (t.trim().isEmpty) return false;
+    return !_utilityCues.any(t.contains);
+  }
+
+  /// Explica a régua da Meta na hora de escolher a categoria — quem decide é o
+  /// revisor dela, não a nossa escolha, e a categoria define o PREÇO.
+  Widget _categoryGuide() {
+    final warn = category == 'UTILITY' && _utilityWeak;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Como a Meta classifica (quem decide é ela, não a sua escolha)',
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Colors.grey.shade700)),
+          const SizedBox(height: 6),
+          _guideLine('Utilidade',
+              'a mensagem aponta para algo que o cliente já tem: pedido, fatura/boleto, agendamento, '
+              'atendimento aberto, veículo rastreado. É a faixa mais barata.'),
+          _guideLine('Marketing',
+              'todo o resto — "Olá, bom dia?", convite para conversar, oferta, novidade. Faixa mais cara '
+              'e sujeita ao limite de mensagens de marketing por pessoa.'),
+          const SizedBox(height: 6),
+          Text(
+            'Não existe categoria "conversa": saudação sem gancho é Marketing. Se marcar Utilidade sem esse '
+            'gancho, a Meta aprova e depois rebaixa para Marketing — e o preço muda junto.',
+            style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600, height: 1.35),
+          ),
+          if (warn) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF79009).withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFFF79009).withValues(alpha: 0.45)),
+              ),
+              child: Text(
+                '⚠️ Este texto não cita nenhum pedido, fatura, agendamento ou atendimento do cliente. '
+                'Do jeito que está, a Meta deve rebaixar para Marketing. Amarre a algo concreto, '
+                'ex.: "sobre o atendimento {{1}} que você abriu com a gente".',
+                style: const TextStyle(fontSize: 11.5, color: Color(0xFF93370D), height: 1.35),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Linha do guia: rótulo em negrito + explicação, num Text só (nada de
+  // Expanded-em-Row — colapsa no CanvasKit web).
+  Widget _guideLine(String label, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text.rich(
+        TextSpan(children: [
+          TextSpan(text: '• $label: ', style: const TextStyle(fontWeight: FontWeight.w700)),
+          TextSpan(text: text),
+        ]),
+        style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700, height: 1.35),
       ),
     );
   }

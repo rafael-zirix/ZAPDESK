@@ -82,6 +82,10 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
           Flexible(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
           const SizedBox(width: 10),
           _statusChip(t.status),
+          const SizedBox(width: 6),
+          // Categoria da META (define o preço por mensagem) — diferente do uso
+          // interno abaixo, que só diz onde o modelo aparece aqui no sistema.
+          _categoryChip(t.category),
         ],
       ),
       subtitle: Padding(
@@ -117,6 +121,38 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Categoria na Meta: é ela que define quanto custa cada mensagem entregue
+  /// (marketing é a faixa mais cara) e ela pode mudar isso na revisão.
+  Widget _categoryChip(String? category) {
+    final c = (category ?? '').toUpperCase();
+    if (c.isEmpty) return const SizedBox.shrink();
+    final (Color color, String label, String help) = switch (c) {
+      'MARKETING' => (
+          const Color(0xFFB54708),
+          'Marketing',
+          'Categoria na Meta: marketing (abordagem, oferta). Faixa mais cara e sujeita ao limite por pessoa.'
+        ),
+      'UTILITY' => (
+          const Color(0xFF175CD3),
+          'Utilidade',
+          'Categoria na Meta: utilidade (aviso sobre algo que o cliente já tem). Faixa mais barata.'
+        ),
+      'AUTHENTICATION' => (const Color(0xFF6941C6), 'Autenticação', 'Categoria na Meta: código de acesso.'),
+      _ => (Colors.grey, category!, 'Categoria na Meta.'),
+    };
+    return Tooltip(
+      message: help,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.45)),
+        ),
+        child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
       ),
     );
   }
