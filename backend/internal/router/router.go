@@ -244,8 +244,12 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
 			support.POST("/tickets/:id/notes", supportH.AddNote)          // nota interna (só a equipe vê)
 			support.PUT("/tickets/:id/phone", supportH.LinkPhone)          // cadastra o WhatsApp de um contato do Instagram
-			support.GET("/lead-qualification", middleware.RequireAdmin(), supportH.LeadQualification)  // roteiro do 1º atendimento
-			support.PUT("/lead-qualification", middleware.RequireAdmin(), supportH.SetLeadQualification)
+			// Roteiro do 1º atendimento: quem EXECUTA é a IA, então o recurso é
+			// vendido com ela. Leitura liberada (a tela mostra o que está salvo
+			// e a vitrine); gravar exige o módulo.
+			support.GET("/lead-qualification", middleware.RequireAdmin(), supportH.LeadQualification)
+			support.PUT("/lead-qualification", middleware.RequireAdmin(),
+				middleware.RequireModule(moduleSvc, services.ModuleIA), supportH.SetLeadQualification)
 			support.PUT("/tickets/:id/tags", supportH.SetTicketTags)      // etiqueta a conversa
 			support.POST("/tickets/claim-next", supportH.ClaimNext)       // pega o próximo da fila
 			support.GET("/quick-replies", supportH.ListQuickReplies)      // atalhos de texto (/boleto…)

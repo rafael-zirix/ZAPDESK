@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../auth/auth_controller.dart';
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
@@ -109,7 +111,9 @@ class _InstagramScreenState extends State<InstagramScreen> {
 
   // O filtro do primeiro atendimento: a IA pergunta o que a empresa mandar e
   // classifica pelo critério dela. Quem descarta continua sendo gente.
-  Widget _roteiroCard() => Container(
+  Widget _roteiroCard() {
+    final temIA = context.watch<AuthController>().has('ia');
+    return Container(
         margin: const EdgeInsets.fromLTRB(24, 20, 24, 24),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -128,8 +132,23 @@ class _InstagramScreenState extends State<InstagramScreen> {
                 'entrega o resumo ao vendedor e etiqueta a conversa como Prospect ou Não é prospect. '
                 'Ninguém é descartado automaticamente.',
                 style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4)),
+            if (!temIA)
+              Container(
+                margin: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.seed.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Quem executa o roteiro é o Atendente IA. Contrate o módulo de IA para ativar o filtro '
+                  '— sem ele o texto fica salvo, mas ninguém pergunta nada.',
+                  style: TextStyle(fontSize: 12, color: AppTheme.seed, height: 1.35),
+                ),
+              ),
             const SizedBox(height: 14),
             TextField(
+              enabled: temIA,
               controller: _roteiro,
               minLines: 4,
               maxLines: 8,
@@ -143,6 +162,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
+              enabled: temIA,
               controller: _criterio,
               minLines: 3,
               maxLines: 6,
@@ -159,7 +179,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
-                onPressed: salvando ? null : _salvarRoteiro,
+                onPressed: (salvando || !temIA) ? null : _salvarRoteiro,
                 icon: salvando
                     ? const SizedBox(
                         width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -170,6 +190,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
           ],
         ),
       );
+  }
 
   Widget _tile(Map<String, dynamic> c) {
     final user = (c['username'] ?? '').toString();
