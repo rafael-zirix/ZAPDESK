@@ -47,6 +47,11 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 	u, err := h.users.Create(middleware.AccountID(c), req)
+	if errors.Is(err, services.ErrSeatLimit) {
+		RespondError(c, http.StatusPaymentRequired, ErrValidation,
+			"Você chegou ao limite de usuários do seu plano. Fale com a gente para liberar mais assentos.", nil)
+		return
+	}
 	if err != nil {
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao criar usuário", nil)
 		return

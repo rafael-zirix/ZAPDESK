@@ -85,13 +85,46 @@ func ModuleCatalog() []ModuleInfo {
 // ErrModuleUnknown sai quando alguém tenta ligar um módulo fora do catálogo.
 var ErrModuleUnknown = errors.New("módulo desconhecido")
 
-// ModuleService resolve o catálogo contra o que cada conta contratou.
+// ModuleService resolve o catálogo contra o que cada conta contratou e guarda
+// a régua do plano (assentos, números, histórico) — é tudo a mesma venda.
 type ModuleService struct {
-	repo *repository.ModuleRepository
+	repo     *repository.ModuleRepository
+	accounts *repository.AccountRepository
 }
 
 func NewModuleService(repo *repository.ModuleRepository) *ModuleService {
 	return &ModuleService{repo: repo}
+}
+
+// WithAccounts liga o repositório de contas (régua do plano).
+func (s *ModuleService) WithAccounts(a *repository.AccountRepository) *ModuleService {
+	s.accounts = a
+	return s
+}
+
+// Limits devolve a régua do plano da conta.
+func (s *ModuleService) Limits(accountID string) (repository.AccountLimits, error) {
+	if s.accounts == nil {
+		return repository.AccountLimits{}, errors.New("régua de plano indisponível")
+	}
+	return s.accounts.Limits(accountID)
+}
+
+// SetLimits grava a régua. Assentos e números precisam ser pelo menos 1; dias
+// de histórico 0 = ilimitado.
+func (s *ModuleService) SetLimits(accountID string, maxUsers, maxNumbers, historyDays int) error {
+	if s.accounts == nil {
+		return errors.New("régua de plano indisponível")
+	}
+	if maxUsers < 1 || maxNumbers < 1 {
+		return errors.New("assentos e números precisam ser pelo menos 1")
+	}
+	if historyDays < 0 {
+		historyDays = 0
+	}
+	return s.accounts.SetLimits(accountID, repository.AccountLimits{
+		MaxUsers: maxUsers, MaxNumbers: maxNumbers, HistoryDays: historyDays,
+	})
 }
 
 // ForAccount devolve o catálogo inteiro marcando o que a conta tem. É o que a

@@ -69,7 +69,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
 	authSvc := services.NewAuthService(userRepo, authRepo, accountRepo, jwtSvc, !cfg.IsProduction(), mailer, waOTP).
 		WithSignupTrial(cfg.SignupTrialTokens)
-	userSvc := services.NewUserService(userRepo)
+	userSvc := services.NewUserService(userRepo).WithAccounts(accountRepo) // teto de assentos do plano
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
 	aiRepo := repository.NewAIRepository(db)
 	aiActionRepo := repository.NewAIActionRepository(db)
@@ -102,6 +102,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	supportSvc.StartCampaignWorker()
 	// Mantém a tabela de custo da Meta atualizada (diária) para o super-admin.
 	supportSvc.StartMetaPricingWorker()
+	// Retenção de histórico do plano (desligada por padrão; ver RETENTION_ENABLED).
+	services.StartRetentionWorker(accountRepo)
 	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher).
 		WithEmbeddedSignup(cfg.MetaAPIBase, cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaESConfigID, cfg.GraphVersion()).
 		WithWebhookAutoConfig(cfg.PublicURL, cfg.MetaVerifyToken)
@@ -130,7 +132,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	webhookH = webhookH.WithInstagram(igSvc)
 
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
-	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db))
+	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo)
 	moduleH := handlers.NewModuleHandler(moduleSvc)
 	supportSvc.WithModuleCheck(moduleSvc.Has) // regras vendidas à parte só rodam p/ quem contratou
 	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
@@ -395,6 +397,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			// Módulos contratados por empresa (liga/desliga, preço próprio, teste).
 			admin.GET("/accounts/:id/modules", moduleH.AdminList)
 			admin.PUT("/accounts/:id/modules", moduleH.AdminSet)
+			admin.GET("/accounts/:id/plan", moduleH.AdminLimits)  // assentos, números, retenção
+			admin.PUT("/accounts/:id/plan", moduleH.AdminSetLimits)
 			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.
 			admin.GET("/accounts/:id/ai", aiH.AdminAIInfo)
 			admin.POST("/accounts/:id/ai/recharge", aiH.AdminRecharge)

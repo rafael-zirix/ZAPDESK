@@ -46,6 +46,34 @@ func (h *ModuleHandler) AdminList(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "OK", mods)
 }
 
+// AdminLimits lê a régua do plano de uma empresa (assentos, números, histórico).
+func (h *ModuleHandler) AdminLimits(c *gin.Context) {
+	l, err := h.modules.Limits(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao carregar o plano", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "OK", l)
+}
+
+// AdminSetLimits grava a régua do plano (é o que o Free limita e o pago solta).
+func (h *ModuleHandler) AdminSetLimits(c *gin.Context) {
+	var req struct {
+		MaxUsers    int `json:"max_users"`
+		MaxNumbers  int `json:"max_numbers"`
+		HistoryDays int `json:"history_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	if err := h.modules.SetLimits(c.Param("id"), req.MaxUsers, req.MaxNumbers, req.HistoryDays); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, err.Error(), nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Plano atualizado", nil)
+}
+
 // AdminSet liga/desliga um módulo numa empresa (super-admin).
 func (h *ModuleHandler) AdminSet(c *gin.Context) {
 	var req struct {

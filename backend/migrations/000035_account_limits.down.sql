@@ -1,0 +1,3 @@
+ALTER TABLE accounts DROP COLUMN IF EXISTS history_days;
+ALTER TABLE accounts DROP COLUMN IF EXISTS max_numbers;
+ALTER TABLE accounts DROP COLUMN IF EXISTS max_users;

@@ -20,6 +20,12 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
   final _api = ApiClient.instance;
   List<AppModule> modulos = [];
   bool loading = true;
+
+  // Régua do plano: o que o Free limita e o pago solta.
+  final _assentos = TextEditingController();
+  final _numeros = TextEditingController();
+  final _historico = TextEditingController();
+  bool salvandoPlano = false;
   String? salvando; // chave do módulo em gravação
 
   @override
@@ -30,7 +36,14 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
 
   Future<void> _load() async {
     final r = await _api.get('/admin/accounts/${widget.accountId}/modules');
+    final p = await _api.get('/admin/accounts/${widget.accountId}/plan');
     if (!mounted) return;
+    if (p.ok && p.data is Map) {
+      final m = p.data as Map;
+      _assentos.text = '${m['max_users'] ?? 3}';
+      _numeros.text = '${m['max_numbers'] ?? 1}';
+      _historico.text = '${m['history_days'] ?? 0}';
+    }
     setState(() {
       loading = false;
       modulos = r.ok && r.data is List
@@ -57,6 +70,72 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
     }
   }
 
+  Future<void> _salvarPlano() async {
+    setState(() => salvandoPlano = true);
+    final r = await _api.put('/admin/accounts/${widget.accountId}/plan', {
+      'max_users': int.tryParse(_assentos.text.trim()) ?? 3,
+      'max_numbers': int.tryParse(_numeros.text.trim()) ?? 1,
+      'history_days': int.tryParse(_historico.text.trim()) ?? 0,
+    });
+    if (!mounted) return;
+    setState(() => salvandoPlano = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(r.ok ? 'Plano atualizado' : (r.message ?? 'Não foi possível salvar'))));
+  }
+
+  // Limites do plano. O Free nasce 3 usuários / 1 número / 90 dias; o pago solta.
+  Widget _planoCard() => Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Plano (limites do núcleo)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+            const SizedBox(height: 8),
+            Row(children: [
+              SizedBox(
+                width: 120,
+                child: TextField(
+                  controller: _assentos,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Usuários', isDense: true),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 120,
+                child: TextField(
+                  controller: _numeros,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Números', isDense: true),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 170,
+                child: TextField(
+                  controller: _historico,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                      labelText: 'Histórico (dias)', helperText: '0 = ilimitado', isDense: true),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+                onPressed: salvandoPlano ? null : _salvarPlano,
+                child: const Text('Salvar'),
+              ),
+            ]),
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -75,6 +154,7 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
                         'da tabela.',
                         style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4)),
                     const SizedBox(height: 12),
+                    _planoCard(),
                     for (final m in modulos) _linha(m),
                   ],
                 ),

@@ -10,14 +10,40 @@ import (
 var ErrUserNotFound = errors.New("usuário não encontrado")
 
 // UserService gerencia os usuários (atendentes/admins) de uma conta.
-type UserService struct{ users *repository.UserRepository }
+type UserService struct {
+	users    *repository.UserRepository
+	accounts *repository.AccountRepository // régua do plano (assentos)
+}
 
 func NewUserService(users *repository.UserRepository) *UserService {
 	return &UserService{users: users}
 }
 
-// Create cadastra um usuário na conta.
+// ErrSeatLimit sai quando a empresa chegou ao teto de usuários do plano.
+var ErrSeatLimit = errors.New("limite de usuários do plano atingido")
+
+// WithAccounts liga o repositório de contas (é dele que vem a régua do plano).
+func (s *UserService) WithAccounts(a *repository.AccountRepository) *UserService {
+	s.accounts = a
+	return s
+}
+
 func (s *UserService) Create(accountID string, req models.CreateUserRequest) (*models.User, error) {
+	// Teto de assentos: sem isto o "3 usuários" do plano Free seria só uma
+	// frase na landing.
+	if s.accounts != nil {
+		limits, err := s.accounts.Limits(accountID)
+		if err != nil {
+			return nil, err
+		}
+		usados, err := s.accounts.CountUsers(accountID)
+		if err != nil {
+			return nil, err
+		}
+		if limits.MaxUsers > 0 && usados >= limits.MaxUsers {
+			return nil, ErrSeatLimit
+		}
+	}
 	u := &models.User{
 		AccountID: accountID,
 		FullName:  req.FullName,

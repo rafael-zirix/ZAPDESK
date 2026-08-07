@@ -115,6 +115,11 @@ func (s *AccountService) EmbeddedConfig() (appID, configID, graphVer string, ena
 // troca o `code` por token, assina os webhooks (best-effort) e salva cifrado.
 // Devolve também o PIN sorteado para o registro na Cloud API.
 func (s *AccountService) ConnectViaEmbedded(accountID, code, wabaID, phoneNumberID string) (*models.WhatsAppAccount, ResultadoConexao, error) {
+	if cheio, err := s.numberLimitReached(accountID); err != nil {
+		return nil, ResultadoConexao{}, err
+	} else if cheio {
+		return nil, ResultadoConexao{}, ErrNumberLimit
+	}
 	var vazio ResultadoConexao
 	if s.esAppID == "" || s.esSecret == "" {
 		return nil, vazio, errors.New("Embedded Signup não configurado")
@@ -193,7 +198,31 @@ type ResultadoConexao struct {
 }
 
 // Devolve o PIN usado no registro e como ficou o webhook.
+// ErrNumberLimit sai quando a empresa chegou ao teto de números do plano.
+var ErrNumberLimit = errors.New("limite de números do plano atingido")
+
+// numberLimitReached diz se a conta já usou todas as linhas do plano.
+func (s *AccountService) numberLimitReached(accountID string) (bool, error) {
+	limits, err := s.accounts.Limits(accountID)
+	if err != nil {
+		return false, err
+	}
+	if limits.MaxNumbers <= 0 {
+		return false, nil
+	}
+	usados, err := s.accounts.CountNumbers(accountID)
+	if err != nil {
+		return false, err
+	}
+	return usados >= limits.MaxNumbers, nil
+}
+
 func (s *AccountService) AddWhatsApp(accountID string, req models.AddWhatsAppRequest) (*models.WhatsAppAccount, ResultadoConexao, error) {
+	if cheio, err := s.numberLimitReached(accountID); err != nil {
+		return nil, ResultadoConexao{}, err
+	} else if cheio {
+		return nil, ResultadoConexao{}, ErrNumberLimit
+	}
 	var res ResultadoConexao
 	if s.cipher == nil {
 		return nil, res, ErrEncryptionUnavailable

@@ -77,6 +77,14 @@ func (s *AuthService) Signup(company, adminName, phone, email string) error {
 	if err != nil {
 		return err
 	}
+	// Plano Free: 1 número, 3 usuários e 90 dias de histórico. Os módulos entram
+	// em teste por cima disso — quando o teste acaba, a conta CAI no Free em vez
+	// de ficar sem nada.
+	if acc != nil {
+		if err := s.accounts.SetLimits(acc.ID, repository.AccountLimits{MaxUsers: 3, MaxNumbers: 1, HistoryDays: 90}); err != nil {
+			slog.Error("signup: falha ao aplicar o plano Free", "erro", err, "conta", acc.ID)
+		}
+	}
 	// Módulos em teste: best-effort igual ao envio do código — a conta já existe
 	// e o super-admin consegue ligar à mão se isto falhar.
 	if s.modules != nil && acc != nil {
