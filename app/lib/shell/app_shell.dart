@@ -136,7 +136,8 @@ class _AppShellState extends State<AppShell> {
       items.add(_NavDest(Icons.rocket_launch_outlined, Icons.rocket_launch, 'Início',
           OnboardingScreen(onGo: _goToLabel, onDone: _finishOnboarding)));
     }
-    items.add(const _NavDest(Icons.forum_outlined, Icons.forum, 'Atendimento', InboxScreen()));
+    // Ícone sem "caixa" (o balão do forum destoava dos demais, todos em traço).
+    items.add(const _NavDest(Icons.support_agent_outlined, Icons.support_agent, 'Atendimento', InboxScreen()));
     items.add(const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()));
     if (me.isAdmin) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
@@ -144,11 +145,12 @@ class _AppShellState extends State<AppShell> {
       items.add(const _NavDest(Icons.local_offer_outlined, Icons.local_offer, 'Etiquetas', TagsScreen()));
       items.add(const _NavDest(Icons.smartphone_outlined, Icons.smartphone, 'Telefones', WhatsAppScreen()));
       items.add(const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen()));
-      items.add(const _NavDest(Icons.mark_email_read_outlined, Icons.mark_email_read, 'Modelos de campanha',
-          TemplatesScreen(usage: 'campaign')));
       items.add(const _NavDest(Icons.query_stats_outlined, Icons.query_stats, 'Métricas', MetricsScreen()));
-      items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Modelos de conversa',
+      // Os dois vivem no flyout "Modelos" — o nome curto basta sob o cabeçalho.
+      items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Conversa',
           TemplatesScreen(usage: 'chat')));
+      items.add(const _NavDest(Icons.mark_email_read_outlined, Icons.mark_email_read, 'Campanha',
+          TemplatesScreen(usage: 'campaign')));
       items.add(const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen()));
       items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
@@ -249,7 +251,13 @@ class _AppShellState extends State<AppShell> {
       label: 'Cadastros',
       icon: Icons.app_registration_outlined,
       activeIcon: Icons.app_registration,
-      members: {'Contatos', 'Usuários', 'Setores', 'Etiquetas', 'Modelos de conversa'},
+      members: {'Contatos', 'Usuários', 'Setores', 'Etiquetas'},
+    ),
+    (
+      label: 'Modelos',
+      icon: Icons.library_books_outlined,
+      activeIcon: Icons.library_books,
+      members: {'Conversa', 'Campanha'},
     ),
     (
       label: 'Configurações',
