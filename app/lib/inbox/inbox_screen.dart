@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../auth/auth_controller.dart';
+import '../core/api_client.dart';
 import '../core/config.dart';
 import '../core/file_pick.dart';
 import '../core/geolocation.dart';
@@ -17,6 +18,17 @@ import '../models/support.dart';
 import 'audio_view.dart';
 import 'conversation_controller.dart';
 import 'inbox_controller.dart';
+
+/// Por onde a conversa chegou: câmera rosa do Instagram × balão verde do
+/// WhatsApp. É o que evita responder no canal errado sem perceber.
+Widget _canalIcone(TicketListItem t) => Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Tooltip(
+        message: t.isInstagram ? 'Direct do Instagram' : 'WhatsApp',
+        child: Icon(t.isInstagram ? Icons.camera_alt : Icons.chat_bubble,
+            size: 15, color: t.isInstagram ? const Color(0xFFE1306C) : const Color(0xFF25D366)),
+      ),
+    );
 
 class InboxScreen extends StatefulWidget {
   const InboxScreen({super.key});
@@ -390,6 +402,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 children: [
                   Row(
                     children: [
+                      _canalIcone(t),
                       Expanded(
                         child: Text(t.displayName,
                             maxLines: 1,
@@ -666,7 +679,14 @@ class _ConversationPane extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(t.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                Row(children: [
+                  _canalIcone(t),
+                  Flexible(
+                    child: Text(t.displayName,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                  ),
+                ]),
                 Text(
                   [
                     t.prettyPhone,
@@ -681,6 +701,14 @@ class _ConversationPane extends StatelessWidget {
             ),
           ),
           _statusChip(),
+          // Contato do Instagram sem telefone: cadastrar o WhatsApp abre o canal
+          // que TEM modelo — é como a conversa continua depois das 24h.
+          if (t.isInstagram && t.contactPhone.isEmpty)
+            IconButton(
+              icon: const Icon(Icons.add_ic_call_outlined, size: 20, color: Color(0xFF25D366)),
+              tooltip: 'Cadastrar o WhatsApp deste contato',
+              onPressed: () => _cadastrarWhats(context),
+            ),
           if (aiEnabled) _aiToggle(),
           _windowChip(),
           _actionsMenu(context),
@@ -693,6 +721,46 @@ class _ConversationPane extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Cadastra o WhatsApp de um contato que chegou pelo Direct. A partir daí a
+  /// empresa fala com ele pelo canal que tem modelo aprovado.
+  Future<void> _cadastrarWhats(BuildContext context) async {
+    final tel = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Cadastrar WhatsApp'),
+        content: SizedBox(
+          width: 360,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Informe o número que o cliente passou no Direct. Ele passa a valer para '
+                'este contato — inclusive para campanhas e para falar fora das 24h.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tel,
+              autofocus: true,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(labelText: 'WhatsApp', hintText: '(21) 99999-9999'),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cadastrar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final r = await ApiClient.instance.put('/support/tickets/${conv.ticket.id}/phone', {'phone': tel.text.trim()});
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(r.ok ? 'WhatsApp cadastrado' : (r.message ?? 'Não foi possível cadastrar'))));
+    if (r.ok) await conv.load();
   }
 
   /// Chip com o status atual da conversa (Novo / Em atendimento / Aguardando…).

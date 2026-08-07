@@ -116,7 +116,20 @@ func (s *SupportService) handoffToHuman(accountID, ticketID, resumo string) stri
 			_ = s.repo.UpdateTicketRouting(accountID, ticketID, nil, false, &sectorID, true)
 		}
 	}
+	// A IA começa o resumo com PROSPECT:/NAO-PROSPECT: quando a empresa
+	// configurou o critério. Isso vira ETIQUETA — o vendedor filtra por ela e o
+	// relatório por criativo mede quantos prospects cada anúncio trouxe.
+	resumo, prospect := splitLeadVerdict(resumo)
+	if prospect != "" {
+		if tag, err := s.repo.FindOrCreateTag(accountID, prospect, prospectTagColor(prospect)); err == nil {
+			_ = s.repo.AddTicketTag(ticketID, tag.ID)
+			_ = s.repo.AddContactTag(ticket.ContactID, tag.ID)
+		}
+	}
 	nota := "🤖 A IA encaminhou para atendimento humano."
+	if prospect != "" {
+		nota += " Classificação: " + prospect + "."
+	}
 	if r := strings.TrimSpace(resumo); r != "" {
 		nota += "\n" + r
 	}
@@ -130,6 +143,27 @@ func (s *SupportService) handoffToHuman(accountID, ticketID, resumo string) stri
 	}
 	slog.Info("IA encaminhou a conversa", "ticket", ticketID)
 	return "Conversa encaminhada para um atendente humano. Avise o cliente em uma frase curta e não faça mais perguntas."
+}
+
+// splitLeadVerdict separa o veredito do resumo. A IA classifica, mas quem
+// descarta é gente: nada é encerrado por causa desta etiqueta.
+func splitLeadVerdict(resumo string) (string, string) {
+	t := strings.TrimSpace(resumo)
+	upper := strings.ToUpper(t)
+	switch {
+	case strings.HasPrefix(upper, "NAO-PROSPECT:"), strings.HasPrefix(upper, "NÃO-PROSPECT:"):
+		return strings.TrimSpace(t[strings.Index(t, ":")+1:]), "Não é prospect"
+	case strings.HasPrefix(upper, "PROSPECT:"):
+		return strings.TrimSpace(t[strings.Index(t, ":")+1:]), "Prospect"
+	}
+	return t, ""
+}
+
+func prospectTagColor(label string) string {
+	if label == "Prospect" {
+		return "#12B76A" // verde: vale a ligação
+	}
+	return "#98A2B3" // cinza: fica registrado, não some
 }
 
 // SetAdSector define qual setor recebe os leads de anúncio (vazio = nenhum).

@@ -6,6 +6,10 @@ import "time"
 type AIConfig struct {
 	Enabled       bool   `json:"enabled"`
 	Instructions  string `json:"instructions"`
+	// Primeiro atendimento de LEAD: o que a IA deve descobrir (roteiro) e o que
+	// caracteriza um prospect (critério). Vazio = a IA só atende, não qualifica.
+	LeadScript   string `json:"lead_script"`
+	LeadCriteria string `json:"lead_criteria"`
 	TokenBalance  int64  `json:"token_balance"`
 	AutoEnabled   bool   `json:"autorecharge_enabled"`
 	AutoThreshold int64  `json:"autorecharge_threshold"`

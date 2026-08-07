@@ -264,6 +264,49 @@ func leadNameAndPhone(campos []leadField) (string, string) {
 	return nome, tel
 }
 
+// LeadQualification devolve o roteiro e o critério do primeiro atendimento.
+func (s *SupportService) LeadQualification(accountID string) (string, string, error) {
+	if s.aiRepo == nil {
+		return "", "", nil
+	}
+	cfg, err := s.aiRepo.GetConfig(accountID)
+	if err != nil || cfg == nil {
+		return "", "", err
+	}
+	return cfg.LeadScript, cfg.LeadCriteria, nil
+}
+
+// SetLeadQualification grava o roteiro (o que perguntar) e o critério (o que é
+// prospect) usados pela IA no primeiro atendimento de lead.
+func (s *SupportService) SetLeadQualification(accountID, script, criteria string) error {
+	if s.aiRepo == nil {
+		return errors.New("Atendente IA não está disponível")
+	}
+	return s.aiRepo.SetLeadQualification(accountID, strings.TrimSpace(script), strings.TrimSpace(criteria))
+}
+
+// LinkPhoneToTicket cadastra o WhatsApp de um contato que chegou pelo Instagram.
+// A partir daí a empresa consegue falar com ele pelo canal que TEM modelo — é a
+// saída para quando a janela do Direct fecha.
+func (s *SupportService) LinkPhoneToTicket(accountID, ticketID, phone string) error {
+	tel := normalizeLeadPhone(phone)
+	if len(tel) < 12 {
+		return errors.New("telefone inválido")
+	}
+	t, err := s.repo.GetTicket(accountID, ticketID)
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return ErrTicketNotFound
+	}
+	if err := s.repo.SetContactPhone(accountID, t.ContactID, tel); err != nil {
+		return err
+	}
+	s.systemNote(accountID, ticketID, "📱 WhatsApp cadastrado a partir do Instagram: "+tel)
+	return nil
+}
+
 // ProcessInboundExternal é o irmão do ProcessInbound para canais sem telefone:
 // acha/cria o contato pelo id externo, abre (ou reusa) a conversa marcando o
 // canal e grava a mensagem recebida.

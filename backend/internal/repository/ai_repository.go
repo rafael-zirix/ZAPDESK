@@ -16,10 +16,11 @@ func (r *AIRepository) GetConfig(accountID string) (*models.AIConfig, error) {
 	var c models.AIConfig
 	var paymentRef sql.NullString
 	err := r.db.QueryRow(`SELECT ai_enabled, ai_instructions, ai_token_balance,
-		ai_autorecharge_enabled, ai_autorecharge_threshold, ai_autorecharge_amount, ai_payment_ref
+		ai_autorecharge_enabled, ai_autorecharge_threshold, ai_autorecharge_amount, ai_payment_ref,
+		COALESCE(lead_script,''), COALESCE(lead_criteria,'')
 		FROM accounts WHERE id=$1 AND deleted_at IS NULL`, accountID).
 		Scan(&c.Enabled, &c.Instructions, &c.TokenBalance,
-			&c.AutoEnabled, &c.AutoThreshold, &c.AutoAmount, &paymentRef)
+			&c.AutoEnabled, &c.AutoThreshold, &c.AutoAmount, &paymentRef, &c.LeadScript, &c.LeadCriteria)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -34,6 +35,13 @@ func (r *AIRepository) GetConfig(accountID string) (*models.AIConfig, error) {
 func (r *AIRepository) SetConfig(accountID string, enabled bool, instructions string) error {
 	_, err := r.db.Exec(`UPDATE accounts SET ai_enabled=$2, ai_instructions=$3, updated_at=$4
 		WHERE id=$1 AND deleted_at IS NULL`, accountID, enabled, instructions, time.Now().UTC())
+	return err
+}
+
+// SetLeadQualification grava o roteiro e o critério do primeiro atendimento.
+func (r *AIRepository) SetLeadQualification(accountID, script, criteria string) error {
+	_, err := r.db.Exec(`UPDATE accounts SET lead_script=$2, lead_criteria=$3, updated_at=$4
+		WHERE id=$1 AND deleted_at IS NULL`, accountID, script, criteria, time.Now().UTC())
 	return err
 }
 

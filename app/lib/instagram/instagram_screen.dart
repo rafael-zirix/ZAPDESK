@@ -19,6 +19,12 @@ class _InstagramScreenState extends State<InstagramScreen> {
   List<Map<String, dynamic>> contas = [];
   bool loading = true;
 
+  // Roteiro do PRIMEIRO atendimento de lead (vale para o Direct e para o
+  // WhatsApp de anúncio — o lead entra pelos dois e o filtro é o mesmo).
+  final _roteiro = TextEditingController();
+  final _criterio = TextEditingController();
+  bool salvando = false;
+
   @override
   void initState() {
     super.initState();
@@ -28,11 +34,28 @@ class _InstagramScreenState extends State<InstagramScreen> {
   Future<void> _load() async {
     setState(() => loading = true);
     final r = await _api.get('/settings/instagram');
+    final q = await _api.get('/support/lead-qualification');
     if (!mounted) return;
     setState(() {
       loading = false;
       contas = r.ok && r.data is List ? (r.data as List).cast<Map<String, dynamic>>() : [];
+      if (q.ok && q.data is Map) {
+        _roteiro.text = ((q.data as Map)['lead_script'] ?? '').toString();
+        _criterio.text = ((q.data as Map)['lead_criteria'] ?? '').toString();
+      }
     });
+  }
+
+  Future<void> _salvarRoteiro() async {
+    setState(() => salvando = true);
+    final r = await _api.put('/support/lead-qualification', {
+      'lead_script': _roteiro.text.trim(),
+      'lead_criteria': _criterio.text.trim(),
+    });
+    if (!mounted) return;
+    setState(() => salvando = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(r.ok ? 'Roteiro salvo' : (r.message ?? 'Não foi possível salvar'))));
   }
 
   @override
@@ -56,6 +79,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
                           child: Text('Nenhuma conta conectada ainda.'),
                         ),
                       for (final c in contas) _tile(c),
+                      _roteiroCard(),
                     ],
                   ),
           ),
@@ -80,6 +104,70 @@ class _InstagramScreenState extends State<InstagramScreen> {
           'pela Meta. No Instagram NÃO existe modelo aprovado: só dá para responder dentro de 24h desde a '
           'última mensagem do cliente.',
           style: TextStyle(fontSize: 12.5, height: 1.4, color: Color(0xFF93370D)),
+        ),
+      );
+
+  // O filtro do primeiro atendimento: a IA pergunta o que a empresa mandar e
+  // classifica pelo critério dela. Quem descarta continua sendo gente.
+  Widget _roteiroCard() => Container(
+        margin: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Primeiro atendimento dos leads',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+            const SizedBox(height: 4),
+            Text(
+                'Vale para quem chega pelo Direct E pelo WhatsApp de anúncio. A IA faz as perguntas, '
+                'entrega o resumo ao vendedor e etiqueta a conversa como Prospect ou Não é prospect. '
+                'Ninguém é descartado automaticamente.',
+                style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _roteiro,
+              minLines: 4,
+              maxLines: 8,
+              decoration: const InputDecoration(
+                labelText: 'O que a IA deve descobrir',
+                alignLabelWithHint: true,
+                border: OutlineInputBorder(),
+                hintText: 'Ex.: 1) quantos veículos · 2) cidade · 3) já tem rastreador hoje? · '
+                    '4) para quando precisa · 5) peça o WhatsApp se veio pelo Direct',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _criterio,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: 'O que é um prospect para a sua empresa',
+                alignLabelWithHint: true,
+                border: OutlineInputBorder(),
+                hintText: 'Ex.: prospect = 2+ veículos OU precisa em até 15 dias, e cidade atendida. '
+                    'Não é prospect = fora da área ou só pesquisando preço.',
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+                onPressed: salvando ? null : _salvarRoteiro,
+                icon: salvando
+                    ? const SizedBox(
+                        width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: const Text('Salvar roteiro'),
+              ),
+            ),
+          ],
         ),
       );
 

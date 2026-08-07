@@ -640,11 +640,26 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 	system := s.buildAISystemPrompt(accountID, cfg.Instructions)
 	// Lead de anúncio: a IA deixa de ser só suporte e vira o primeiro filtro —
 	// qualifica em poucas perguntas e entrega o resumo ao time comercial.
-	if headline, err := s.repo.TicketAdHeadline(accountID, ticketID); err == nil && headline != "" {
-		system += "\n\n# Lead de anúncio\nEste contato chegou pelo anúncio \"" + headline + "\". " +
-			"Antes de encaminhar, descubra em POUCAS perguntas (uma de cada vez): o que a pessoa precisa, " +
-			"para quando, e de onde ela fala. Não invente preço nem prazo. Assim que tiver essas respostas — " +
-			"ou se ela pedir para falar com alguém — use a ferramenta " + toolHandoff + " com o resumo."
+	headline, _ := s.repo.TicketAdHeadline(accountID, ticketID)
+	canal, _ := s.repo.TicketChannel(accountID, ticketID)
+	if headline != "" || canal == ChannelInstagram {
+		origem := "pelo Direct do Instagram"
+		if headline != "" {
+			origem = "pelo anúncio \"" + headline + "\""
+		}
+		system += "\n\n# Primeiro atendimento de lead\nEste contato chegou " + origem + ". " +
+			"Descubra em POUCAS perguntas, uma de cada vez, o que a pessoa precisa, para quando e de onde ela fala. " +
+			"Não invente preço nem prazo."
+		if strings.TrimSpace(cfg.LeadScript) != "" {
+			system += "\n\nRoteiro desta empresa (siga na ordem, sem despejar tudo de uma vez):\n" + cfg.LeadScript
+		}
+		if strings.TrimSpace(cfg.LeadCriteria) != "" {
+			system += "\n\nO que caracteriza um PROSPECT aqui:\n" + cfg.LeadCriteria
+		}
+		system += "\n\nQuando tiver as respostas — ou se a pessoa pedir para falar com alguém — use a ferramenta " +
+			toolHandoff + ". COMECE o resumo com \"PROSPECT:\" ou \"NAO-PROSPECT:\" conforme o critério acima " +
+			"(na dúvida, PROSPECT: quem decide é o time). Se o contato veio pelo Instagram e você conseguir o " +
+			"telefone/WhatsApp dele, inclua no resumo."
 	}
 	msgs, err := s.repo.ListMessages(accountID, ticketID)
 	if err != nil {

@@ -143,6 +143,24 @@ func (r *SupportRepository) LastInboundAt(ticketID string) (time.Time, bool, err
 	return t.Time, true, nil
 }
 
+// SetContactPhone grava o telefone num contato que veio sem ele (Instagram).
+// Recusa quando outro contato da empresa já usa aquele número — quem manda é o
+// cadastro existente, para não criar dois donos do mesmo WhatsApp.
+func (r *SupportRepository) SetContactPhone(accountID, contactID, phone string) error {
+	var outro string
+	err := r.db.QueryRow(`SELECT id FROM support_contacts WHERE account_id=$1 AND phone=$2 AND id<>$3`,
+		accountID, phone, contactID).Scan(&outro)
+	if err == nil {
+		return ErrPhoneAlreadyUsed
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	_, err = r.db.Exec(`UPDATE support_contacts SET phone=$3, updated_at=$4 WHERE id=$1 AND account_id=$2`,
+		contactID, accountID, phone, time.Now().UTC())
+	return err
+}
+
 // SetTicketChannel marca por onde a conversa fala (whatsapp | instagram).
 func (r *SupportRepository) SetTicketChannel(ticketID, channel string) error {
 	_, err := r.db.Exec(`UPDATE support_tickets SET channel=$2 WHERE id=$1`, ticketID, channel)
