@@ -222,6 +222,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.GET("/ai-state", supportH.AIState)                               // Atendente IA ligado na empresa? (exibe o toggle na conversa)
 			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)        // consumo/valores da própria empresa (admin)
 			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                    // liga/pausa a IA nesta conversa
+			// Cmd+I: rascunho da IA para o atendente revisar (não envia nada).
+			support.POST("/tickets/:id/suggest", middleware.RequireModule(moduleSvc, services.ModuleIA), supportH.SuggestReply)
 			// Fase 1 de atendimento: assumir, transferir, ciclo de vida e histórico.
 			support.POST("/tickets/:id/claim", supportH.ClaimTicket)                // assumir a conversa (puxar p/ si)
 			support.POST("/tickets/:id/transfer", supportH.TransferTicket)          // transferir p/ atendente e/ou setor

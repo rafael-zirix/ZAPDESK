@@ -63,6 +63,26 @@ func (h *SupportHandler) SetTicketAI(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "ok", gin.H{"ai_paused": req.Paused})
 }
 
+// SuggestReply devolve um RASCUNHO da IA para o atendente revisar. Não envia
+// nada ao cliente — o texto volta para o compositor.
+func (h *SupportHandler) SuggestReply(c *gin.Context) {
+	text, tokens, err := h.support.SuggestReply(middleware.AccountID(c), c.Param("id"))
+	switch {
+	case err == nil:
+		RespondSuccess(c, http.StatusOK, "ok", gin.H{"text": text, "tokens": tokens})
+	case errors.Is(err, services.ErrAIUnavailable):
+		RespondError(c, http.StatusServiceUnavailable, ErrValidation, err.Error(), nil)
+	case errors.Is(err, services.ErrAINoBalance):
+		RespondError(c, http.StatusPaymentRequired, ErrValidation,
+			"Sem saldo de tokens de IA — recarregue para usar a sugestão", nil)
+	case errors.Is(err, services.ErrAINothingToSay):
+		RespondError(c, http.StatusBadRequest, ErrValidation,
+			"Ainda não há mensagem do cliente para responder", nil)
+	default:
+		RespondError(c, http.StatusBadGateway, ErrInternal, "A IA não conseguiu sugerir uma resposta", err.Error())
+	}
+}
+
 // StartConversation inicia (ou reabre) uma conversa com um contato.
 func (h *SupportHandler) StartConversation(c *gin.Context) {
 	var req struct {

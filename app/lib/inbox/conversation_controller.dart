@@ -70,6 +70,34 @@ class ConversationController extends ChangeNotifier {
   bool loading = false;
   bool sending = false;
 
+  /// Pedindo um rascunho à IA (Cmd/Ctrl+I ou o botão ✨).
+  bool suggesting = false;
+
+  /// Pede à IA um rascunho de resposta e coloca no compositor para o atendente
+  /// revisar — NADA é enviado ao cliente. Devolve a mensagem de erro, ou null
+  /// se deu certo. Não sobrescreve o que já estiver digitado: acrescenta.
+  Future<String?> suggestReply() async {
+    if (suggesting) return null;
+    suggesting = true;
+    notifyListeners();
+    final r = await _api.post('/support/tickets/${ticket.id}/suggest', const <String, dynamic>{});
+    suggesting = false;
+    if (!r.ok || r.data is! Map) {
+      notifyListeners();
+      return r.message ?? 'A IA não conseguiu sugerir uma resposta';
+    }
+    final text = ((r.data as Map)['text'] ?? '').toString().trim();
+    if (text.isEmpty) {
+      notifyListeners();
+      return 'A IA não teve o que sugerir aqui';
+    }
+    final atual = composer.text.trim();
+    composer.text = atual.isEmpty ? text : '$atual\n$text';
+    composer.selection = TextSelection.collapsed(offset: composer.text.length);
+    notifyListeners();
+    return null;
+  }
+
   /// Hora da última mensagem RECEBIDA do cliente — define a janela de 24h da Meta.
   DateTime? get lastInboundAt {
     for (final m in messages.reversed) {

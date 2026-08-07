@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -536,7 +537,14 @@ class _ConversationPane extends StatelessWidget {
               const Divider(height: 1),
               Expanded(child: _thread()),
               _templatesBar(context),
-              _composer(context),
+              // Cmd/Ctrl+I pede o rascunho da IA sem tirar a mão do teclado.
+              CallbackShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () => _suggest(context),
+                  const SingleActivator(LogicalKeyboardKey.keyI, control: true): () => _suggest(context),
+                },
+                child: _composer(context),
+              ),
             ],
           );
         },
@@ -1193,6 +1201,17 @@ class _ConversationPane extends StatelessWidget {
     );
   }
 
+  /// ✨ Rascunho da IA (botão ou Cmd/Ctrl+I): a IA redige com base na conversa
+  /// e na base de conhecimento, o texto cai no compositor e QUEM ENVIA é o
+  /// atendente — nada vai ao cliente sozinho.
+  Future<void> _suggest(BuildContext context) async {
+    if (conv.noteMode || conv.suggesting) return;
+    final erro = await conv.suggestReply();
+    if (erro != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(erro)));
+    }
+  }
+
   Widget _composer(BuildContext context) {
     Future<void> doSend() async {
       // Modo NOTA: grava a nota interna (nunca vai à Meta/cliente).
@@ -1468,6 +1487,18 @@ class _ConversationPane extends StatelessWidget {
                 tooltip: 'Respostas rápidas',
                 icon: Icon(Icons.bolt_outlined, color: Colors.grey.shade700),
               ),
+            ),
+          // ✨ rascunho da IA (Cmd/Ctrl+I) — só quando se fala com o cliente.
+          if (!conv.noteMode)
+            IconButton(
+              onPressed: (conv.sending || conv.suggesting) ? null : () => _suggest(context),
+              tooltip: 'Sugerir resposta com IA (Cmd+I)',
+              icon: conv.suggesting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.seed))
+                  : Icon(Icons.auto_awesome_outlined, color: Colors.grey.shade700),
             ),
           // 📌 alterna o modo NOTA INTERNA (amarelo = ligado).
           IconButton(
