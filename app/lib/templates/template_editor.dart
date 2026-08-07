@@ -16,7 +16,12 @@ import '../core/theme.dart';
 ///    cliente já tem (pedido, fatura, atendimento aberto); saudação e convite
 ///    são Marketing — a Meta rebaixa na revisão e o preço muda.
 class TemplateEditor extends StatefulWidget {
-  const TemplateEditor({super.key});
+  /// De qual lista o modelo está nascendo: 'chat' (conversa) ou 'campaign'
+  /// (campanha). Define a categoria sugerida — conversa é Utilidade, campanha
+  /// é Marketing — e fixa em que lista o modelo aparece depois.
+  const TemplateEditor({super.key, this.usage});
+
+  final String? usage;
 
   @override
   State<TemplateEditor> createState() => _TemplateEditorState();
@@ -32,7 +37,7 @@ class _TemplateEditorState extends State<TemplateEditor> {
   final buttonCtrls = <TextEditingController>[];
   final exampleCtrls = <TextEditingController>[];
 
-  String category = 'MARKETING';
+  late String category;
   String headerType = 'NONE'; // NONE | TEXT | IMAGE
   String? imageHandle;
   String? imageName;
@@ -43,6 +48,8 @@ class _TemplateEditorState extends State<TemplateEditor> {
   @override
   void initState() {
     super.initState();
+    // Regra: modelo de conversa nasce Utilidade; de campanha, Marketing.
+    category = widget.usage == 'campaign' ? 'MARKETING' : 'UTILITY';
     body.addListener(_syncExamples);
   }
 
@@ -132,6 +139,7 @@ class _TemplateEditorState extends State<TemplateEditor> {
       'name': name.text.trim(),
       'language': 'pt_BR',
       'category': category,
+      'usage': widget.usage ?? 'chat',
       'header_type': headerType == 'NONE' ? '' : headerType,
       if (headerType == 'TEXT') 'header_text': headerText.text.trim(),
       if (headerType == 'IMAGE') 'header_handle': imageHandle,
@@ -155,7 +163,11 @@ class _TemplateEditorState extends State<TemplateEditor> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Novo modelo de mensagem'),
+      title: Text(switch (widget.usage) {
+        'campaign' => 'Novo modelo de campanha',
+        'chat' => 'Novo modelo de conversa',
+        _ => 'Novo modelo de mensagem',
+      }),
       content: SizedBox(
         width: 760,
         child: SingleChildScrollView(
@@ -423,6 +435,16 @@ class _TemplateEditorState extends State<TemplateEditor> {
           Text('Como a Meta classifica (quem decide é ela, não a sua escolha)',
               style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Colors.grey.shade700)),
           const SizedBox(height: 6),
+          if (widget.usage != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                widget.usage == 'campaign'
+                    ? 'Modelo de campanha já vem como Marketing — é disparo para lista, a Meta não aceita utilidade aqui.'
+                    : 'Modelo de conversa já vem como Utilidade (mais barata). Troque para Marketing se o texto for oferta ou abordagem.',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700, height: 1.35),
+              ),
+            ),
           _guideLine('Utilidade',
               'a mensagem aponta para algo que o cliente já tem: pedido, fatura/boleto, agendamento, '
               'atendimento aberto, veículo rastreado. É a faixa mais barata.'),

@@ -177,7 +177,7 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
   Future<void> _openForm(TemplatesController c) async {
     final created = await showDialog<bool>(
       context: context,
-      builder: (_) => const TemplateEditor(),
+      builder: (_) => TemplateEditor(usage: widget.usage),
     );
     if (created == true && mounted) {
       await c.load();

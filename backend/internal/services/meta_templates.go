@@ -39,6 +39,10 @@ type TemplateSpec struct {
 	BodyExamples []string         `json:"body_examples"` // um por variável {{n}}
 	Footer       string           `json:"footer"`
 	Buttons      []TemplateButton `json:"buttons"`
+	// Para que o modelo serve AQUI ('chat' | 'campaign'). NÃO vai para a Meta:
+	// fixa em que lista ele aparece, independente da categoria que a revisão
+	// dela decidir (a Meta recategoriza quando quer).
+	Usage string `json:"usage"`
 }
 
 var templateVarRe = regexp.MustCompile(`\{\{(\d+)\}\}`)

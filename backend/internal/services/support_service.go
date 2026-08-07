@@ -247,8 +247,15 @@ func (s *SupportService) CreateTemplateSpec(accountID string, spec TemplateSpec)
 	if spec.Language == "" {
 		spec.Language = "pt_BR"
 	}
+	// Categoria padrão pelo tipo do modelo: conversa nasce UTILITY (mais barata
+	// e é o que o atendimento faz), campanha nasce MARKETING. O usuário troca
+	// na tela quando o conteúdo pedir.
 	if spec.Category == "" {
-		spec.Category = "MARKETING"
+		if spec.Usage == TemplateUsageCampaign {
+			spec.Category = "MARKETING"
+		} else {
+			spec.Category = "UTILITY"
+		}
 	}
 	if strings.EqualFold(spec.Category, "AUTHENTICATION") {
 		return client.CreateAuthTemplate(wabaID, spec.Name, spec.Language, 10)
@@ -264,7 +271,17 @@ func (s *SupportService) CreateTemplateSpec(accountID string, spec TemplateSpec)
 	if strings.EqualFold(spec.HeaderType, "IMAGE") && spec.HeaderHandle == "" {
 		return "", errors.New("envie a imagem do cabeçalho antes de criar o modelo")
 	}
-	return client.CreateTemplateFull(wabaID, spec)
+	status, err := client.CreateTemplateFull(wabaID, spec)
+	if err != nil {
+		return "", err
+	}
+	// Grava o uso escolhido na tela que criou o modelo. Sem isso ele cairia na
+	// lista pelo default da categoria — e como a Meta recategoriza sozinha, o
+	// modelo mudaria de lista sem ninguém pedir.
+	if spec.Usage == TemplateUsageChat || spec.Usage == TemplateUsageCampaign {
+		_ = s.repo.SetTemplateUsage(accountID, spec.Name, spec.Usage)
+	}
+	return status, nil
 }
 
 // UploadTemplateImage sobe a imagem de exemplo do cabeçalho e devolve o handle.
