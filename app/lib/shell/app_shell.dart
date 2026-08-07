@@ -319,6 +319,7 @@ class _AppShellState extends State<AppShell> {
         activeIcon: spec.activeIcon,
         entries: entries,
         currentIndex: _index,
+        currentLabel: _index < dests.length ? dests[_index].label : '',
         onSelect: (j) => _select(dests, j),
       ));
     }
@@ -338,8 +339,10 @@ class _AppShellState extends State<AppShell> {
           child: Container(
             height: 52,
             decoration: BoxDecoration(
-              color: sel ? Colors.white.withValues(alpha: 0.12) : null,
+              color: sel ? Colors.white.withValues(alpha: 0.14) : null,
               borderRadius: BorderRadius.circular(12),
+              // Barra da marca à esquerda: o fundo sozinho some no rail escuro.
+              border: sel ? const Border(left: BorderSide(color: AppTheme.seed, width: 3)) : null,
             ),
             child: Icon(sel ? dest.activeIcon : dest.icon, color: sel ? Colors.white : Colors.white70, size: 24),
           ),
@@ -440,6 +443,7 @@ class _RailGroup extends StatefulWidget {
     required this.activeIcon,
     required this.entries,
     required this.currentIndex,
+    required this.currentLabel,
     required this.onSelect,
   });
 
@@ -448,6 +452,11 @@ class _RailGroup extends StatefulWidget {
   final IconData activeIcon;
   final List<(int, _NavDest)> entries; // (índice na lista de abas, aba)
   final int currentIndex;
+
+  /// Rótulo da aba aberta. A marcação compara por RÓTULO além do índice: a lista
+  /// é remontada a cada build (muda com módulo contratado, guia do 1º acesso e
+  /// papel do usuário) e qualquer descompasso apagaria o destaque.
+  final String currentLabel;
   final void Function(int index) onSelect;
 
   @override
@@ -463,7 +472,8 @@ class _RailGroupState extends State<_RailGroup> {
   /// (sem esperar o timer) — senão um sobrepõe o outro nos grupos vizinhos.
   static _RailGroupState? _openNow;
 
-  bool get _groupActive => widget.entries.any((e) => e.$1 == widget.currentIndex);
+  bool get _groupActive =>
+      widget.entries.any((e) => e.$1 == widget.currentIndex || e.$2.label == widget.currentLabel);
 
   void _open() {
     _closeTimer?.cancel();
@@ -552,8 +562,9 @@ class _RailGroupState extends State<_RailGroup> {
                   // Visual IDÊNTICO ao dos botões comuns do rail (pedido do
                   // usuário) — o flyout é a única diferença.
                   decoration: BoxDecoration(
-                    color: sel ? Colors.white.withValues(alpha: 0.12) : null,
+                    color: sel ? Colors.white.withValues(alpha: 0.14) : null,
                     borderRadius: BorderRadius.circular(12),
+                    border: sel ? const Border(left: BorderSide(color: AppTheme.seed, width: 3)) : null,
                   ),
                   child: Icon(sel ? widget.activeIcon : widget.icon,
                       color: sel ? Colors.white : Colors.white70, size: 24),
@@ -569,7 +580,7 @@ class _RailGroupState extends State<_RailGroup> {
   // Linha do flyout: ícone + nome, destacando a aba ativa. Larguras fixas
   // (nada de Expanded-em-Row — colapsa no CanvasKit web).
   Widget _flyItem(int index, _NavDest d) {
-    final active = index == widget.currentIndex;
+    final active = index == widget.currentIndex || d.label == widget.currentLabel;
     return InkWell(
       onTap: () {
         _hideNow();
