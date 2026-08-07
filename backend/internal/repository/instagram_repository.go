@@ -130,6 +130,19 @@ func (r *SupportRepository) FindOrCreateExternalContact(accountID, channel, exte
 	return &c, err
 }
 
+// LastInboundAt devolve quando o cliente falou pela última vez — é o que abre
+// a janela de resposta, tanto no WhatsApp quanto no Instagram.
+func (r *SupportRepository) LastInboundAt(ticketID string) (time.Time, bool, error) {
+	var t sql.NullTime
+	err := r.db.QueryRow(
+		`SELECT MAX(created_at) FROM support_ticket_messages WHERE ticket_id=$1 AND direction='in'`,
+		ticketID).Scan(&t)
+	if err != nil || !t.Valid {
+		return time.Time{}, false, err
+	}
+	return t.Time, true, nil
+}
+
 // SetTicketChannel marca por onde a conversa fala (whatsapp | instagram).
 func (r *SupportRepository) SetTicketChannel(ticketID, channel string) error {
 	_, err := r.db.Exec(`UPDATE support_tickets SET channel=$2 WHERE id=$1`, ticketID, channel)

@@ -91,7 +91,7 @@ type SupportService struct {
 	// Cobrança (opcional) — dispara a recarga automática ao consumir tokens.
 	billing *BillingService
 	// Envio pelo Direct do Instagram (ligado no wiring; nil = canal desligado).
-	igSend func(accountID, recipientID, text string) (string, error)
+	igSend func(accountID, ticketID, recipientID, text string) (string, error)
 	// Cache das categorias dos modelos por conta (para o relatório de consumo).
 	tplCacheMu sync.Mutex
 	tplCache   map[string]tplCacheEntry
@@ -125,7 +125,7 @@ func (s *SupportService) AIActionsRepo() *repository.AIActionRepository { return
 
 // WithInstagramSender liga o envio pelo Direct. É uma função, e não o serviço
 // do Instagram, porque ELE depende deste aqui — passar o objeto fecharia um ciclo.
-func (s *SupportService) WithInstagramSender(fn func(accountID, recipientID, text string) (string, error)) *SupportService {
+func (s *SupportService) WithInstagramSender(fn func(accountID, ticketID, recipientID, text string) (string, error)) *SupportService {
 	s.igSend = fn
 	return s
 }
@@ -1337,7 +1337,7 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 			return s.repo.InsertMessage(msg)
 		}
 		igsid, _ := s.repo.ContactExternalID(ticketID)
-		mid, sendErr := s.igSend(accountID, igsid, text)
+		mid, sendErr := s.igSend(accountID, ticketID, igsid, text)
 		if sendErr != nil {
 			slog.Error("envio pelo Direct falhou", "conta", accountID, "ticket", ticketID, "erro", sendErr)
 			msg.Status = "failed"

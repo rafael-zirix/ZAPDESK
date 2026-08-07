@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"zapdesk/internal/models"
 	"zapdesk/internal/repository"
@@ -109,7 +110,7 @@ func (s *InstagramService) ProcessDirect(igUserID, senderID, name, mid, text str
 
 // SendDirect responde pelo Direct. Só funciona dentro da janela de 24h da última
 // mensagem do cliente — fora dela a Meta recusa, e não há template para insistir.
-func (s *InstagramService) SendDirect(accountID, recipientID, text string) (string, error) {
+func (s *InstagramService) SendDirect(accountID, ticketID, recipientID, text string) (string, error) {
 	token, igUserID, err := s.tokenFor(accountID)
 	if err != nil {
 		return "", err
@@ -117,6 +118,13 @@ func (s *InstagramService) SendDirect(accountID, recipientID, text string) (stri
 	payload := map[string]any{
 		"recipient": map[string]string{"id": recipientID},
 		"message":   map[string]string{"text": text},
+	}
+	// Fora das 24h, o Instagram ainda deixa um HUMANO responder por até 7 dias,
+	// desde que a mensagem vá marcada como atendimento humano. É o equivalente
+	// ao template do WhatsApp — só que sem aprovação prévia e sem custo.
+	if !s.windowOpen(ticketID) {
+		payload["messaging_type"] = "MESSAGE_TAG"
+		payload["tag"] = "HUMAN_AGENT"
 	}
 	raw, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost,
@@ -140,6 +148,20 @@ func (s *InstagramService) SendDirect(accountID, recipientID, text string) (stri
 	}
 	_ = json.Unmarshal(data, &out)
 	return out.MessageID, nil
+}
+
+// windowOpen diz se o cliente falou nas últimas 24h (a janela padrão da Meta).
+// Sem nenhuma mensagem recebida, tratamos como FECHADA — é o caso do lead de
+// formulário, em que ninguém escreveu no Direct ainda.
+func (s *InstagramService) windowOpen(ticketID string) bool {
+	if ticketID == "" {
+		return false
+	}
+	at, ok, err := s.support.repo.LastInboundAt(ticketID)
+	if err != nil || !ok {
+		return false
+	}
+	return time.Since(at) < 24*time.Hour
 }
 
 // ProcessLead transforma um formulário de Lead Ads em contato + conversa aberta.

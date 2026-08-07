@@ -6,6 +6,7 @@ class TicketListItem {
     required this.protocol,
     required this.status,
     required this.contactPhone,
+    this.channel = 'whatsapp',
     this.contactName,
     required this.lastMessageAt,
     this.aiPaused = false,
@@ -21,6 +22,12 @@ class TicketListItem {
   final String protocol;
   String status; // open | pending | resolved | closed (mutável p/ ações no header)
   final String contactPhone;
+
+  /// Canal da conversa: 'whatsapp' ou 'instagram'. Muda a régua da janela — no
+  /// Instagram não existe modelo aprovado.
+  final String channel;
+
+  bool get isInstagram => channel == 'instagram';
   final String? contactName;
   final DateTime lastMessageAt;
   bool aiPaused; // Atendente IA pausado nesta conversa (mutável p/ toggle otimista)
@@ -68,6 +75,7 @@ class TicketListItem {
         protocol: j['protocol'] ?? '',
         status: j['status'] ?? 'open',
         contactPhone: j['contact_phone'] ?? '',
+        channel: j['channel'] ?? 'whatsapp',
         contactName: j['contact_name'],
         lastMessageAt: DateTime.tryParse(j['last_message_at'] ?? '')?.toLocal() ?? DateTime.now(),
         aiPaused: j['ai_paused'] == true,

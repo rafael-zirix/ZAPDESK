@@ -177,14 +177,14 @@ func (r *SupportRepository) TicketListItem(accountID, ticketID string) (*models.
 	var it models.SupportTicketListItem
 	var tags []byte
 	err := r.db.QueryRow(`
-		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
+		SELECT t.id, t.protocol, t.status, c.name, COALESCE(c.phone,''), COALESCE(t.channel,'whatsapp'), t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
 		       t.assigned_user_id, u.full_name, t.sector_id, s.name, `+ticketTagsJSON+`
 		FROM support_tickets t
 		JOIN support_contacts c ON c.id = t.contact_id
 		LEFT JOIN users u ON u.id = t.assigned_user_id
 		LEFT JOIN support_sectors s ON s.id = t.sector_id
 		WHERE t.id=$1 AND t.account_id=$2`, ticketID, accountID).
-		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
+		Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.Channel, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
 			&it.AssignedUserID, &it.AssignedUserName, &it.SectorID, &it.SectorName, &tags)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -514,7 +514,7 @@ func (r *SupportRepository) SetTemplateEnabled(accountID, name string, enabled b
 // ListInbox devolve as conversas da conta (mais recentes primeiro).
 func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketListItem, error) {
 	rows, err := r.db.Query(`
-		SELECT t.id, t.protocol, t.status, c.name, c.phone, t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
+		SELECT t.id, t.protocol, t.status, c.name, COALESCE(c.phone,''), COALESCE(t.channel,'whatsapp'), t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
 		       t.assigned_user_id, u.full_name, t.sector_id, s.name, `+ticketTagsJSON+`
 		FROM support_tickets t
 		JOIN support_contacts c ON c.id = t.contact_id
@@ -530,7 +530,7 @@ func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketL
 	for rows.Next() {
 		var it models.SupportTicketListItem
 		var tags []byte
-		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
+		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.Channel, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
 			&it.AssignedUserID, &it.AssignedUserName, &it.SectorID, &it.SectorName, &tags); err != nil {
 			return nil, err
 		}

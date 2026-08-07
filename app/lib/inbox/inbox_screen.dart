@@ -537,6 +537,19 @@ class _ConversationPane extends StatelessWidget {
               const Divider(height: 1),
               Expanded(child: _thread()),
               _templatesBar(context),
+              // Instagram fora das 24h: avisa, mas NÃO bloqueia (lá o atendente
+              // ainda responde por 7 dias e não existe modelo para reabrir).
+              if (conv.ticket.isInstagram && !conv.windowOpen && !conv.noteMode)
+                Container(
+                  width: double.infinity,
+                  color: const Color(0xFFF79009).withValues(alpha: 0.12),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  child: const Text(
+                    'Fora das 24h: no Instagram um atendente ainda pode responder por até 7 dias. '
+                    'Depois disso a Meta recusa — e aqui não existe modelo para reabrir a conversa.',
+                    style: TextStyle(fontSize: 11.5, color: Color(0xFF93370D)),
+                  ),
+                ),
               // Cmd/Ctrl+I pede o rascunho da IA sem tirar a mão do teclado.
               CallbackShortcuts(
                 bindings: {
@@ -1463,8 +1476,13 @@ class _ConversationPane extends StatelessWidget {
 
     // Fora da janela de 24h a Meta só entrega MODELO aprovado → bloqueia o texto
     // livre e direciona para os modelos. NOTA interna pode sempre (não vai à Meta).
-    if (!conv.windowOpen && !conv.noteMode) return _closedWindowComposer(context);
-
+    //
+    // No INSTAGRAM a régua é outra: não existe modelo aprovado, e um humano pode
+    // responder por até 7 dias (a mensagem sai marcada como atendimento humano).
+    // Então o campo continua liberado — só avisamos que a janela padrão fechou.
+    if (!conv.windowOpen && !conv.noteMode && !conv.ticket.isInstagram) {
+      return _closedWindowComposer(context);
+    }
     return Container(
       color: conv.noteMode ? Colors.amber.withValues(alpha: 0.12) : AppTheme.surface,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),

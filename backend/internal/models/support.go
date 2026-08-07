@@ -112,6 +112,7 @@ type SupportTicketListItem struct {
 	Status           string    `json:"status"`
 	ContactName      *string   `json:"contact_name,omitempty"`
 	ContactPhone     string    `json:"contact_phone"`
+	Channel          string    `json:"channel"` // whatsapp | instagram (decide a régua da janela)
 	LastMessageAt    time.Time `json:"last_message_at"`
 	AIPaused         bool      `json:"ai_paused"`    // Atendente IA pausado nesta conversa
 	UnreadCount      int       `json:"unread_count"` // mensagens recebidas ainda não lidas
