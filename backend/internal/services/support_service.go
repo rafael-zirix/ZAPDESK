@@ -92,6 +92,8 @@ type SupportService struct {
 	billing *BillingService
 	// Envio pelo Direct do Instagram (ligado no wiring; nil = canal desligado).
 	igSend func(accountID, ticketID, recipientID, text string) (string, error)
+	// Módulos contratados (ligado no wiring). Nil = não checa.
+	hasModule func(accountID, key string) (bool, error)
 	// Cache das categorias dos modelos por conta (para o relatório de consumo).
 	tplCacheMu sync.Mutex
 	tplCache   map[string]tplCacheEntry
@@ -122,6 +124,23 @@ func (s *SupportService) WithAI(ai *AIClient, aiRepo *repository.AIRepository, a
 
 // AIActionsRepo expõe o repositório de ações (para os handlers de CRUD).
 func (s *SupportService) AIActionsRepo() *repository.AIActionRepository { return s.aiActions }
+
+// WithModuleCheck informa como perguntar se a conta tem um módulo. Sem isso, o
+// motor não sabe o que foi contratado e as regras vendidas à parte não rodam.
+func (s *SupportService) WithModuleCheck(fn func(accountID, key string) (bool, error)) *SupportService {
+	s.hasModule = fn
+	return s
+}
+
+// contratou diz se a conta tem o módulo. Sem o wiring, responde NÃO — um erro
+// de montagem não pode distribuir recurso pago de graça.
+func (s *SupportService) contratou(accountID, key string) bool {
+	if s.hasModule == nil {
+		return false
+	}
+	ok, err := s.hasModule(accountID, key)
+	return err == nil && ok
+}
 
 // WithInstagramSender liga o envio pelo Direct. É uma função, e não o serviço
 // do Instagram, porque ELE depende deste aqui — passar o objeto fecharia um ciclo.
@@ -642,7 +661,7 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 	// qualifica em poucas perguntas e entrega o resumo ao time comercial.
 	headline, _ := s.repo.TicketAdHeadline(accountID, ticketID)
 	canal, _ := s.repo.TicketChannel(accountID, ticketID)
-	if headline != "" || canal == ChannelInstagram {
+	if (headline != "" || canal == ChannelInstagram) && s.contratou(accountID, ModuleLeads) {
 		origem := "pelo Direct do Instagram"
 		if headline != "" {
 			origem = "pelo anúncio \"" + headline + "\""

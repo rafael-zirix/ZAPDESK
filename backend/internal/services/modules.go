@@ -14,6 +14,7 @@ const (
 	ModuleIA          = "ia"
 	ModuleCampanhas   = "campanhas"
 	ModuleMetricas    = "metricas"
+	ModuleLeads       = "leads"
 	ModuleCRM         = "crm"
 	ModuleInstagram   = "instagram"
 )
@@ -57,6 +58,13 @@ func ModuleCatalog() []ModuleInfo {
 			Name:        "Métricas",
 			Description: "Tempo de espera, tempo de atendimento, volume por atendente, setor, dia e hora.",
 			PriceCents:  0,
+		},
+		{
+			Key:  ModuleLeads,
+			Name: "Leads & Qualificação",
+			Description: "Lead de anúncio e de formulário entra etiquetado e vai direto ao comercial; a IA " +
+				"aplica o seu roteiro no primeiro atendimento e classifica em prospect ou não.",
+			PriceCents: 0,
 		},
 		{
 			Key:         ModuleCRM,

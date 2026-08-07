@@ -132,6 +132,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
 	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db))
 	moduleH := handlers.NewModuleHandler(moduleSvc)
+	supportSvc.WithModuleCheck(moduleSvc.Has) // regras vendidas à parte só rodam p/ quem contratou
 	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
 
 	// Health.
@@ -244,12 +245,11 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
 			support.POST("/tickets/:id/notes", supportH.AddNote)          // nota interna (só a equipe vê)
 			support.PUT("/tickets/:id/phone", supportH.LinkPhone)          // cadastra o WhatsApp de um contato do Instagram
-			// Roteiro do 1º atendimento: quem EXECUTA é a IA, então o recurso é
-			// vendido com ela. Leitura liberada (a tela mostra o que está salvo
-			// e a vitrine); gravar exige o módulo.
+			// Roteiro do 1º atendimento: é do módulo Leads (a IA é só o motor).
+			// Leitura liberada para a tela mostrar a vitrine; gravar exige o módulo.
 			support.GET("/lead-qualification", middleware.RequireAdmin(), supportH.LeadQualification)
 			support.PUT("/lead-qualification", middleware.RequireAdmin(),
-				middleware.RequireModule(moduleSvc, services.ModuleIA), supportH.SetLeadQualification)
+				middleware.RequireModule(moduleSvc, services.ModuleLeads), supportH.SetLeadQualification)
 			support.PUT("/tickets/:id/tags", supportH.SetTicketTags)      // etiqueta a conversa
 			support.POST("/tickets/claim-next", supportH.ClaimNext)       // pega o próximo da fila
 			support.GET("/quick-replies", supportH.ListQuickReplies)      // atalhos de texto (/boleto…)

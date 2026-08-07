@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/entity_form.dart';
+import 'account_modules_dialog.dart';
 import '../core/theme.dart';
 import '../models/account.dart';
 import 'account_detail_screen.dart';
@@ -87,6 +88,14 @@ class _AccountsScreenState extends State<AccountsScreen> {
               ),
               _statusChip(a.status),
               const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.widgets_outlined),
+                tooltip: 'Módulos contratados',
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => AccountModulesDialog(accountId: a.id, accountName: a.name),
+                ),
+              ),
               IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Editar', onPressed: () => _openEdit(c, a)),
               IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Excluir', onPressed: () => _confirmDelete(c, a)),
               Icon(Icons.chevron_right, color: Colors.grey.shade400),
