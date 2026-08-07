@@ -15,7 +15,16 @@ import (
 
 // BillingHandler expõe a compra de tokens de IA via Mercado Pago (PIX) e o webhook
 // de confirmação. A conta vem do token — a empresa só compra para si.
-type BillingHandler struct{ billing *services.BillingService }
+type BillingHandler struct {
+	billing *services.BillingService
+	modSubs *services.ModuleSubscriptionService // mensalidade dos módulos (mesmo webhook)
+}
+
+// WithModuleSubs liga a mensalidade dos módulos ao webhook do Mercado Pago.
+func (h *BillingHandler) WithModuleSubs(s *services.ModuleSubscriptionService) *BillingHandler {
+	h.modSubs = s
+	return h
+}
 
 func NewBillingHandler(billing *services.BillingService) *BillingHandler {
 	return &BillingHandler{billing: billing}
@@ -266,8 +275,20 @@ func (h *BillingHandler) Webhook(c *gin.Context) {
 		err = h.billing.HandleWebhook(paymentID)
 	case "subscription_authorized_payment":
 		err = h.billing.HandleAuthorizedPayment(paymentID)
+		// A mesma notificação pode ser da mensalidade dos módulos; cada serviço
+		// ignora o que não é dele.
+		if h.modSubs != nil {
+			if e := h.modSubs.HandleAuthorizedPayment(paymentID); e != nil && err == nil {
+				err = e
+			}
+		}
 	case "subscription_preapproval", "preapproval":
 		err = h.billing.HandleSubscriptionStatus(paymentID)
+		if h.modSubs != nil {
+			if e := h.modSubs.HandleStatus(paymentID); e != nil && err == nil {
+				err = e
+			}
+		}
 	default:
 		c.Status(http.StatusOK) // tópico que não tratamos
 		return

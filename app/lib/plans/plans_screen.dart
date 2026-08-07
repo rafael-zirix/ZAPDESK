@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'subscription_card.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -89,6 +91,8 @@ class _PlansScreenState extends State<PlansScreen> {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 980),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        const SubscriptionCard(),
+                        const SizedBox(height: 18),
                         _balanceCard(),
                         const SizedBox(height: 18),
                         _plansSection(),

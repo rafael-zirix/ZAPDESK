@@ -134,6 +134,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
 	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo).WithSettings(supportRepo)
 	moduleH := handlers.NewModuleHandler(moduleSvc)
+	// Mensalidade dos módulos (Mercado Pago): assinatura por empresa + corte por
+	// inadimplência depois da carência.
+	modSubSvc := services.NewModuleSubscriptionService(
+		repository.NewModuleSubscriptionRepository(db), moduleSvc, mpClient, cfg.PublicURL)
+	modSubSvc.StartDunningWorker()
+	modSubH := handlers.NewModuleSubscriptionHandler(modSubSvc)
+	billingH = billingH.WithModuleSubs(modSubSvc) // o webhook do MP também trata a mensalidade
 	supportSvc.WithModuleCheck(moduleSvc.Has) // regras vendidas à parte só rodam p/ quem contratou
 	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
 
@@ -197,6 +204,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 		// Módulos: o app monta o menu com isto e abre a vitrine no que faltar.
 		api.GET("/modules", moduleH.List)
+		// Mensalidade dos módulos (admin da empresa).
+		api.GET("/billing/subscription", middleware.RequireAdmin(), modSubH.Get)
+		api.POST("/billing/subscription", middleware.RequireAdmin(), modSubH.Start)
+		api.DELETE("/billing/subscription", middleware.RequireAdmin(), modSubH.Cancel)
 		api.POST("/modules/:key/interest", moduleH.Interest) // "quero contratar"
 
 		users := api.Group("/users")
