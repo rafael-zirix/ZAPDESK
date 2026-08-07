@@ -73,6 +73,7 @@ func (h *AIHandler) Models(c *gin.Context) {
 		}
 		itens = append(itens, gin.H{
 			"model": m.Model, "label": nome, "provider": m.Provider, "factor": m.ChargeFactor(),
+			"context": m.Context, "intelligence": m.Intelligence, "speed": m.Speed, "best_for": m.BestFor,
 		})
 	}
 	RespondSuccess(c, http.StatusOK, "OK", gin.H{"models": itens, "current": atual})

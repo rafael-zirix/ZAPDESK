@@ -32,6 +32,12 @@ type AIModelCost struct {
 	Factor  float64 `json:"factor,omitempty"`   // multiplicador do consumo (1 = padrão)
 	BaseURL string  `json:"base_url,omitempty"` // endpoint do provedor (compatível OpenAI)
 	KeyEnv  string  `json:"key_env,omitempty"`  // NOME da variável de ambiente com a chave
+
+	// --- comparativo que o cliente vê para decidir sozinho ---
+	Context      string `json:"context,omitempty"`      // janela de contexto ("1M", "200k")
+	Intelligence int    `json:"intelligence,omitempty"` // 0-100 (nota comparativa)
+	Speed        int    `json:"speed,omitempty"`        // 0-100
+	BestFor      string `json:"best_for,omitempty"`     // no que ela é melhor
 }
 
 // ChargeFactor é quanto o modelo consome do saldo do cliente por token real.

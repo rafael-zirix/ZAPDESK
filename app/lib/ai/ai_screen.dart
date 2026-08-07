@@ -589,28 +589,113 @@ class _AIScreenState extends State<AIScreen> {
   /// é a informação que evita o cliente escolher o mais forte e se assustar com
   /// o consumo depois.
   Widget _modeloCard() => _card([
-        const Text('Qual IA atende', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+        const Text('Escolha a sua IA', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
         const SizedBox(height: 4),
-        Text('Todos os modelos são cobrados do seu saldo de tokens. Os mais avançados consomem mais '
-            'por mensagem — o multiplicador está ao lado de cada um.',
+        Text('A IA escolhida vale para TUDO: o atendimento automático, a sugestão de resposta e o que '
+            'vier depois. Todas são cobradas do seu saldo de tokens — as mais fortes consomem mais por '
+            'mensagem. Compare e escolha; dá para trocar quando quiser.',
             style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4)),
-        const SizedBox(height: 10),
-        for (final m in _modelos)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(
-              (m['model'] ?? '').toString() == _modeloAtual
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_unchecked,
-              color: (m['model'] ?? '').toString() == _modeloAtual ? AppTheme.seed : Colors.grey,
-            ),
-            title: Text((m['label'] ?? m['model']).toString()),
-            subtitle: Text('${m['provider'] ?? ''} · consome ${_fator(m)}× por mensagem',
-                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
-            onTap: () => _salvarModelo((m['model'] ?? '').toString()),
-          ),
+        const SizedBox(height: 14),
+        Wrap(spacing: 12, runSpacing: 12, children: [for (final m in _modelos) _modeloOpcao(m)]),
       ]);
+
+  /// Cartão comparativo de um modelo. Largura fixa (nada de Expanded em Row —
+  /// colapsa no CanvasKit) e os números que decidem: contexto, inteligência,
+  /// velocidade e quanto consome.
+  Widget _modeloOpcao(Map<String, dynamic> m) {
+    final id = (m['model'] ?? '').toString();
+    final atual = id == _modeloAtual;
+    return SizedBox(
+      width: 250,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: atual ? AppTheme.seed.withValues(alpha: 0.06) : null,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: atual ? AppTheme.seed : Colors.grey.withValues(alpha: 0.3),
+            width: atual ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text((m['label'] ?? id).toString(),
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+            Text((m['provider'] ?? '').toString(),
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+            if ((m['best_for'] ?? '').toString().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(m['best_for'].toString(),
+                  style: const TextStyle(fontSize: 12.5, height: 1.35)),
+            ],
+            const SizedBox(height: 10),
+            if ((m['context'] ?? '').toString().isNotEmpty)
+              _linhaSpec('Contexto', m['context'].toString()),
+            _barra('Inteligência', (m['intelligence'] ?? 0) as int),
+            _barra('Velocidade', (m['speed'] ?? 0) as int),
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.token, size: 15, color: Color(0xFFF79009)),
+              const SizedBox(width: 5),
+              Text('consome ${_fator(m)}× por mensagem',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFB54708))),
+            ]),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: atual
+                  ? Container(
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                      decoration: BoxDecoration(
+                        color: AppTheme.seed.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text('Em uso',
+                          style: TextStyle(color: AppTheme.seed, fontWeight: FontWeight.w700, fontSize: 13)),
+                    )
+                  : OutlinedButton(onPressed: () => _salvarModelo(id), child: const Text('Usar esta')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _linhaSpec(String label, String valor) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(children: [
+          SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600))),
+          Text(valor, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        ]),
+      );
+
+  // Nota comparativa em barra: dá a noção sem prometer precisão de benchmark.
+  Widget _barra(String label, int nota) {
+    final v = (nota.clamp(0, 100)) / 100;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(children: [
+        SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600))),
+        SizedBox(
+          width: 90,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: v,
+              minHeight: 6,
+              backgroundColor: Colors.grey.withValues(alpha: 0.25),
+              valueColor: const AlwaysStoppedAnimation(AppTheme.seed),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text('$nota%', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
 
   String _fator(Map<String, dynamic> m) {
     final f = (m['factor'] ?? 1) as num;
