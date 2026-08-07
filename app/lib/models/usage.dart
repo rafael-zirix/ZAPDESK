@@ -187,16 +187,49 @@ class AIModelCost {
     this.per1k = 0,
     this.active = false,
     this.note = '',
+    this.label = '',
+    this.offered = false,
+    this.factor = 1,
+    this.baseUrl = '',
+    this.keyEnv = '',
+    this.context = '',
+    this.intelligence = 0,
+    this.speed = 0,
+    this.bestFor = '',
   });
 
   final String model;
   final String provider;
-  final double per1k;
+  final double per1k; // custo NOSSO por 1k (nunca vai ao cliente)
   final bool active; // é o modelo em uso na plataforma
   final String note;
 
-  Map<String, dynamic> toJson() =>
-      {'model': model, 'provider': provider, 'per_1k': per1k, 'note': note};
+  // O que torna o modelo vendável e comparável na vitrine do cliente.
+  final String label; // nome comercial
+  final bool offered; // aparece para o cliente escolher
+  final double factor; // multiplicador do consumo do saldo
+  final String baseUrl; // endpoint do provedor
+  final String keyEnv; // NOME da variável de ambiente com a chave (nunca o valor)
+  final String context; // janela de contexto ("1M")
+  final int intelligence; // 0-100
+  final int speed; // 0-100
+  final String bestFor; // no que ela é melhor
+
+  Map<String, dynamic> toJson() => {
+        'model': model,
+        'provider': provider,
+        'per_1k': per1k,
+        'note': note,
+        'label': label,
+        'offered': offered,
+        'factor': factor,
+        'base_url': baseUrl,
+        'key_env': keyEnv,
+        'context': context,
+        'intelligence': intelligence,
+        'speed': speed,
+        'best_for': bestFor,
+      };
 
   factory AIModelCost.fromJson(Map<String, dynamic> j) => AIModelCost(
         model: j['model'] ?? '',
@@ -204,6 +237,15 @@ class AIModelCost {
         per1k: (j['per_1k'] as num?)?.toDouble() ?? 0,
         active: j['active'] == true,
         note: j['note'] ?? '',
+        label: j['label'] ?? '',
+        offered: j['offered'] == true,
+        factor: (j['factor'] as num?)?.toDouble() ?? 1,
+        baseUrl: j['base_url'] ?? '',
+        keyEnv: j['key_env'] ?? '',
+        context: j['context'] ?? '',
+        intelligence: (j['intelligence'] as num?)?.toInt() ?? 0,
+        speed: (j['speed'] as num?)?.toInt() ?? 0,
+        bestFor: j['best_for'] ?? '',
       );
 }
 

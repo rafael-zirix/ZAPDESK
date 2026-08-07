@@ -388,6 +388,20 @@ class _AICostRowState extends State<_AICostRow> {
                             color: m.active ? AppTheme.seed : null))),
                 SizedBox(width: 120, child: Text(m.provider, style: _td)),
                 SizedBox(width: 150, child: Text('R\$ ${m.per1k.toStringAsFixed(4)}', style: _tdBold)),
+                // Vitrine: se está ofertado e quanto consome do saldo do cliente.
+                SizedBox(
+                  width: 110,
+                  child: m.offered
+                      ? Text('oferta · ${m.factor}×',
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF12B76A)))
+                      : Text('interno', style: _td),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, size: 17),
+                  tooltip: 'Editar modelo e vitrine',
+                  onPressed: () => _addModel(context, editar: m),
+                ),
                 SizedBox(
                     width: 90,
                     child: m.active
@@ -442,46 +456,133 @@ class _AICostRowState extends State<_AICostRow> {
     );
   }
 
-  Future<void> _addModel(BuildContext context) async {
+  /// Cadastro do modelo: custo NOSSO (interno) + a vitrine que o cliente vê.
+  /// `editar` preenche o formulário para ajustar um modelo existente.
+  Future<void> _addModel(BuildContext context, {AIModelCost? editar}) async {
     final messenger = ScaffoldMessenger.of(context);
-    final model = TextEditingController(text: widget.c.aiCosts.activeModel);
-    final provider = TextEditingController();
-    final price = TextEditingController();
+    final model = TextEditingController(text: editar?.model ?? widget.c.aiCosts.activeModel);
+    final provider = TextEditingController(text: editar?.provider ?? '');
+    final price = TextEditingController(text: editar == null || editar.per1k == 0 ? '' : editar.per1k.toString());
+    final label = TextEditingController(text: editar?.label ?? '');
+    final bestFor = TextEditingController(text: editar?.bestFor ?? '');
+    final contexto = TextEditingController(text: editar?.context ?? '');
+    final inteligencia = TextEditingController(text: (editar?.intelligence ?? 0) > 0 ? '${editar!.intelligence}' : '');
+    final velocidade = TextEditingController(text: (editar?.speed ?? 0) > 0 ? '${editar!.speed}' : '');
+    final fator = TextEditingController(text: '${editar?.factor ?? 1}');
+    final baseUrl = TextEditingController(text: editar?.baseUrl ?? '');
+    final keyEnv = TextEditingController(text: editar?.keyEnv ?? '');
+    var ofertado = editar?.offered ?? false;
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (dc) => AlertDialog(
-        title: const Text('Custo de um modelo de IA'),
-        content: SizedBox(
-          width: 380,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: model,
-              decoration: const InputDecoration(
-                  labelText: 'Modelo', hintText: 'ex.: gemini-flash-lite-latest', border: OutlineInputBorder()),
+      builder: (dc) => StatefulBuilder(
+        builder: (dc, setLocal) => AlertDialog(
+          title: Text(editar == null ? 'Novo modelo de IA' : 'Editar ${editar.model}'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Técnico', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: model,
+                  decoration: const InputDecoration(
+                      labelText: 'Modelo (id do provedor)', hintText: 'ex.: claude-sonnet-4', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 10),
+                Row(children: [
+                  SizedBox(width: 260, child: TextField(
+                    controller: baseUrl,
+                    decoration: const InputDecoration(
+                        labelText: 'Endpoint (compatível OpenAI)', hintText: 'https://api…/v1', border: OutlineInputBorder()),
+                  )),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 240, child: TextField(
+                    controller: keyEnv,
+                    decoration: const InputDecoration(
+                        labelText: 'Variável da chave', hintText: 'AI_KEY_ANTHROPIC', border: OutlineInputBorder(),
+                        helperText: 'Só o NOME. A chave fica no .env'),
+                  )),
+                ]),
+                const SizedBox(height: 10),
+                Row(children: [
+                  SizedBox(width: 200, child: TextField(
+                    controller: provider,
+                    decoration: const InputDecoration(labelText: 'Provedor', border: OutlineInputBorder()),
+                  )),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 200, child: TextField(
+                    controller: price,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                        labelText: 'Custo por 1.000 tokens', prefixText: 'R\$ ', border: OutlineInputBorder(),
+                        helperText: 'O que NÓS pagamos'),
+                  )),
+                ]),
+                const Divider(height: 28),
+                const Text('Vitrine do cliente', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                const SizedBox(height: 8),
+                Row(children: [
+                  SizedBox(width: 200, child: TextField(
+                    controller: label,
+                    decoration: const InputDecoration(labelText: 'Nome comercial', hintText: 'Avançado', border: OutlineInputBorder()),
+                  )),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 130, child: TextField(
+                    controller: contexto,
+                    decoration: const InputDecoration(labelText: 'Contexto', hintText: '1M', border: OutlineInputBorder()),
+                  )),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 150, child: TextField(
+                    controller: fator,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                        labelText: 'Consumo (×)', border: OutlineInputBorder(), helperText: 'Multiplica o saldo'),
+                  )),
+                ]),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: bestFor,
+                  decoration: const InputDecoration(
+                      labelText: 'No que é melhor', hintText: 'Textos longos e raciocínio complexo', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 10),
+                Row(children: [
+                  SizedBox(width: 170, child: TextField(
+                    controller: inteligencia,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Inteligência (0-100)', border: OutlineInputBorder()),
+                  )),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 170, child: TextField(
+                    controller: velocidade,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Velocidade (0-100)', border: OutlineInputBorder()),
+                  )),
+                ]),
+                const SizedBox(height: 6),
+                CheckboxListTile(
+                  value: ofertado,
+                  onChanged: (v) => setLocal(() => ofertado = v ?? false),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('Oferecer este modelo aos clientes'),
+                  subtitle: const Text('Sem a chave no ambiente, ele não aparece mesmo marcado',
+                      style: TextStyle(fontSize: 11.5)),
+                ),
+              ]),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: provider,
-              decoration: const InputDecoration(
-                  labelText: 'Provedor', hintText: 'ex.: Google, OpenAI, Anthropic', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: price,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                  labelText: 'Custo por 1.000 tokens', prefixText: 'R\$ ', border: OutlineInputBorder()),
-            ),
-          ]),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dc, false), child: const Text('Cancelar')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
-            onPressed: () => Navigator.pop(dc, true),
-            child: const Text('Salvar'),
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dc, false), child: const Text('Cancelar')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+              onPressed: () => Navigator.pop(dc, true),
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
       ),
     );
     if (ok != true || model.text.trim().isEmpty) return;
@@ -489,6 +590,15 @@ class _AICostRowState extends State<_AICostRow> {
       model: model.text.trim(),
       provider: provider.text.trim(),
       per1k: double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0,
+      label: label.text.trim(),
+      offered: ofertado,
+      factor: double.tryParse(fator.text.trim().replaceAll(',', '.')) ?? 1,
+      baseUrl: baseUrl.text.trim(),
+      keyEnv: keyEnv.text.trim(),
+      context: contexto.text.trim(),
+      intelligence: int.tryParse(inteligencia.text.trim()) ?? 0,
+      speed: int.tryParse(velocidade.text.trim()) ?? 0,
+      bestFor: bestFor.text.trim(),
     );
     final lista = [...widget.c.aiCosts.models.where((m) => m.model != novo.model), novo];
     final err = await widget.c.saveAICosts(lista);
