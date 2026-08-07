@@ -106,6 +106,28 @@ func (h *SupportHandler) AddCampaignMedia(c *gin.Context) {
 }
 
 // DeleteCampaign exclui a campanha e o histórico de destinatários dela.
+// RenameCampaign troca o nome da campanha (duplo clique na lista).
+func (h *SupportHandler) RenameCampaign(c *gin.Context) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	err := h.support.RenameCampaign(middleware.AccountID(c), c.Param("id"), req.Name)
+	switch {
+	case err == nil:
+		RespondSuccess(c, http.StatusOK, "Nome atualizado", gin.H{"name": req.Name})
+	case errors.Is(err, services.ErrCampaignName):
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dê um nome à campanha", nil)
+	case errors.Is(err, services.ErrCampaignNotFound):
+		RespondError(c, http.StatusNotFound, ErrNotFound, "Campanha não encontrada", nil)
+	default:
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao renomear a campanha", err.Error())
+	}
+}
+
 func (h *SupportHandler) DeleteCampaign(c *gin.Context) {
 	if err := h.support.DeleteCampaign(middleware.AccountID(c), c.Param("id")); err != nil {
 		if errors.Is(err, services.ErrCampaignNotFound) {

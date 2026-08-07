@@ -337,6 +337,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			campaigns.GET("/:id/recipients", supportH.CampaignRecipients)
 			campaigns.POST("/:id/action", supportH.CampaignAction) // pause | resume | cancel
 			campaigns.DELETE("/:id", supportH.DeleteCampaign)     // exclui a campanha
+			campaigns.PUT("/:id/name", supportH.RenameCampaign)    // renomeia (duplo clique na lista)
 			campaigns.POST("/media", supportH.AddCampaignMedia) // foto p/ modelo com cabeçalho de imagem
 		}
 

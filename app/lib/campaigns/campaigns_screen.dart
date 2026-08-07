@@ -118,6 +118,34 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
         _ => Colors.grey,
       };
 
+  // Renomear na lista: duplo clique troca o título por um campo. Enter (ou sair
+  // do campo) salva; Esc desiste. O nome é só rótulo interno — não mexe em nada
+  // que já foi disparado.
+  String? _renamingId;
+  final _renameCtrl = TextEditingController();
+
+  void _startRename(Campaign c) {
+    setState(() {
+      _renamingId = c.id;
+      _renameCtrl.text = c.name;
+      _renameCtrl.selection = TextSelection(baseOffset: 0, extentOffset: c.name.length);
+    });
+  }
+
+  Future<void> _saveRename(Campaign c) async {
+    final novo = _renameCtrl.text.trim();
+    setState(() => _renamingId = null);
+    if (novo.isEmpty || novo == c.name) return;
+    final r = await _api.put('/campaigns/${c.id}/name', {'name': novo});
+    if (!mounted) return;
+    if (r.ok) {
+      await _load();
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(r.message ?? 'Não foi possível renomear')));
+    }
+  }
+
   Widget _tile(Campaign c) {
     final f = c.funnel;
     final progress = f.total == 0 ? 0.0 : f.done / f.total;
@@ -131,8 +159,23 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
             Row(
               children: [
                 Expanded(
-                  child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                  child: _renamingId == c.id
+                      ? TextField(
+                          controller: _renameCtrl,
+                          autofocus: true,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                          onSubmitted: (_) => _saveRename(c),
+                          onTapOutside: (_) => _saveRename(c),
+                        )
+                      : GestureDetector(
+                          onDoubleTap: () => _startRename(c),
+                          child: Tooltip(
+                            message: 'Duplo clique para renomear',
+                            child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                          ),
+                        ),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),

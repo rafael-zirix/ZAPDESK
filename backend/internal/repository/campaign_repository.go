@@ -229,6 +229,16 @@ func (r *SupportRepository) TicketForCampaign(accountID, contactID string) (stri
 }
 
 // DeleteCampaign remove a campanha e seus destinatários (cascata).
+// RenameCampaign troca só o nome (o resto da campanha é imutável depois de criada).
+func (r *SupportRepository) RenameCampaign(accountID, id, name string) (bool, error) {
+	res, err := r.db.Exec(`UPDATE campaigns SET name=$3 WHERE id=$1 AND account_id=$2`, id, accountID, name)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (r *SupportRepository) DeleteCampaign(accountID, id string) (bool, error) {
 	res, err := r.db.Exec(`DELETE FROM campaigns WHERE id=$1 AND account_id=$2`, id, accountID)
 	if err != nil {

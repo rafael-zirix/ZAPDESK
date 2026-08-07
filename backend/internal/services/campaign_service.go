@@ -19,6 +19,7 @@ var (
 	ErrCampaignNotFound   = errors.New("campanha não encontrada")
 	ErrCampaignBadState   = errors.New("ação não permitida neste status")
 	ErrCampaignNoAudience = errors.New("audiência vazia")
+	ErrCampaignName       = errors.New("nome obrigatório")
 )
 
 // CreateCampaign cria a campanha (audiência resolvida na hora, sem opt-outs).
@@ -78,6 +79,23 @@ func (s *SupportService) ListCampaignRecipients(accountID, id string, limit int)
 
 // DeleteCampaign apaga a campanha (e seus destinatários). Uma campanha em
 // execução é cancelada antes, para o worker não continuar enviando.
+// RenameCampaign renomeia a campanha. O nome é rótulo interno: mudar não afeta
+// nada do que já foi disparado.
+func (s *SupportService) RenameCampaign(accountID, id, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrCampaignName
+	}
+	ok, err := s.repo.RenameCampaign(accountID, id, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrCampaignNotFound
+	}
+	return nil
+}
+
 func (s *SupportService) DeleteCampaign(accountID, id string) error {
 	c, err := s.GetCampaign(accountID, id)
 	if err != nil {

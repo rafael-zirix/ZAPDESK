@@ -118,10 +118,15 @@ func (s TemplateSpec) components() []any {
 // CreateTemplateFull cria o modelo na WABA com todos os componentes.
 func (c *MetaClient) CreateTemplateFull(wabaID string, spec TemplateSpec) (string, error) {
 	payload := map[string]any{
-		"name":       spec.Name,
-		"language":   spec.Language,
-		"category":   spec.Category,
-		"components": spec.components(),
+		"name":     spec.Name,
+		"language": spec.Language,
+		"category": spec.Category,
+		// A categoria que mandamos é uma SUGESTÃO. Sem esta flag, a Meta
+		// REJEITA o modelo quando discorda (o que acontece muito: qualquer
+		// abordagem sem gancho transacional ela lê como marketing). Com ela,
+		// a Meta corrige a categoria e aprova — a lista mostra qual ficou.
+		"allow_category_change": true,
+		"components":            spec.components(),
 	}
 	raw, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost,

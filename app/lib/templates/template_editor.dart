@@ -440,8 +440,8 @@ class _TemplateEditorState extends State<TemplateEditor> {
               padding: const EdgeInsets.only(bottom: 6),
               child: Text(
                 widget.usage == 'campaign'
-                    ? 'Modelo de campanha já vem como Marketing — é disparo para lista, a Meta não aceita utilidade aqui.'
-                    : 'Modelo de conversa já vem como Utilidade (mais barata). Troque para Marketing se o texto for oferta ou abordagem.',
+                    ? 'Modelo de campanha vem como Marketing — é disparo para lista.'
+                    : 'Modelo de conversa vem sugerido como Utilidade (faixa mais barata). Quem dá a palavra final é a Meta.',
                 style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700, height: 1.35),
               ),
             ),
@@ -453,8 +453,9 @@ class _TemplateEditorState extends State<TemplateEditor> {
               'e sujeita ao limite de mensagens de marketing por pessoa.'),
           const SizedBox(height: 6),
           Text(
-            'Não existe categoria "conversa": saudação sem gancho é Marketing. Se marcar Utilidade sem esse '
-            'gancho, a Meta aprova e depois rebaixa para Marketing — e o preço muda junto.',
+            'Não existe categoria "conversa": saudação sem gancho é Marketing. A sua escolha vai como '
+            'SUGESTÃO — se a Meta discordar, ela corrige a categoria em vez de rejeitar o modelo. '
+            'A categoria que ficou valendo aparece na lista, ao lado do status.',
             style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600, height: 1.35),
           ),
           if (warn) ...[
@@ -469,7 +470,8 @@ class _TemplateEditorState extends State<TemplateEditor> {
               ),
               child: Text(
                 '⚠️ Este texto não cita nenhum pedido, fatura, agendamento ou atendimento do cliente. '
-                'Do jeito que está, a Meta deve rebaixar para Marketing. Amarre a algo concreto, '
+                'a Meta provavelmente vai classificar como Marketing (ela corrige sozinha, não rejeita). '
+                'Se quiser a faixa mais barata, amarre a algo concreto, '
                 'ex.: "sobre o atendimento {{1}} que você abriu com a gente".',
                 style: const TextStyle(fontSize: 11.5, color: Color(0xFF93370D), height: 1.35),
               ),
