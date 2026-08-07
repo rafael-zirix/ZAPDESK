@@ -706,7 +706,8 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 	if len(chat) < 2 || chat[len(chat)-1].Role != "user" {
 		return
 	}
-	reply, tokens, err := s.generateAIReply(accountID, ticketID, chat)
+	client, fator := s.aiForAccount(accountID)
+	reply, tokens, err := s.generateAIReplyWith(client, accountID, ticketID, chat)
 	if err != nil || strings.TrimSpace(reply) == "" {
 		slog.Error("Atendente IA falhou", "erro", err, "ticket", ticketID)
 		return
@@ -715,7 +716,7 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 		slog.Error("Falha ao enviar resposta da IA", "erro", err, "ticket", ticketID)
 		return
 	}
-	newBal, _ := s.aiRepo.ConsumeTokens(accountID, int64(tokens), ticketID)
+	newBal, _ := s.aiRepo.ConsumeTokens(accountID, cobrarTokens(tokens, fator), ticketID)
 	// Recarga automática por cartão (Stripe): dispara sozinha ao chegar ao limite.
 	if s.billing != nil {
 		go s.billing.MaybeCharge(accountID, newBal)
@@ -726,7 +727,21 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 // entra no loop de function-calling: a IA pode pedir uma busca, o backend executa
 // a chamada HTTP configurada e devolve o resultado para a IA compor a resposta.
 // Sem ferramentas, usa o caminho simples. Devolve o texto + o total de tokens.
+// generateAIReply usa o cliente padrão da plataforma.
 func (s *SupportService) generateAIReply(accountID, ticketID string, chat []AIChatMessage) (string, int, error) {
+	return s.generateAIReplyWith(s.ai, accountID, ticketID, chat)
+}
+
+// cobrarTokens aplica o multiplicador do modelo escolhido. O cliente compra
+// token conosco: modelo mais caro consome mais do saldo dele.
+func cobrarTokens(tokens int, fator float64) int64 {
+	if fator <= 1 {
+		return int64(tokens)
+	}
+	return int64(float64(tokens) * fator)
+}
+
+func (s *SupportService) generateAIReplyWith(ai *AIClient, accountID, ticketID string, chat []AIChatMessage) (string, int, error) {
 	var actions []models.AIAction
 	if s.aiActions != nil {
 		actions, _ = s.aiActions.ListEnabled(accountID)
@@ -736,7 +751,7 @@ func (s *SupportService) generateAIReply(accountID, ticketID string, chat []AICh
 	// qualificado. Só existe numa conversa real (no rascunho do Cmd+I, não).
 	handoff := ticketID != ""
 	if len(actions) == 0 && !handoff {
-		return s.ai.Complete(chat, 500)
+		return ai.Complete(chat, 500)
 	}
 	msgs := make([]map[string]any, 0, len(chat))
 	for _, m := range chat {
@@ -779,7 +794,7 @@ func (s *SupportService) generateAIReply(accountID, ticketID string, chat []AICh
 	}
 	total := 0
 	for round := 0; round < 3; round++ {
-		content, calls, rawMsg, tok, err := s.ai.ChatRaw(msgs, tools, 600)
+		content, calls, rawMsg, tok, err := ai.ChatRaw(msgs, tools, 600)
 		total += tok
 		if err != nil {
 			return "", total, err
@@ -798,7 +813,7 @@ func (s *SupportService) generateAIReply(accountID, ticketID string, chat []AICh
 		}
 	}
 	// Muitas rodadas: pede a resposta final já sem ferramentas.
-	content, _, _, tok, err := s.ai.ChatRaw(msgs, nil, 600)
+	content, _, _, tok, err := ai.ChatRaw(msgs, nil, 600)
 	total += tok
 	return content, total, err
 }

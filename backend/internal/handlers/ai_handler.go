@@ -60,6 +60,40 @@ func (h *AIHandler) kbFits(accountID, excludeID, content string) string {
 }
 
 // GetConfig devolve a config de IA da empresa + se o motor está plugado.
+// Models lista os modelos que a empresa pode escolher (o que oferecemos), com
+// o quanto cada um consome do saldo.
+func (h *AIHandler) Models(c *gin.Context) {
+	oferta := h.support.OfferedModels()
+	atual, _ := h.support.AccountAIModel(middleware.AccountID(c))
+	itens := make([]gin.H, 0, len(oferta))
+	for _, m := range oferta {
+		nome := m.Label
+		if nome == "" {
+			nome = m.Model
+		}
+		itens = append(itens, gin.H{
+			"model": m.Model, "label": nome, "provider": m.Provider, "factor": m.ChargeFactor(),
+		})
+	}
+	RespondSuccess(c, http.StatusOK, "OK", gin.H{"models": itens, "current": atual})
+}
+
+// SetModel grava o modelo escolhido pela empresa (vazio volta ao padrão).
+func (h *AIHandler) SetModel(c *gin.Context) {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
+		return
+	}
+	if err := h.support.SetAccountAIModel(middleware.AccountID(c), req.Model); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, err.Error(), nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Modelo atualizado", gin.H{"model": req.Model})
+}
+
 func (h *AIHandler) GetConfig(c *gin.Context) {
 	repo := h.support.AIRepo()
 	if repo == nil {

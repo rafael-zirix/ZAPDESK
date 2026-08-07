@@ -64,7 +64,8 @@ func (s *SupportService) SuggestReply(accountID, ticketID string) (string, int, 
 
 	// Ticket vazio de propósito: no rascunho a IA não pode encaminhar nem mexer
 	// na conversa — ela só escreve o texto.
-	text, tokens, err := s.generateAIReply(accountID, "", chat)
+	client, fator := s.aiForAccount(accountID)
+	text, tokens, err := s.generateAIReplyWith(client, accountID, "", chat)
 	if err != nil {
 		return "", tokens, err
 	}
@@ -72,7 +73,7 @@ func (s *SupportService) SuggestReply(accountID, ticketID string) (string, int, 
 	if text == "" {
 		return "", tokens, ErrAINothingToSay
 	}
-	newBal, _ := s.aiRepo.ConsumeTokens(accountID, int64(tokens), ticketID)
+	newBal, _ := s.aiRepo.ConsumeTokens(accountID, cobrarTokens(tokens, fator), ticketID)
 	if s.billing != nil {
 		go s.billing.MaybeCharge(accountID, newBal)
 	}

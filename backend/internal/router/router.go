@@ -339,6 +339,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		ai := api.Group("/ai", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleIA))
 		{
 			ai.GET("/config", aiH.GetConfig)
+			ai.GET("/models", aiH.Models)  // modelos que a empresa pode escolher
+			ai.PUT("/models", aiH.SetModel) // escolha do modelo (consumo por fator)
 			ai.PUT("/config", aiH.SetConfig)
 			ai.POST("/autorecharge/setup", billingH.StripeSetup)     // cadastra cartão (Stripe) p/ recarga a 10%
 			ai.GET("/autorecharge", billingH.AutoRecharge)           // estado da recarga automática

@@ -45,6 +45,23 @@ func (r *AIRepository) SetLeadQualification(accountID, script, criteria string) 
 	return err
 }
 
+// AccountModel devolve o modelo de IA escolhido pela empresa ("" = padrão).
+func (r *AIRepository) AccountModel(accountID string) (string, error) {
+	var m string
+	err := r.db.QueryRow(`SELECT COALESCE(ai_model,'') FROM accounts WHERE id=$1 AND deleted_at IS NULL`, accountID).Scan(&m)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return m, err
+}
+
+// SetAccountModel grava a escolha do modelo (vazio volta ao padrão).
+func (r *AIRepository) SetAccountModel(accountID, model string) error {
+	_, err := r.db.Exec(`UPDATE accounts SET ai_model=$2, updated_at=$3 WHERE id=$1 AND deleted_at IS NULL`,
+		accountID, model, time.Now().UTC())
+	return err
+}
+
 // SetAutoRecharge grava a config de recompra automática (limite + valor).
 func (r *AIRepository) SetAutoRecharge(accountID string, enabled bool, threshold, amount int64) error {
 	_, err := r.db.Exec(`UPDATE accounts SET ai_autorecharge_enabled=$2, ai_autorecharge_threshold=$3,

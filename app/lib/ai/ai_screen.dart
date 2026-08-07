@@ -25,6 +25,11 @@ class _AIScreenState extends State<AIScreen> {
   bool _enabled = false;
   bool _providerReady = false;
   final _instructions = TextEditingController();
+
+  // Modelos que a plataforma oferece (o cliente compra token conosco e escolhe
+  // qual IA usar; modelo mais forte consome mais do saldo).
+  List<Map<String, dynamic>> _modelos = [];
+  String _modeloAtual = '';
   int _balance = 0;
   int _kbLimit = 4000; // teto de caracteres da base de conhecimento (vem do backend)
 
@@ -59,6 +64,7 @@ class _AIScreenState extends State<AIScreen> {
     final cfg = await _api.get('/ai/config');
     final ctx = await _api.get('/ai/context');
     final act = await _api.get('/ai/actions');
+    final mods = await _api.get('/ai/models');
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -72,6 +78,11 @@ class _AIScreenState extends State<AIScreen> {
       }
       _contexts = ctx.ok && ctx.data is List ? (ctx.data as List).cast<Map<String, dynamic>>() : [];
       _actions = act.ok && act.data is List ? (act.data as List).cast<Map<String, dynamic>>() : [];
+      if (mods.ok && mods.data is Map) {
+        final m = mods.data as Map;
+        _modelos = ((m['models'] as List?) ?? const []).cast<Map<String, dynamic>>();
+        _modeloAtual = (m['current'] ?? '').toString();
+      }
     });
   }
 
@@ -324,6 +335,10 @@ class _AIScreenState extends State<AIScreen> {
                             const SizedBox(height: 16),
                             _balanceCard(),
                             const SizedBox(height: 16),
+                            if (_modelos.isNotEmpty) ...[
+                              _modeloCard(),
+                              const SizedBox(height: 16),
+                            ],
                             _knowledgeCard(),
                             const SizedBox(height: 16),
                             _actionsCard(),
@@ -570,6 +585,51 @@ class _AIScreenState extends State<AIScreen> {
   }
 
   // ---- Ações da IA (buscas externas / function-calling) ----
+  /// Escolha da IA. Uma linha por modelo, com o quanto ele consome do saldo —
+  /// é a informação que evita o cliente escolher o mais forte e se assustar com
+  /// o consumo depois.
+  Widget _modeloCard() => _card([
+        const Text('Qual IA atende', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+        const SizedBox(height: 4),
+        Text('Todos os modelos são cobrados do seu saldo de tokens. Os mais avançados consomem mais '
+            'por mensagem — o multiplicador está ao lado de cada um.',
+            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4)),
+        const SizedBox(height: 10),
+        for (final m in _modelos)
+          ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              (m['model'] ?? '').toString() == _modeloAtual
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: (m['model'] ?? '').toString() == _modeloAtual ? AppTheme.seed : Colors.grey,
+            ),
+            title: Text((m['label'] ?? m['model']).toString()),
+            subtitle: Text('${m['provider'] ?? ''} · consome ${_fator(m)}× por mensagem',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+            onTap: () => _salvarModelo((m['model'] ?? '').toString()),
+          ),
+      ]);
+
+  String _fator(Map<String, dynamic> m) {
+    final f = (m['factor'] ?? 1) as num;
+    return f == f.roundToDouble() ? f.toInt().toString() : f.toStringAsFixed(1);
+  }
+
+  Future<void> _salvarModelo(String model) async {
+    final anterior = _modeloAtual;
+    setState(() => _modeloAtual = model);
+    final r = await _api.put('/ai/models', {'model': model});
+    if (!mounted) return;
+    if (r.ok) {
+      _toast('IA atualizada');
+    } else {
+      setState(() => _modeloAtual = anterior);
+      _toast(r.message ?? 'Não foi possível trocar o modelo');
+    }
+  }
+
   Widget _actionsCard() => _card([
         _cardTitle(Icons.bolt_outlined, 'Ações da IA — buscas externas'),
         Text('A IA usa estas buscas sozinha quando o cliente precisar (ex.: 2ª via de boleto). '
