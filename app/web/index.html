@@ -83,6 +83,34 @@
       document.body.appendChild(js);
     });
   };
+
+  // Login da Meta para o Instagram. Mesmo SDK do Embedded Signup, sem o ouvinte
+  // de sessão: aqui o popup devolve só o `code` — quem descobre a Página e a
+  // conta do Instagram é o servidor, que é onde o token pode existir.
+  window.zapFacebookLogin = function (appId, configId, graphVersion) {
+    return new Promise(function (resolve, reject) {
+      function launch() {
+        window.FB.login(function (response) {
+          var code = response && response.authResponse && response.authResponse.code;
+          resolve(code ? { code: code } : null); // null = usuário cancelou
+        }, {
+          config_id: configId,
+          response_type: 'code',
+          override_default_response_type: true
+        });
+      }
+      if (window.FB) { launch(); return; }
+      window.fbAsyncInit = function () {
+        window.FB.init({ appId: appId, autoLogAppEvents: true, xfbml: false, version: graphVersion });
+        launch();
+      };
+      var js = document.createElement('script');
+      js.async = true;
+      js.src = 'https://connect.facebook.net/en_US/sdk.js';
+      js.onerror = function () { reject('sdk_load_failed'); };
+      document.body.appendChild(js);
+    });
+  };
   </script>
 
   <script src="flutter_bootstrap.js" async></script>

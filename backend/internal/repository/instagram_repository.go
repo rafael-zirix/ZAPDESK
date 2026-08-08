@@ -60,11 +60,14 @@ func (r *InstagramRepository) ListByAccount(accountID string) ([]InstagramAccoun
 
 // ByIGUserID resolve a empresa dona (e o token cifrado) a partir do id que vem
 // no webhook — é o roteamento do canal, igual ao phone_number_id do WhatsApp.
+// ByIGUserID resolve a conta pelo id da conta profissional OU pelo id da Página:
+// o Direct chega com o id do Instagram, mas o `leadgen` chega no objeto `page`,
+// com o id da PÁGINA. Sem os dois, o lead de formulário sumiria em silêncio.
 func (r *InstagramRepository) ByIGUserID(igUserID string) (*InstagramAccount, error) {
 	var a InstagramAccount
 	err := r.db.QueryRow(`
 		SELECT id, account_id, ig_user_id, page_id, COALESCE(username,''), access_token_enc, status, created_at
-		  FROM instagram_accounts WHERE ig_user_id=$1 AND status='connected'`, igUserID).
+		  FROM instagram_accounts WHERE (ig_user_id=$1 OR page_id=$1) AND status='connected'`, igUserID).
 		Scan(&a.ID, &a.AccountID, &a.IGUserID, &a.PageID, &a.Username, &a.TokenEnc, &a.Status, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -78,6 +81,22 @@ func (r *InstagramRepository) ByAccountID(accountID string) (*InstagramAccount, 
 	err := r.db.QueryRow(`
 		SELECT id, account_id, ig_user_id, page_id, COALESCE(username,''), access_token_enc, status, created_at
 		  FROM instagram_accounts WHERE account_id=$1 AND status='connected' ORDER BY created_at LIMIT 1`, accountID).
+		Scan(&a.ID, &a.AccountID, &a.IGUserID, &a.PageID, &a.Username, &a.TokenEnc, &a.Status, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &a, err
+}
+
+// Reactivate volta a conta para 'connected' reusando o token já guardado — quem
+// desconectou por engano não precisa gerar token novo na Meta.
+func (r *InstagramRepository) Reactivate(accountID, id string) (*InstagramAccount, error) {
+	var a InstagramAccount
+	err := r.db.QueryRow(`
+		UPDATE instagram_accounts SET status='connected', updated_at=$3
+		 WHERE id=$1 AND account_id=$2
+	 RETURNING id, account_id, ig_user_id, page_id, COALESCE(username,''), access_token_enc, status, created_at`,
+		id, accountID, time.Now().UTC()).
 		Scan(&a.ID, &a.AccountID, &a.IGUserID, &a.PageID, &a.Username, &a.TokenEnc, &a.Status, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil

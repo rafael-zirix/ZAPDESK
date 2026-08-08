@@ -28,3 +28,24 @@ Future<EmbeddedResult?> runEmbeddedSignup({
     return null;
   }
 }
+
+@JS('zapFacebookLogin')
+external JSPromise<JSAny?> _zapFacebookLogin(String appId, String configId, String graphVersion);
+
+/// Abre o popup da Meta para o Instagram e devolve só o `code` — a descoberta da
+/// Página e da conta é do servidor. Null se o usuário cancelar ou o SDK falhar.
+Future<String?> runFacebookLogin({
+  required String appId,
+  required String configId,
+  required String graphVersion,
+}) async {
+  try {
+    final res = await _zapFacebookLogin(appId, configId, graphVersion).toDart;
+    final dart = res.dartify();
+    if (dart is! Map) return null;
+    final code = (dart.cast<Object?, Object?>()['code'] ?? '').toString();
+    return code.isEmpty ? null : code;
+  } catch (_) {
+    return null;
+  }
+}

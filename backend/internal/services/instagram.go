@@ -34,6 +34,11 @@ type InstagramService struct {
 	support *SupportService
 	cipher  Decryptor
 	apiBase string
+	// Conexão pelo popup da Meta (ver instagram_oauth.go). Vazios = desligado.
+	fbAppID  string
+	fbSecret string
+	fbConfig string
+	fbGraph  string
 }
 
 // Decryptor é o que o serviço precisa da cifra (o token da Página fica cifrado
@@ -60,6 +65,18 @@ func (s *InstagramService) Connect(accountID, igUserID, pageID, username, token 
 	enc, err := s.cipher.Encrypt(token)
 	if err != nil {
 		return err
+	}
+	// Token errado é recusado na entrada: salvar um token de usuário deixa a conta
+	// "conectada" e mudinha, que é pior que não conectar.
+	if err := checkPageToken(s.apiBase, pageID, token); err != nil {
+		return err
+	}
+	// Assinar a Página é o que faz a Meta ENTREGAR Direct e leads aqui. Sem isto a
+	// conta salva bonita e não recebe nada. Best-effort: com o token já validado,
+	// falha aqui é permissão faltando, e a tela avisa.
+	if err := subscribePage(s.apiBase, pageID, token); err != nil {
+		slog.Warn("Instagram: falha ao assinar a Página nos webhooks", "erro", err, "page_id", pageID)
+		return fmt.Errorf("token válido, mas a Meta recusou assinar a Página: %w", err)
 	}
 	acc := &repository.InstagramAccount{
 		AccountID: accountID, IGUserID: igUserID, PageID: pageID,

@@ -37,14 +37,19 @@ func isInstagramPayload(raw []byte) bool {
 	var head struct {
 		Object string `json:"object"`
 	}
-	return json.Unmarshal(raw, &head) == nil && head.Object == "instagram"
+	if json.Unmarshal(raw, &head) != nil {
+		return false
+	}
+	// `page` entra aqui porque é nele que a Meta entrega o `leadgen` dos anúncios
+	// (inclusive os do Instagram) — o objeto `instagram` só carrega o Direct.
+	return head.Object == "instagram" || head.Object == "page"
 }
 
 // handleInstagram processa o payload do Instagram. Devolve true quando o
 // payload ERA do Instagram (para o Receive não tentar lê-lo como WhatsApp).
 func (h *WebhookHandler) handleInstagram(raw []byte) bool {
 	var p instagramPayload
-	if err := json.Unmarshal(raw, &p); err != nil || p.Object != "instagram" {
+	if err := json.Unmarshal(raw, &p); err != nil || (p.Object != "instagram" && p.Object != "page") {
 		return false
 	}
 	if h.instagram == nil {

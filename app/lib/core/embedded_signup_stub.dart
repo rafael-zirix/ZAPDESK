@@ -7,3 +7,11 @@ Future<EmbeddedResult?> runEmbeddedSignup({
   required String graphVersion,
 }) async =>
     null;
+
+/// Fora do web, o login da Meta não está disponível.
+Future<String?> runFacebookLogin({
+  required String appId,
+  required String configId,
+  required String graphVersion,
+}) async =>
+    null;

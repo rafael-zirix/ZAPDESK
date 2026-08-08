@@ -126,7 +126,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 	// Canal do Instagram (Direct + Lead Ads). Compartilha o webhook da Meta.
 	igRepo := repository.NewInstagramRepository(db)
-	igSvc := services.NewInstagramService(igRepo, supportSvc, cipher, cfg.MetaAPIBase)
+	igSvc := services.NewInstagramService(igRepo, supportSvc, cipher, cfg.MetaAPIBase).
+		WithFacebookLogin(cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaIGConfigID, cfg.GraphVersion())
 	supportSvc.WithInstagramSender(igSvc.SendDirect) // resposta do atendente sai pelo Direct
 	igH := handlers.NewInstagramHandler(igSvc)
 	webhookH = webhookH.WithInstagram(igSvc)
@@ -325,6 +326,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			insta.GET("", igH.List)
 			insta.POST("", igH.Connect)
 			insta.DELETE("/:id", igH.Disconnect)
+			// Conexão pelo popup da Meta (o formulário manual segue como saída
+			// de emergência: popup bloqueado, Página sem vínculo, permissão faltando).
+			insta.GET("/login/config", igH.LoginConfig)
+			insta.POST("/login", igH.ConnectViaLogin)
+			insta.POST("/login/escolher", igH.ConnectChosen)
+			insta.POST("/reassinar", igH.Resubscribe)
+			insta.POST("/:id/reativar", igH.Reactivate)
 		}
 
 		// Embedded Signup: conectar número via popup da Meta (admin da empresa).

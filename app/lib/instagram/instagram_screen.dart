@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../auth/auth_controller.dart';
 import '../core/api_client.dart';
+import '../core/embedded_signup.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
 
@@ -27,6 +28,12 @@ class _InstagramScreenState extends State<InstagramScreen> {
   final _criterio = TextEditingController();
   bool salvando = false;
 
+  // Conexão pelo popup da Meta. Desligada até a plataforma cadastrar o
+  // config_id do Facebook Login — aí o botão aparece e o manual vira alternativa.
+  bool loginMeta = false;
+  String _fbAppId = '', _fbConfigId = '', _fbGraph = 'v20.0';
+  bool conectando = false;
+
   @override
   void initState() {
     super.initState();
@@ -37,9 +44,17 @@ class _InstagramScreenState extends State<InstagramScreen> {
     setState(() => loading = true);
     final r = await _api.get('/settings/instagram');
     final q = await _api.get('/support/lead-qualification');
+    final cfg = await _api.get('/settings/instagram/login/config');
     if (!mounted) return;
     setState(() {
       loading = false;
+      if (cfg.ok && cfg.data is Map) {
+        final m = cfg.data as Map;
+        loginMeta = (m['enabled'] ?? false) == true;
+        _fbAppId = (m['app_id'] ?? '').toString();
+        _fbConfigId = (m['config_id'] ?? '').toString();
+        _fbGraph = (m['graph_version'] ?? 'v20.0').toString();
+      }
       contas = r.ok && r.data is List ? (r.data as List).cast<Map<String, dynamic>>() : [];
       if (q.ok && q.data is Map) {
         _roteiro.text = ((q.data as Map)['lead_script'] ?? '').toString();
@@ -66,7 +81,11 @@ class _InstagramScreenState extends State<InstagramScreen> {
       color: AppTheme.bg,
       child: Column(
         children: [
-          ListHeader(title: 'Instagram', actionLabel: 'Conectar conta', onAction: _connect),
+          ListHeader(
+            title: 'Instagram',
+            actionLabel: loginMeta ? 'Conectar com Facebook' : 'Conectar conta',
+            onAction: conectando ? null : (loginMeta ? _connectViaMeta : _connect),
+          ),
           const Divider(height: 1),
           Expanded(
             child: loading
@@ -81,6 +100,18 @@ class _InstagramScreenState extends State<InstagramScreen> {
                           child: Text('Nenhuma conta conectada ainda.'),
                         ),
                       for (final c in contas) _tile(c),
+                      if (loginMeta)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: conectando ? null : _connect,
+                              icon: const Icon(Icons.edit_note, size: 18),
+                              label: const Text('Preencher manualmente (IDs e token)'),
+                            ),
+                          ),
+                        ),
                       _roteiroCard(),
                     ],
                   ),
@@ -194,21 +225,44 @@ class _InstagramScreenState extends State<InstagramScreen> {
 
   Widget _tile(Map<String, dynamic> c) {
     final user = (c['username'] ?? '').toString();
+    final ligada = (c['status'] ?? '').toString() == 'connected';
     return ListTile(
+      enabled: ligada,
       contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-      leading: const CircleAvatar(
-        backgroundColor: Color(0xFFE1306C),
-        child: Icon(Icons.camera_alt_outlined, color: Colors.white),
+      leading: CircleAvatar(
+        backgroundColor: ligada ? const Color(0xFFE1306C) : Colors.grey.shade400,
+        child: const Icon(Icons.camera_alt_outlined, color: Colors.white),
       ),
       title: Text(user.isEmpty ? c['ig_user_id'].toString() : '@$user',
           style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text('Conta ${c['ig_user_id']} · Página ${c['page_id']} · ${c['status']}',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-      trailing: IconButton(
-        icon: const Icon(Icons.link_off, color: Colors.red),
-        tooltip: 'Desconectar',
-        onPressed: () => _disconnect(c),
-      ),
+      subtitle: Text(
+          'Conta ${c['ig_user_id']} · Página ${c['page_id']} · '
+          '${ligada ? 'conectada' : 'DESCONECTADA — não recebe nem envia'}',
+          style: TextStyle(
+              color: ligada ? Colors.grey.shade600 : Colors.red.shade700, fontSize: 12)),
+      trailing: ligada
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.autorenew),
+                  tooltip: 'Reassinar webhooks (não está recebendo mensagens)',
+                  onPressed: _resubscribe,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.link_off, color: Colors.red),
+                  tooltip: 'Desconectar',
+                  onPressed: () => _disconnect(c),
+                ),
+              ],
+            )
+          // Ícone, não botão com texto: no CanvasKit, texto em espaço de largura
+          // mínima (o trailing do ListTile) quebra letra por letra.
+          : IconButton(
+              icon: const Icon(Icons.power_settings_new, color: Color(0xFF12B76A)),
+              tooltip: 'Reativar (reusa o token guardado)',
+              onPressed: () => _reactivate(c),
+            ),
     );
   }
 
@@ -262,6 +316,83 @@ class _InstagramScreenState extends State<InstagramScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(r.ok ? 'Instagram conectado' : (r.message ?? 'Não foi possível conectar'))));
+    if (r.ok) await _load();
+  }
+
+  /// Conecta pelo popup da Meta: o usuário se autentica no domínio da Meta e o
+  /// servidor descobre a Página, a conta do Instagram e o token. Só pergunta algo
+  /// quando a conta administra mais de uma Página com Instagram vinculado.
+  Future<void> _connectViaMeta() async {
+    setState(() => conectando = true);
+    try {
+      final code = await runFacebookLogin(
+          appId: _fbAppId, configId: _fbConfigId, graphVersion: _fbGraph);
+      if (!mounted) return;
+      if (code == null) return; // cancelou ou o SDK não carregou
+      final r = await _api.post('/settings/instagram/login', {'code': code});
+      if (!mounted) return;
+      if (r.ok && r.data is Map && (r.data as Map)['escolher'] == true) {
+        await _escolherConta(r.data as Map);
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(r.ok ? 'Instagram conectado' : (r.message ?? 'Não foi possível conectar'))));
+      if (r.ok) await _load();
+    } finally {
+      if (mounted) setState(() => conectando = false);
+    }
+  }
+
+  /// Pergunta qual conta conectar quando o login trouxe mais de uma Página.
+  Future<void> _escolherConta(Map dados) async {
+    final sessao = (dados['sessao'] ?? '').toString();
+    final opcoes = ((dados['contas'] as List?) ?? const []).cast<Map<String, dynamic>>();
+    final escolhido = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('Qual conta conectar?'),
+        children: [
+          for (final c in opcoes)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, (c['page_id'] ?? '').toString()),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: Text('@${c['username'] ?? ''}'),
+                subtitle: Text((c['page_name'] ?? '').toString()),
+              ),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+    if (escolhido == null || escolhido.isEmpty || !mounted) return;
+    final r = await _api.post('/settings/instagram/login/escolher',
+        {'sessao': sessao, 'page_id': escolhido});
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.ok ? 'Instagram conectado' : (r.message ?? 'Não foi possível conectar'))));
+    if (r.ok) await _load();
+  }
+
+  /// Reassina a Página nos webhooks da Meta. É o que faz a Meta ENTREGAR o Direct
+  /// e os leads — conta conectada sem isso aparece normal e não recebe nada.
+  Future<void> _resubscribe() async {
+    final r = await _api.post('/settings/instagram/reassinar', {});
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.ok ? 'Webhooks reassinados' : (r.message ?? 'Não foi possível reassinar'))));
+  }
+
+  /// Religa a conta reusando o token já guardado — sem precisar de token novo.
+  Future<void> _reactivate(Map<String, dynamic> c) async {
+    final r = await _api.post('/settings/instagram/${c['id']}/reativar', {});
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.ok ? 'Instagram reativado' : (r.message ?? 'Não foi possível reativar'))));
     if (r.ok) await _load();
   }
 

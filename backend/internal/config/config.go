@@ -37,6 +37,7 @@ type Config struct {
 	// Embedded Signup (onboarding self-service). Vazio = desligado (só manual).
 	MetaAppID      string // App ID do app Meta (init do SDK + troca do code)
 	MetaESConfigID string // config_id do fluxo de Embedded Signup
+	MetaIGConfigID string // config_id do Facebook Login for Business (Instagram)
 
 	// Resend (envio de OTP por e-mail — canal reserva).
 	ResendAPIKey    string
@@ -103,6 +104,7 @@ func Load() *Config {
 		MetaDefaultAccountID: os.Getenv("META_DEFAULT_ACCOUNT_ID"),
 		MetaAppID:            os.Getenv("META_APP_ID"),
 		MetaESConfigID:       os.Getenv("META_ES_CONFIG_ID"),
+		MetaIGConfigID:       os.Getenv("META_IG_CONFIG_ID"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		ResendFromEmail: os.Getenv("RESEND_FROM_EMAIL"),
 		AuthOTPAccountID: os.Getenv("AUTH_OTP_ACCOUNT_ID"),
