@@ -4,6 +4,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Firebase (notificações) só entra quando o google-services.json existe. Assim o
+// APK compila antes de o projeto Firebase ser criado — o app detecta a ausência
+// e roda sem push, em vez de quebrar o build de quem clonou o repositório.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.zapdesk.zapdesk_app"
     compileSdk = flutter.compileSdkVersion
@@ -12,13 +19,15 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Exigido pelo flutter_local_notifications (usa java.time no Android antigo).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.zapdesk.zapdesk_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = "br.com.hotzap.app"
+        // O flutter_local_notifications exige desugaring da API de datas, e o
+        // mínimo dele é 21 — o padrão do Flutter já é maior, mas fixamos para o
+        // build não depender do que o SDK escolher.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -42,4 +51,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

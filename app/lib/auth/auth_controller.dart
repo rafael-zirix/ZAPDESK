@@ -118,6 +118,22 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Alterna disponível/ausente. Otimista (a lista de presença é informativa);
+  /// reverte se o servidor recusar.
+  Future<void> setPresence(bool ausente) async {
+    final u = me;
+    if (u == null) return;
+    final anterior = u.presence;
+    final alvo = ausente ? 'away' : 'available';
+    me = u.copyWith(presence: alvo);
+    notifyListeners();
+    final r = await _api.put('/support/presence', {'presence': alvo});
+    if (!r.ok) {
+      me = u.copyWith(presence: anterior);
+      notifyListeners();
+    }
+  }
+
   void backToEmail() {
     pendingIdentifier = null;
     error = null;

@@ -59,6 +59,10 @@ type Config struct {
 	AIAPIKey  string
 	AIModel   string // ex.: llama-3.3-70b-versatile
 
+	// Notificação push do app de celular (Firebase Cloud Messaging). Caminho do
+	// JSON da service account. Vazio = app funciona sem notificação.
+	FCMCredentialsFile string
+
 	// NuPay (checkout) — o cliente paga a recarga de tokens de IA. Vazio = compra
 	// por PIX/NuPay desligada (só a recarga manual pelo super-admin funciona).
 	NuPayBaseURL       string // sandbox-api.spinpay.com.br | api.spinpay.com.br
@@ -117,6 +121,7 @@ func Load() *Config {
 		AIBaseURL:              os.Getenv("AI_BASE_URL"),
 		AIAPIKey:               os.Getenv("AI_API_KEY"),
 		AIModel:                os.Getenv("AI_MODEL"),
+		FCMCredentialsFile:     os.Getenv("FCM_CREDENTIALS_FILE"),
 		NuPayBaseURL:           getenv("NUPAY_BASE_URL", "https://sandbox-api.spinpay.com.br"),
 		NuPayMerchantKey:       os.Getenv("NUPAY_MERCHANT_KEY"),
 		NuPayMerchantToken:     os.Getenv("NUPAY_MERCHANT_TOKEN"),

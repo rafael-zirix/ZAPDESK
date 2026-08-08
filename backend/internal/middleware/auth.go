@@ -72,6 +72,14 @@ func AccountID(c *gin.Context) string { return c.GetString(CtxAccountID) }
 // UserID devolve o ID do usuário autenticado.
 func UserID(c *gin.Context) string { return c.GetString(CtxUserID) }
 
+// IsAdmin diz se quem chamou administra a empresa (ou a plataforma). Usado pelas
+// regras que o atendente comum não pode furar — transferir a conversa de outro,
+// por exemplo.
+func IsAdmin(c *gin.Context) bool {
+	r := c.GetString(CtxRole)
+	return r == "admin" || r == "superadmin"
+}
+
 func abort(c *gin.Context, msg string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 		"success": false,

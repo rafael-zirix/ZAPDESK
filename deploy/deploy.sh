@@ -52,6 +52,10 @@ scp -i "$KEY" /tmp/zapdesk-deploy.tgz "$VM":~/ >/dev/null
 ssh -i "$KEY" "$VM" '
   set -e
   mkdir -p ~/zapdesk-deploy
+  # Limpa migrations/web antes de extrair: tar não remove arquivos que sumiram do
+  # pacote, e um .sql órfão de um deploy antigo derruba o boot com "duplicate
+  # migration file". web idem, para não servir asset velho.
+  rm -rf ~/zapdesk-deploy/migrations ~/zapdesk-deploy/web
   tar xzf ~/zapdesk-deploy.tgz -C ~/zapdesk-deploy 2>/dev/null
   rm -f ~/zapdesk-deploy.tgz
   cd ~/zapdesk-deploy

@@ -35,8 +35,11 @@ func (r *SupportRepository) FindOrCreateContact(accountID, phone string, name *s
 // ListContacts devolve os contatos que o usuário pode ver: os SEUS (owner =
 // userID) + os sem dono (legados e os criados pelo webhook = compartilhados).
 func (r *SupportRepository) ListContacts(accountID, userID string) ([]models.SupportContact, error) {
+	// COALESCE no telefone: contato vindo do Instagram não tem número (migração
+	// 000033). Sem isso, UM contato do Direct derrubava a lista inteira — e é ela
+	// que alimenta o seletor de destino do encaminhar.
 	rows, err := r.db.Query(`
-		SELECT id, account_id, phone, name, created_at, updated_at
+		SELECT id, account_id, COALESCE(phone,''), name, created_at, updated_at
 		FROM support_contacts
 		WHERE account_id=$1 AND (owner_user_id = $2::uuid OR owner_user_id IS NULL)
 		ORDER BY COALESCE(name,'~'), phone`, accountID, userID)
@@ -209,13 +212,15 @@ func (r *SupportRepository) InsertMessage(m *models.SupportMessage) (*models.Sup
 	m.CreatedAt = now
 	err := r.db.QueryRow(`
 		INSERT INTO support_ticket_messages
-		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, internal, template_name, template_category, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		  (account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, internal, template_name, template_category,
+		   reply_to_id, reply_to_external_id, forwarded, forwarded_from_id, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		ON CONFLICT (account_id, external_id) WHERE external_id IS NOT NULL DO NOTHING
 		RETURNING id`,
 		m.AccountID, m.TicketID, m.Direction, m.Type, m.Content, m.MediaURL, m.MimeType,
 		m.FileName, m.Status, m.ExternalID, m.SenderID, m.Internal,
-		m.TemplateName, m.TemplateCategory, now).Scan(&m.ID)
+		m.TemplateName, m.TemplateCategory,
+		m.ReplyToID, m.ReplyToExternalID, m.Forwarded, m.ForwardedFromID, now).Scan(&m.ID)
 	if err == sql.ErrNoRows {
 		return nil, nil // duplicata (idempotência): ignora
 	}
@@ -329,17 +334,107 @@ func (r *SupportRepository) UpdateMessageStatusByExternalID(accountID, externalI
 }
 
 // GetMessage busca uma mensagem da conta pelo id.
+//
+// Lê `internal` e o modelo: quem chama precisa saber que aquilo é NOTA INTERNA
+// antes de encaminhar ou citar. Sem esses campos, a API deixava mandar uma nota
+// da equipe para o cliente (a tela protegia, a rota não).
 func (r *SupportRepository) GetMessage(accountID, msgID string) (*models.SupportMessage, error) {
 	var m models.SupportMessage
 	err := r.db.QueryRow(`
-		SELECT id, account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id, created_at
+		SELECT id, account_id, ticket_id, direction, type, content, media_url, mime_type, file_name, status, external_id, sender_id,
+		       COALESCE(internal, false), template_name, template_category, created_at
 		FROM support_ticket_messages WHERE id=$1 AND account_id=$2`, msgID, accountID).
 		Scan(&m.ID, &m.AccountID, &m.TicketID, &m.Direction, &m.Type, &m.Content,
-			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID, &m.CreatedAt)
+			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID,
+			&m.Internal, &m.TemplateName, &m.TemplateCategory, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return &m, err
+}
+
+// AccountAssignmentPolicy devolve a política de atendimento da conta:
+// exclusividade ligada e em quantos minutos uma conversa parada volta à fila
+// (0 = liberação automática desligada).
+func (r *SupportRepository) AccountAssignmentPolicy(accountID string) (bool, int, error) {
+	var exclusive bool
+	var minutes int
+	err := r.db.QueryRow(`SELECT exclusive_assignment, release_after_minutes FROM accounts WHERE id=$1`, accountID).
+		Scan(&exclusive, &minutes)
+	if err == sql.ErrNoRows {
+		return false, 0, nil
+	}
+	return exclusive, minutes, err
+}
+
+// StaleTicket é uma conversa presa: tem responsável, o cliente está esperando e
+// o prazo da conta estourou.
+type StaleTicket struct {
+	AccountID      string
+	TicketID       string
+	AssignedUserID string
+	IdleMinutes    int
+}
+
+// StaleAssignedTickets lista as conversas a devolver para a fila.
+//
+// O critério é "o cliente está esperando": a ÚLTIMA mensagem da conversa é do
+// cliente (direction='in') e chegou há mais tempo que o prazo da conta. Só assim
+// a liberação pune abandono e não quem está aguardando o cliente responder.
+func (r *SupportRepository) StaleAssignedTickets() ([]StaleTicket, error) {
+	rows, err := r.db.Query(`
+		SELECT t.account_id, t.id, t.assigned_user_id,
+		       FLOOR(EXTRACT(EPOCH FROM (NOW() - ultima.created_at)) / 60)::int
+		FROM support_tickets t
+		JOIN accounts a ON a.id = t.account_id
+		JOIN LATERAL (
+			SELECT m.direction, m.created_at
+			FROM support_ticket_messages m
+			WHERE m.ticket_id = t.id AND m.account_id = t.account_id
+			  AND COALESCE(m.internal, false) = false
+			ORDER BY m.created_at DESC
+			LIMIT 1
+		) ultima ON TRUE
+		WHERE t.assigned_user_id IS NOT NULL
+		  AND t.status IN ('open', 'pending')
+		  AND a.exclusive_assignment
+		  AND a.release_after_minutes > 0
+		  AND a.deleted_at IS NULL
+		  AND ultima.direction = 'in'
+		  AND ultima.created_at < NOW() - (a.release_after_minutes * INTERVAL '1 minute')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]StaleTicket, 0)
+	for rows.Next() {
+		var t StaleTicket
+		if err := rows.Scan(&t.AccountID, &t.TicketID, &t.AssignedUserID, &t.IdleMinutes); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// MessageIDByExternalID resolve o id local a partir do wamid/mid da Meta —
+// é assim que a citação recebida do cliente encontra a mensagem citada.
+// Devolve nil (sem erro) quando não existe: pode ser resposta a um disparo de
+// campanha, que de propósito não vira mensagem de conversa.
+func (r *SupportRepository) MessageIDByExternalID(accountID, externalID string) (*string, error) {
+	if externalID == "" {
+		return nil, nil
+	}
+	var id string
+	err := r.db.QueryRow(`SELECT id FROM support_ticket_messages WHERE account_id=$1 AND external_id=$2`,
+		accountID, externalID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }
 
 // SetMessageStatusAndExtID atualiza o status e o external_id de uma mensagem
@@ -515,11 +610,22 @@ func (r *SupportRepository) SetTemplateEnabled(accountID, name string, enabled b
 func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketListItem, error) {
 	rows, err := r.db.Query(`
 		SELECT t.id, t.protocol, t.status, c.name, COALESCE(c.phone,''), COALESCE(t.channel,'whatsapp'), t.last_message_at, COALESCE(t.ai_paused, false), COALESCE(t.unread_count, 0),
-		       t.assigned_user_id, u.full_name, t.sector_id, s.name, `+ticketTagsJSON+`
+		       t.assigned_user_id, u.full_name, t.sector_id, s.name, `+ticketTagsJSON+`,
+		       lm.type, LEFT(lm.content, 140), lm.direction, COALESCE(lm.internal, false)
 		FROM support_tickets t
 		JOIN support_contacts c ON c.id = t.contact_id
 		LEFT JOIN users u ON u.id = t.assigned_user_id
 		LEFT JOIN support_sectors s ON s.id = t.sector_id
+		-- Última mensagem da conversa, para a prévia da lista (estilo WhatsApp).
+		-- LATERAL + LIMIT 1 usa o índice por (ticket_id, created_at) e não
+		-- carrega a thread inteira só para mostrar uma linha.
+		LEFT JOIN LATERAL (
+			SELECT m.type, m.content, m.direction, m.internal
+			FROM support_ticket_messages m
+			WHERE m.account_id = t.account_id AND m.ticket_id = t.id
+			ORDER BY m.created_at DESC
+			LIMIT 1
+		) lm ON TRUE
 		WHERE t.account_id=$1
 		ORDER BY (COALESCE(t.unread_count, 0) > 0) DESC, t.last_message_at DESC`, accountID)
 	if err != nil {
@@ -531,7 +637,8 @@ func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketL
 		var it models.SupportTicketListItem
 		var tags []byte
 		if err := rows.Scan(&it.ID, &it.Protocol, &it.Status, &it.ContactName, &it.ContactPhone, &it.Channel, &it.LastMessageAt, &it.AIPaused, &it.UnreadCount,
-			&it.AssignedUserID, &it.AssignedUserName, &it.SectorID, &it.SectorName, &tags); err != nil {
+			&it.AssignedUserID, &it.AssignedUserName, &it.SectorID, &it.SectorName, &tags,
+			&it.LastMessageType, &it.LastMessageText, &it.LastMessageDirection, &it.LastMessageInternal); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(tags, &it.Tags)
@@ -540,14 +647,48 @@ func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketL
 	return out, rows.Err()
 }
 
+// TicketNotifyTarget diz para quem vai a notificação de uma conversa e como
+// identificá-la na tela do celular.
+type TicketNotifyTarget struct {
+	AssignedUserID *string
+	SectorID       *string
+	ContactName    string
+	ContactPhone   string
+}
+
+// TicketNotifyInfo devolve o destinatário da notificação (dono ou setor) e o
+// nome do contato.
+func (r *SupportRepository) TicketNotifyInfo(accountID, ticketID string) (TicketNotifyTarget, error) {
+	var t TicketNotifyTarget
+	var nome sql.NullString
+	err := r.db.QueryRow(`
+		SELECT t.assigned_user_id, t.sector_id, c.name, COALESCE(c.phone,'')
+		FROM support_tickets t
+		JOIN support_contacts c ON c.id = t.contact_id
+		WHERE t.account_id=$1 AND t.id=$2`, accountID, ticketID).
+		Scan(&t.AssignedUserID, &t.SectorID, &nome, &t.ContactPhone)
+	if err != nil {
+		return t, err
+	}
+	t.ContactName = nome.String
+	return t, nil
+}
+
 // ListMessages devolve a thread de uma conversa (ordem cronológica), com o nome
 // do atendente que enviou (exibido nas notas internas).
 func (r *SupportRepository) ListMessages(accountID, ticketID string) ([]models.SupportMessage, error) {
 	rows, err := r.db.Query(`
 		SELECT m.id, m.account_id, m.ticket_id, m.direction, m.type, m.content, m.media_url, m.mime_type, m.file_name,
-		       m.status, m.external_id, m.sender_id, u.full_name, COALESCE(m.internal, false), m.created_at
+		       m.status, m.external_id, m.sender_id, u.full_name, COALESCE(m.internal, false),
+		       COALESCE(m.forwarded, false), m.reply_to_id, m.reply_to_external_id,
+		       q.direction, q.type, LEFT(q.content, 140), qu.full_name,
+		       m.created_at
 		FROM support_ticket_messages m
 		LEFT JOIN users u ON u.id = m.sender_id
+		-- Mensagem citada: resolvida aqui para a bolha desenhar a citação sem
+		-- depender de a original estar carregada na tela.
+		LEFT JOIN support_ticket_messages q ON q.id = m.reply_to_id
+		LEFT JOIN users qu ON qu.id = q.sender_id
 		WHERE m.account_id=$1 AND m.ticket_id=$2
 		ORDER BY m.created_at ASC`, accountID, ticketID)
 	if err != nil {
@@ -557,13 +698,49 @@ func (r *SupportRepository) ListMessages(accountID, ticketID string) ([]models.S
 	out := make([]models.SupportMessage, 0)
 	for rows.Next() {
 		var m models.SupportMessage
+		var qDirection, qType, qContent, qSender sql.NullString
 		if err := rows.Scan(&m.ID, &m.AccountID, &m.TicketID, &m.Direction, &m.Type, &m.Content,
-			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID, &m.SenderName, &m.Internal, &m.CreatedAt); err != nil {
+			&m.MediaURL, &m.MimeType, &m.FileName, &m.Status, &m.ExternalID, &m.SenderID, &m.SenderName, &m.Internal,
+			&m.Forwarded, &m.ReplyToID, &m.ReplyToExternalID,
+			&qDirection, &qType, &qContent, &qSender,
+			&m.CreatedAt); err != nil {
 			return nil, err
 		}
+		m.ReplyTo = quotedFrom(m.ReplyToID, m.ReplyToExternalID, qDirection, qType, qContent, qSender)
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// quotedFrom monta a prévia da citação. Devolve nil quando a mensagem não cita
+// nada; e um bloco "indisponível" quando havia citação mas a original sumiu
+// (expurgo da retenção) ou nunca existiu aqui (resposta a disparo de campanha).
+func quotedFrom(replyToID, replyToExternalID *string, direction, kind, content, sender sql.NullString) *models.QuotedMessage {
+	if replyToID == nil && replyToExternalID == nil {
+		return nil
+	}
+	if !direction.Valid {
+		return &models.QuotedMessage{Preview: "Mensagem indisponível", Unavailable: true}
+	}
+	q := &models.QuotedMessage{Direction: direction.String, Type: kind.String, Preview: content.String}
+	if sender.Valid && sender.String != "" {
+		name := sender.String
+		q.SenderName = &name
+	}
+	if replyToID != nil {
+		q.ID = *replyToID
+	}
+	// Anexo sem legenda não tem texto: rotula pelo tipo, como a lista de conversas.
+	if q.Preview == "" {
+		q.Preview = map[string]string{
+			"image": "📷 Foto", "audio": "🎤 Áudio", "video": "🎬 Vídeo",
+			"document": "📄 Documento", "location": "📍 Localização", "contact": "👤 Contato",
+		}[q.Type]
+		if q.Preview == "" {
+			q.Preview = "Mensagem"
+		}
+	}
+	return q
 }
 
 // LastInboundExternalID devolve o wamid da última mensagem RECEBIDA da conversa
@@ -598,7 +775,10 @@ func (r *SupportRepository) GetTicket(accountID, ticketID string) (*models.Suppo
 // ContactPhone devolve o telefone do contato de uma conversa.
 func (r *SupportRepository) ContactPhone(ticketID string) (string, error) {
 	var phone string
-	err := r.db.QueryRow(`SELECT c.phone FROM support_tickets t
+	// COALESCE: contato do Instagram não tem telefone (a coluna virou opcional na
+	// migração 000033). Sem isto, o Scan estoura "converting NULL to string" e o
+	// erro aparecia longe da causa — por exemplo ao encaminhar para um contato IG.
+	err := r.db.QueryRow(`SELECT COALESCE(c.phone,'') FROM support_tickets t
 		JOIN support_contacts c ON c.id=t.contact_id WHERE t.id=$1`, ticketID).Scan(&phone)
 	return phone, err
 }

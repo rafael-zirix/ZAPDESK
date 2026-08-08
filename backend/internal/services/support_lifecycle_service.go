@@ -82,13 +82,22 @@ func (s *SupportService) ClaimTicket(accountID, ticketID, userID string) (*model
 }
 
 // TransferTicket muda o atendente e/ou o setor da conversa, com nota opcional.
-func (s *SupportService) TransferTicket(accountID, ticketID, actorID string, req models.TransferTicketRequest) (*models.SupportTicketListItem, error) {
+func (s *SupportService) TransferTicket(accountID, ticketID, actorID string, actorIsAdmin bool, req models.TransferTicketRequest) (*models.SupportTicketListItem, error) {
 	t, err := s.repo.GetTicket(accountID, ticketID)
 	if err != nil {
 		return nil, err
 	}
 	if t == nil {
 		return nil, ErrTicketNotFound
+	}
+	// Passar adiante a conversa de outro é privilégio do responsável e do
+	// administrador — senão qualquer um tiraria o atendimento do colega sem ele
+	// saber. Conversa na fila (sem dono) continua livre para qualquer um rotear.
+	if !actorIsAdmin && t.AssignedUserID != nil && *t.AssignedUserID != "" && *t.AssignedUserID != actorID {
+		exclusive, _, pErr := s.repo.AccountAssignmentPolicy(accountID)
+		if pErr == nil && exclusive {
+			return nil, ErrNotAssigneeOrAdmin
+		}
 	}
 	setUser := req.UserID != nil && strings.TrimSpace(*req.UserID) != ""
 	setSector := req.SectorID != nil && strings.TrimSpace(*req.SectorID) != ""

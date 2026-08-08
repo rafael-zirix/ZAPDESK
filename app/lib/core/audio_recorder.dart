@@ -1,4 +1,4 @@
 // Gravador de áudio multiplataforma. No web usa o MediaRecorder do navegador;
-// em outras plataformas, stub (o app roda em Flutter Web por ora).
+// no celular, o pacote record (Opus/OGG quando o aparelho suporta).
 export 'recorded_audio.dart';
-export 'audio_recorder_stub.dart' if (dart.library.js_interop) 'audio_recorder_web.dart';
+export 'audio_recorder_io.dart' if (dart.library.js_interop) 'audio_recorder_web.dart';

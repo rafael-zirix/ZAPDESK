@@ -16,6 +16,10 @@ class TicketListItem {
     this.sectorId,
     this.sectorName,
     this.tags = const [],
+    this.lastMessageType,
+    this.lastMessageText,
+    this.lastMessageDirection,
+    this.lastMessageInternal = false,
   });
 
   final String id;
@@ -37,6 +41,32 @@ class TicketListItem {
   String? sectorId; // setor/fila (null = sem setor)
   String? sectorName;
   List<TicketTag> tags;
+
+  // Prévia da última mensagem (a linha cinza da lista, como no WhatsApp).
+  final String? lastMessageType; // text | image | audio | document | location…
+  final String? lastMessageText;
+  final String? lastMessageDirection; // in | out
+  final bool lastMessageInternal;
+
+  /// Frase da prévia: texto quando é texto, rótulo com ícone quando é mídia.
+  /// Vazia quando a conversa ainda não tem mensagem (aparece "Toque para abrir").
+  String get preview {
+    final t = lastMessageType;
+    if (t == null) return '';
+    final txt = (lastMessageText ?? '').replaceAll('\n', ' ').trim();
+    return switch (t) {
+      'image' => txt.isEmpty ? '📷 Foto' : '📷 $txt',
+      'audio' => '🎤 Áudio',
+      'video' => txt.isEmpty ? '🎬 Vídeo' : '🎬 $txt',
+      'document' => txt.isEmpty ? '📄 Documento' : '📄 $txt',
+      'location' => '📍 Localização',
+      'contact' => '👤 Contato',
+      _ => txt,
+    };
+  }
+
+  /// A última mensagem foi nossa? Ganha o "✓" antes da prévia, como no WhatsApp.
+  bool get previewIsOurs => lastMessageDirection == 'out';
 
   /// Copia os campos mutáveis vindos de uma resposta da API (claim/transfer/status).
   void applyFrom(TicketListItem o) {
@@ -87,6 +117,10 @@ class TicketListItem {
         tags: ((j['tags'] as List?) ?? const [])
             .map((e) => TicketTag.fromJson(e as Map<String, dynamic>))
             .toList(),
+        lastMessageType: j['last_message_type'],
+        lastMessageText: j['last_message_text'],
+        lastMessageDirection: j['last_message_direction'],
+        lastMessageInternal: j['last_message_internal'] == true,
       );
 }
 

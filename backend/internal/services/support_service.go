@@ -114,6 +114,9 @@ type SupportService struct {
 	igSend func(accountID, ticketID, recipientID, text string) (string, error)
 	// Módulos contratados (ligado no wiring). Nil = não checa.
 	hasModule func(accountID, key string) (bool, error)
+	// Notificação no celular do atendente (opcional). Nil = app mobile sem push.
+	push    *PushService
+	devices *repository.DeviceRepository
 	// Cache das categorias dos modelos por conta (para o relatório de consumo).
 	tplCacheMu sync.Mutex
 	tplCache   map[string]tplCacheEntry
@@ -144,6 +147,12 @@ func (s *SupportService) WithAI(ai *AIClient, aiRepo *repository.AIRepository, a
 
 // AIActionsRepo expõe o repositório de ações (para os handlers de CRUD).
 func (s *SupportService) AIActionsRepo() *repository.AIActionRepository { return s.aiActions }
+
+// WithPush liga a notificação no celular dos atendentes (app mobile).
+func (s *SupportService) WithPush(p *PushService, devices *repository.DeviceRepository) *SupportService {
+	s.push, s.devices = p, devices
+	return s
+}
 
 // WithModuleCheck informa como perguntar se a conta tem um módulo. Sem isso, o
 // motor não sabe o que foi contratado e as regras vendidas à parte não rodam.
@@ -561,6 +570,10 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang, b
 	if ticket == nil {
 		return nil, ErrTicketNotFound
 	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
+	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -658,7 +671,62 @@ func (s *SupportService) ProcessInbound(accountID, phone string, name *string, w
 	if isOptOutMessage(text) {
 		_ = s.repo.OptOutContact(accountID, contact.ID)
 	}
+	if err == nil {
+		s.NotifyInbound(accountID, ticket.ID, text)
+	}
 	return ticket.ID, err
+}
+
+// NotifyInbound avisa no celular que chegou mensagem do cliente.
+//
+// Quem recebe: o dono da conversa, se alguém já assumiu; senão os atendentes do
+// setor da fila; e, na falta dos dois, a empresa toda — uma conversa nova sem
+// setor não pode ficar sem ninguém sabendo. Best-effort: roda em goroutine e
+// nunca devolve erro, porque o webhook da Meta precisa responder rápido.
+func (s *SupportService) NotifyInbound(accountID, ticketID, preview string) {
+	if !s.push.Enabled() || s.devices == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			// Notificação jamais pode derrubar o processo do webhook.
+			if r := recover(); r != nil {
+				slog.Error("push: pânico ao notificar", "erro", r)
+			}
+		}()
+		info, err := s.repo.TicketNotifyInfo(accountID, ticketID)
+		if err != nil {
+			slog.Warn("push: não achou a conversa para notificar", "erro", err)
+			return
+		}
+		var tokens []string
+		switch {
+		case info.AssignedUserID != nil && *info.AssignedUserID != "":
+			tokens, err = s.devices.TokensForUser(*info.AssignedUserID)
+		case info.SectorID != nil && *info.SectorID != "":
+			tokens, err = s.devices.TokensForSector(accountID, *info.SectorID)
+		default:
+			tokens, err = s.devices.TokensForAccountExcept(accountID, "")
+		}
+		if err != nil || len(tokens) == 0 {
+			return
+		}
+		titulo := info.ContactName
+		if titulo == "" {
+			titulo = info.ContactPhone
+		}
+		corpo := strings.TrimSpace(preview)
+		if corpo == "" {
+			corpo = "Nova mensagem"
+		}
+		if len([]rune(corpo)) > 120 {
+			corpo = string([]rune(corpo)[:120]) + "…"
+		}
+		s.push.Send(tokens, titulo, corpo, map[string]string{
+			"ticket_id": ticketID,
+			"account_id": accountID,
+		})
+	}()
 }
 
 // TriggerAIReply gera e envia uma resposta automática do Atendente IA para a
@@ -1031,6 +1099,10 @@ func (s *SupportService) SendLocation(accountID, ticketID, userID string, lat, l
 	if ticket == nil {
 		return nil, ErrTicketNotFound
 	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
+	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1072,6 +1144,10 @@ func (s *SupportService) SendContact(accountID, ticketID, userID, name, phone st
 	if ticket == nil {
 		return nil, ErrTicketNotFound
 	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
+	}
 	toPhone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1111,6 +1187,10 @@ func (s *SupportService) SendButtons(accountID, ticketID, userID, body string, b
 	}
 	if ticket == nil {
 		return nil, ErrTicketNotFound
+	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
 	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
@@ -1152,6 +1232,10 @@ func (s *SupportService) SendList(accountID, ticketID, userID, body, buttonLabel
 	}
 	if ticket == nil {
 		return nil, ErrTicketNotFound
+	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
 	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
@@ -1203,13 +1287,17 @@ func (s *SupportService) MarkRead(accountID, ticketID string, typing bool) error
 }
 
 // RetryMessage re-tenta o envio de uma mensagem de saída que havia falhado.
-func (s *SupportService) RetryMessage(accountID, ticketID, msgID string) (*models.SupportMessage, error) {
+func (s *SupportService) RetryMessage(accountID, ticketID, msgID, userID string) (*models.SupportMessage, error) {
 	msg, err := s.repo.GetMessage(accountID, msgID)
 	if err != nil {
 		return nil, err
 	}
 	if msg == nil || msg.TicketID != ticketID {
 		return nil, ErrTicketNotFound
+	}
+	// Reenviar é enviar: vale a mesma exclusividade da resposta.
+	if err := s.ensureCanSend(accountID, ticketID, userID); err != nil {
+		return nil, err
 	}
 	if msg.Direction != models.DirectionOut {
 		return msg, nil
@@ -1372,6 +1460,10 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 	if ticket == nil {
 		return nil, ErrTicketNotFound
 	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
+	}
 	// Um humano assumiu esta conversa → pausa o Atendente IA nela (handoff).
 	if s.aiRepo != nil {
 		_ = s.aiRepo.SetTicketAIPaused(accountID, ticketID, true)
@@ -1507,6 +1599,10 @@ func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []by
 	if ticket == nil {
 		return nil, ErrTicketNotFound
 	}
+	// Exclusividade: assumida a conversa, só o responsável fala com o cliente.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+		return nil, err
+	}
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1598,11 +1694,29 @@ func (s *SupportService) ProcessInboundMedia(accountID, phone string, profileNam
 	if filename != "" {
 		fn = &filename
 	}
+	kind := kindFromMime(mimeType)
 	_, err = s.repo.InsertMessage(&models.SupportMessage{
 		AccountID: accountID, TicketID: ticket.ID, Direction: models.DirectionIn,
-		Type: kindFromMime(mimeType), Content: cap, MediaURL: &mediaURL, MimeType: &mimeType, FileName: fn,
+		Type: kind, Content: cap, MediaURL: &mediaURL, MimeType: &mimeType, FileName: fn,
 		Status: "received", ExternalID: &extID,
 	})
+	if err == nil {
+		// Sem texto para mostrar: a notificação diz o TIPO do anexo, como o
+		// WhatsApp faz ("📷 Foto").
+		aviso := caption
+		if aviso == "" {
+			aviso = map[string]string{
+				"image":    "📷 Foto",
+				"audio":    "🎤 Áudio",
+				"video":    "🎬 Vídeo",
+				"document": "📄 Documento",
+			}[kind]
+			if aviso == "" {
+				aviso = "📎 Anexo"
+			}
+		}
+		s.NotifyInbound(accountID, ticket.ID, aviso)
+	}
 	return err
 }
 

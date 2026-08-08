@@ -9,11 +9,21 @@ import 'picked_file.dart';
 /// Abre o seletor de arquivo do navegador e devolve o arquivo escolhido.
 /// Implementação nativa (package:web) — não remove o input antes do diálogo
 /// abrir (o bug do file_picker v11 no web).
-Future<PickedFile?> pickFile({String? accept}) {
+Future<PickedFile?> pickFile({String? accept}) =>
+    _openInput(accept ?? 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip');
+
+/// Foto: no navegador cai no mesmo seletor, filtrando imagens. Existe para a
+/// tela do app (que tem "câmera" e "galeria" separados) compilar também no web,
+/// onde `capture` só é honrado no celular.
+Future<PickedFile?> pickImage({bool fromCamera = false}) =>
+    _openInput('image/*', capture: fromCamera);
+
+Future<PickedFile?> _openInput(String accept, {bool capture = false}) {
   final completer = Completer<PickedFile?>();
   final input = web.document.createElement('input') as web.HTMLInputElement;
   input.type = 'file';
-  input.accept = accept ?? 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip';
+  input.accept = accept;
+  if (capture) input.setAttribute('capture', 'environment');
   input.style.display = 'none';
 
   void finish(PickedFile? f) {

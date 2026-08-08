@@ -100,7 +100,33 @@ type SupportMessage struct {
 	// (marketing/utility/authentication). Vazio nas mensagens comuns.
 	TemplateName     *string
 	TemplateCategory *string
-	CreatedAt  time.Time
+
+	// Citação ("responder a"). ReplyToID aponta para a mensagem daqui;
+	// ReplyToExternalID guarda o wamid citado quando ele não casa com nenhuma
+	// mensagem nossa (o cliente respondeu a um disparo de campanha, por exemplo).
+	ReplyToID         *string
+	ReplyToExternalID *string
+	// Prévia da mensagem citada (vem do LEFT JOIN em ListMessages, não é coluna).
+	ReplyTo *QuotedMessage
+
+	// Encaminhamento: marca interna do HotZap (a Cloud API não expõe o rótulo
+	// nativo do WhatsApp no envio).
+	Forwarded       bool
+	ForwardedFromID *string
+
+	CreatedAt time.Time
+}
+
+// QuotedMessage é o resumo da mensagem citada exibido dentro da bolha.
+type QuotedMessage struct {
+	ID         string  `json:"id,omitempty"`
+	Direction  string  `json:"direction,omitempty"`
+	Type       string  `json:"type,omitempty"`
+	Preview    string  `json:"preview"`
+	SenderName *string `json:"sender_name,omitempty"`
+	// A citada saiu do histórico (retenção) ou é de fora daqui: a bolha mostra
+	// "mensagem indisponível" em vez de sumir com a citação.
+	Unavailable bool `json:"unavailable,omitempty"`
 }
 
 // --- Respostas do inbox ---
@@ -121,6 +147,14 @@ type SupportTicketListItem struct {
 	SectorID         *string   `json:"sector_id,omitempty"`
 	SectorName       *string   `json:"sector_name,omitempty"`
 	Tags             []SupportTag `json:"tags,omitempty"`
+
+	// Prévia da última mensagem — o app mobile mostra na lista, como o WhatsApp.
+	// Vem crua (tipo + trecho + de quem partiu) para o cliente montar a frase;
+	// assim uma foto aparece como "📷 Foto" sem o servidor decidir o idioma.
+	LastMessageType      *string `json:"last_message_type,omitempty"`      // text | image | audio | document…
+	LastMessageText      *string `json:"last_message_text,omitempty"`      // trecho (140 chars)
+	LastMessageDirection *string `json:"last_message_direction,omitempty"` // in | out
+	LastMessageInternal  bool    `json:"last_message_internal"`            // era nota interna
 }
 
 // --- Setores (filas de atendimento) ---
@@ -240,7 +274,11 @@ type SupportMessageResponse struct {
 	Status     string    `json:"status"`
 	Internal   bool      `json:"internal,omitempty"`
 	SenderName *string   `json:"sender_name,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	Forwarded  bool      `json:"forwarded,omitempty"`
+	// Prévia da mensagem citada — o app desenha a citação sem precisar procurar
+	// a original na lista (ela pode nem estar carregada).
+	ReplyTo   *QuotedMessage `json:"reply_to,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // ToResponse converte a mensagem para a resposta pública.
@@ -256,6 +294,8 @@ func (m *SupportMessage) ToResponse() SupportMessageResponse {
 		Status:     m.Status,
 		Internal:   m.Internal,
 		SenderName: m.SenderName,
+		Forwarded:  m.Forwarded,
+		ReplyTo:    m.ReplyTo,
 		CreatedAt:  m.CreatedAt,
 	}
 }
@@ -263,6 +303,8 @@ func (m *SupportMessage) ToResponse() SupportMessageResponse {
 // SendMessageRequest é o corpo para o atendente responder no ticket.
 type SendMessageRequest struct {
 	Content string `json:"content" binding:"required,min=1"`
+	// Id da mensagem citada (opcional) — o "responder" do WhatsApp.
+	ReplyToID *string `json:"reply_to_id"`
 }
 
 // --- Contatos (cadastro dos clientes finais) ---

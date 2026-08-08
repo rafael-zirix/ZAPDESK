@@ -23,6 +23,18 @@ class AppUser {
   bool get isSuperAdmin => role == 'superadmin';
   bool get isAdmin => role == 'admin';
 
+  /// Cópia com a presença trocada (o app alterna disponível/ausente sem
+  /// recarregar o /auth/me inteiro).
+  AppUser copyWith({String? presence}) => AppUser(
+        id: id,
+        accountId: accountId,
+        fullName: fullName,
+        email: email,
+        role: role,
+        phone: phone,
+        presence: presence ?? this.presence,
+      );
+
   /// Iniciais para o avatar.
   String get initials {
     final parts = fullName.trim().split(RegExp(r'\s+'));

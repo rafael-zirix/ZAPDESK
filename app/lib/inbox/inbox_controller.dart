@@ -39,12 +39,28 @@ class InboxController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Busca por nome/telefone/protocolo (vazio = sem busca).
+  String searchQuery = '';
+
+  void setSearch(String q) {
+    searchQuery = q;
+    notifyListeners();
+  }
+
   /// Conversas após aplicar os filtros. Fechadas só aparecem no filtro delas.
   List<TicketListItem> get filteredTickets => tickets.where((t) {
         if (sectorFilter != null && t.sectorId != sectorFilter) return false;
+        final q = searchQuery.trim().toLowerCase();
+        if (q.isNotEmpty) {
+          final alvo = '${t.contactName ?? ''} ${t.contactPhone} ${t.protocol}'.toLowerCase();
+          if (!alvo.contains(q)) return false;
+        }
         switch (statusFilter) {
           case 'mine':
             return t.assignedUserId == myUserId && t.status != 'closed';
+          // Fila: abertas que ninguém assumiu ainda (o "Novos" do app).
+          case 'queue':
+            return t.status == 'open' && t.assignedUserId == null;
           case 'open':
             return t.status == 'open';
           case 'pending':
@@ -132,18 +148,28 @@ class InboxController extends ChangeNotifier {
     return r.message ?? 'Não foi possível excluir';
   }
 
-  /// Pega o próximo da fila (aberto sem dono). Devolve o erro, ou null e abre a conversa.
-  Future<String?> claimNext() async {
+  /// Pega o próximo da fila (aberto sem dono) e devolve a conversa puxada, ou o
+  /// erro. NÃO abre painel: o painel web chama [claimNext] e o app de celular
+  /// navega para a conversa — cada um decide o que fazer com ela.
+  Future<(TicketListItem?, String?)> claimNextTicket() async {
     final r = await _api.post('/support/tickets/claim-next',
         sectorFilter != null ? {'sector_id': sectorFilter} : null);
     if (r.ok && r.data is Map) {
       final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
       applyTicketUpdate(t);
       final idx = tickets.indexWhere((x) => x.id == t.id);
-      openTicket(idx >= 0 ? tickets[idx] : t);
-      return null;
+      return (idx >= 0 ? tickets[idx] : t, null);
     }
-    return r.message ?? 'Fila vazia';
+    return (null, r.message ?? 'Fila vazia');
+  }
+
+  /// Pega o próximo da fila e abre num painel (usado pelo painel web). Devolve o
+  /// erro, ou null em sucesso.
+  Future<String?> claimNext() async {
+    final (t, erro) = await claimNextTicket();
+    if (t == null) return erro ?? 'Fila vazia';
+    openTicket(t);
+    return null;
   }
 
   /// Aplica numa conversa da lista os campos devolvidos por claim/transfer/status.
@@ -300,9 +326,9 @@ class InboxController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Inicia (ou reabre) a conversa com um contato e a abre num painel.
-  /// Retorna null em sucesso, ou a mensagem de erro.
-  Future<String?> startWith(Contact contact) async {
+  /// Inicia (ou reabre) a conversa com um contato e devolve-a. Sem abrir painel —
+  /// ver [claimNextTicket] para o motivo.
+  Future<(TicketListItem?, String?)> startConversation(Contact contact) async {
     final r = await _api.post('/support/tickets', {'contact_id': contact.id});
     if (r.ok && r.data != null) {
       final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
@@ -312,10 +338,19 @@ class InboxController extends ChangeNotifier {
       } else {
         tickets.insert(0, t);
       }
-      openTicket(t);
-      return null;
+      notifyListeners();
+      return (t, null);
     }
-    return r.message ?? 'Não foi possível iniciar a conversa';
+    return (null, r.message ?? 'Não foi possível iniciar a conversa');
+  }
+
+  /// Inicia a conversa com um contato e a abre num painel (painel web).
+  /// Retorna null em sucesso, ou a mensagem de erro.
+  Future<String?> startWith(Contact contact) async {
+    final (t, erro) = await startConversation(contact);
+    if (t == null) return erro;
+    openTicket(t);
+    return null;
   }
 
   /// Define quantos painéis exibir. Ao reduzir, fecha os excedentes.

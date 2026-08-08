@@ -40,6 +40,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	supportRepo := repository.NewSupportRepository(db)
 	accountRepo := repository.NewAccountRepository(db)
 	waRepo := repository.NewWhatsAppRepository(db)
+	deviceRepo := repository.NewDeviceRepository(db)
 
 	// Cifra dos tokens das empresas (AES-256-GCM). Sem chave em dev, a
 	// administração de números fica indisponível (mas o resto sobe).
@@ -83,9 +84,14 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	aiRepo := repository.NewAIRepository(db)
 	aiActionRepo := repository.NewAIActionRepository(db)
 	aiClient := services.NewAIClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
+	// Notificação no celular dos atendentes (app mobile). Sem credencial do
+	// Firebase o serviço fica inerte e o app segue com o polling.
+	pushSvc := services.NewPushService(cfg.FCMCredentialsFile).
+		WithTokenCleanup(func(token string) { _ = deviceRepo.DeleteToken(token) })
 	supportSvc := services.NewSupportService(supportRepo, waRepo, cipher, cfg.MetaAPIBase, cfg.MediaDir, metaClient).
 		WithAI(aiClient, aiRepo, aiActionRepo).
 		WithPublicURL(cfg.PublicURL).
+		WithPush(pushSvc, deviceRepo).
 		WithMetaApp(cfg.MetaAppID)
 
 	// Cobrança: PIX/cartão avulso via Mercado Pago; recarga automática por cartão
@@ -128,10 +134,12 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	userH := handlers.NewUserHandler(userSvc)
 	supportH := handlers.NewSupportHandler(supportSvc).WithAIModel(cfg.AIModel)
 	adminH := handlers.NewAdminHandler(accountSvc, userSvc)
+	deviceH := handlers.NewDeviceHandler(deviceRepo)
 	waH := handlers.NewWhatsAppHandler(accountSvc)
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
 	aiH := handlers.NewAIHandler(supportSvc, cfg.AIConfigured())
 	billingH := handlers.NewBillingHandler(billingSvc)
+	packageH := handlers.NewPackageHandler(repository.NewPackageRepository(db), supportRepo)
 
 	// Canal do Instagram (Direct + Lead Ads). Compartilha o webhook da Meta.
 	igRepo := repository.NewInstagramRepository(db)
@@ -233,6 +241,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		api.POST("/billing/subscription", middleware.RequireAdmin(), modSubH.Start)
 		api.DELETE("/billing/subscription", middleware.RequireAdmin(), modSubH.Cancel)
 		api.POST("/modules/:key/interest", moduleH.Interest) // "quero contratar"
+
+		// Aparelhos do app de celular (notificação push).
+		api.POST("/devices", deviceH.Register)
+		api.DELETE("/devices/:token", deviceH.Unregister)
 
 		users := api.Group("/users")
 		{
@@ -446,6 +458,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			admin.PUT("/accounts/:id/modules", moduleH.AdminSet)
 			admin.GET("/module-prices", moduleH.AdminPrices) // tabela de preços dos módulos
 			admin.PUT("/module-prices", moduleH.AdminSetPrices)
+			// Pacotes comerciais: o super-admin monta o que se vende.
+			admin.GET("/packages", packageH.List)
+			admin.POST("/packages", packageH.Create)
+			admin.PUT("/packages/:id", packageH.Update)
+			admin.DELETE("/packages/:id", packageH.Delete)
+			admin.GET("/credit-packs", packageH.CreditPacks)
+			admin.PUT("/credit-packs", packageH.SetCreditPacks)
 			admin.GET("/accounts/:id/plan", moduleH.AdminLimits) // assentos, números, retenção
 			admin.PUT("/accounts/:id/plan", moduleH.AdminSetLimits)
 			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.

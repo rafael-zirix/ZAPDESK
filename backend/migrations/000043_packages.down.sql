@@ -1,0 +1,2 @@
+ALTER TABLE accounts DROP COLUMN IF EXISTS package_id;
+DROP TABLE IF EXISTS packages;

@@ -1,6 +1,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Permissões do app de atendimento:
+         INTERNET          — falar com a API
+         RECORD_AUDIO      — áudio "segurar para gravar" no compositor
+         CAMERA            — foto tirada na hora para mandar ao cliente
+         ACCESS_*_LOCATION — enviar a localização (técnico em campo)
+         POST_NOTIFICATIONS— aviso de mensagem nova (Android 13+) -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Câmera não é obrigatória: um tablet sem câmera ainda atende. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+
     <application
-        android:label="zapdesk_app"
+        android:label="HotZap"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -24,7 +40,20 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Toque na notificação do FCM chega como este intent. -->
+            <intent-filter>
+                <action android:name="FLUTTER_NOTIFICATION_CLICK"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
         </activity>
+
+        <!-- Canal usado pelas notificações com o app fechado. Precisa ser o
+             mesmo id criado no app (mobile/push.dart), senão o Android usa o
+             canal padrão e o aviso sai sem som. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="mensagens"/>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -40,6 +69,11 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Abrir anexo/mapa no app do sistema (Android 11+ exige declarar). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

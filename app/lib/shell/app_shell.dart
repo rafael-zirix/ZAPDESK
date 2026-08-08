@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../admin/accounts_screen.dart';
+import '../admin/packages_screen.dart';
 import '../ai/ai_screen.dart';
 import '../auth/auth_controller.dart';
 import '../campaigns/campaigns_screen.dart';
@@ -139,6 +140,7 @@ class _AppShellState extends State<AppShell> {
     if (me.isSuperAdmin) {
       return const [
         _NavDest(Icons.apartment_outlined, Icons.apartment, 'Empresas', AccountsScreen()),
+        _NavDest(Icons.inventory_2_outlined, Icons.inventory_2, 'Pacotes', PackagesScreen()),
         _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', UsageScreen()),
       ];
     }

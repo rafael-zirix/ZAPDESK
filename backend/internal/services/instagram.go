@@ -380,6 +380,9 @@ func (s *SupportService) ProcessInboundExternal(accountID, channel, externalID, 
 		Status:     "received",
 		ExternalID: &extID,
 	})
+	if err == nil {
+		s.NotifyInbound(accountID, ticket.ID, text)
+	}
 	return ticket.ID, err
 }
 
