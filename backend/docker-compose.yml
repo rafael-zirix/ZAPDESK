@@ -24,7 +24,7 @@ services:
       ENV: dev
       PORT: "8080"
       DATABASE_URL: postgres://zapdesk:zapdesk@postgres:5432/zapdesk?sslmode=disable
-      JWT_SECRET: dev-secret-change-me
+      JWT_SECRET: dev-secret-change-me-com-32-caracteres-no-minimo
     ports:
       - "8080:8080"
 

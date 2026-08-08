@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -207,6 +208,14 @@ func (c *Config) Validate() error {
 	if len(c.JWTSecret) < 32 {
 		return errors.New("JWT_SECRET ausente ou curto demais (mínimo 32 caracteres): " +
 			"sem ele qualquer pessoa forja um token de administrador")
+	}
+	// ENV precisa ser declarado e válido. O teste em todo o código é igualdade
+	// estrita com "prd": um ENV=prod, ENV=production ou variável esquecida num
+	// host novo devolve, em silêncio, o pacote inteiro de comportamento de
+	// desenvolvimento em produção — código de OTP no log, Gin em debug, HSTS
+	// desligado e CORS aceitando localhost com credenciais.
+	if c.Env != "dev" && c.Env != "prd" {
+		return fmt.Errorf("ENV inválido (%q): use exatamente \"dev\" ou \"prd\"", c.Env)
 	}
 	if c.EncryptionKey == "" {
 		return errors.New("ENCRYPTION_KEY ausente: os tokens da Meta seriam gravados sem cifra")

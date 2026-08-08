@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,10 +20,10 @@ import (
 )
 
 type StripeClient struct {
-	base    string
-	secret  string
+	base     string
+	secret   string
 	whSecret string
-	http    *http.Client
+	http     *http.Client
 }
 
 func NewStripeClient(secret, webhookSecret string) *StripeClient {
@@ -155,7 +156,12 @@ func (c *StripeClient) ChargeOffSession(customerID, pmID string, amountBRL float
 // VerifyWebhook confere a assinatura do webhook (cabeçalho Stripe-Signature).
 func (c *StripeClient) VerifyWebhook(payload []byte, sigHeader string) bool {
 	if c.whSecret == "" {
-		return true // sem secret configurado (dev): aceita
+		// Falha FECHADA, igual ao webhook da Meta. Com o secret vazio, qualquer
+		// pessoa mandaria um checkout.session.completed forjado e ligaria recarga
+		// automática de cartão numa conta arbitrária. O risco mora na configuração
+		// PARCIAL — alguém põe a STRIPE_SECRET_KEY e esquece a do webhook.
+		slog.Error("webhook do Stripe: sem STRIPE_WEBHOOK_SECRET — evento recusado")
+		return false
 	}
 	var t, v1 string
 	for _, part := range strings.Split(sigHeader, ",") {
