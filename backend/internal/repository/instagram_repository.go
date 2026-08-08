@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"zapdesk/internal/models"
@@ -9,15 +10,15 @@ import (
 
 // InstagramAccount é a conta profissional conectada por uma empresa.
 type InstagramAccount struct {
-	ID          string    `json:"id"`
-	AccountID   string    `json:"-"`
-	IGUserID    string    `json:"ig_user_id"`
-	PageID      string    `json:"page_id"`
-	Username    string    `json:"username"`
-	TokenEnc    string    `json:"-"` // nunca sai da API
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	HasToken    bool      `json:"has_token"`
+	ID        string    `json:"id"`
+	AccountID string    `json:"-"`
+	IGUserID  string    `json:"ig_user_id"`
+	PageID    string    `json:"page_id"`
+	Username  string    `json:"username"`
+	TokenEnc  string    `json:"-"` // nunca sai da API
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	HasToken  bool      `json:"has_token"`
 }
 
 type InstagramRepository struct{ db *sql.DB }
@@ -25,16 +26,32 @@ type InstagramRepository struct{ db *sql.DB }
 func NewInstagramRepository(db *sql.DB) *InstagramRepository { return &InstagramRepository{db: db} }
 
 // Upsert conecta (ou reconecta) a conta do Instagram da empresa.
+// Upsert grava a conta. O WHERE do ON CONFLICT é a trava de isolamento: uma
+// conta do Instagram pertence a UMA empresa, e reconectar só atualiza a linha se
+// ela já for da mesma empresa. Sem isso, quem chegasse por último levava o canal
+// — e as conversas passavam a cair na caixa de entrada dele.
 func (r *InstagramRepository) Upsert(a *InstagramAccount) error {
 	now := time.Now().UTC()
-	return r.db.QueryRow(`
+	err := r.db.QueryRow(`
 		INSERT INTO instagram_accounts (account_id, ig_user_id, page_id, username, access_token_enc, status, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,'connected',$6,$6)
 		ON CONFLICT (ig_user_id) DO UPDATE
-		   SET account_id=EXCLUDED.account_id, page_id=EXCLUDED.page_id, username=EXCLUDED.username,
+		   SET page_id=EXCLUDED.page_id, username=EXCLUDED.username,
 		       access_token_enc=EXCLUDED.access_token_enc, status='connected', updated_at=EXCLUDED.updated_at
+		 WHERE instagram_accounts.account_id = EXCLUDED.account_id
 		RETURNING id`, a.AccountID, a.IGUserID, a.PageID, a.Username, a.TokenEnc, now).Scan(&a.ID)
+	if err == sql.ErrNoRows {
+		// O WHERE barrou: a conta do Instagram já pertence a OUTRA empresa.
+		return ErrInstagramOutraEmpresa
+	}
+	return err
 }
+
+// ErrInstagramOutraEmpresa indica tentativa de conectar uma conta do Instagram
+// que já está ligada a outra empresa nesta plataforma.
+var ErrInstagramOutraEmpresa = errors.New(
+	"esta conta do Instagram já está conectada a outra empresa. " +
+		"Desconecte-a de lá antes de conectar aqui")
 
 // ListByAccount devolve as contas do Instagram da empresa (sem o token).
 func (r *InstagramRepository) ListByAccount(accountID string) ([]InstagramAccount, error) {

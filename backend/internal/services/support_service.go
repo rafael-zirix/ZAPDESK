@@ -36,14 +36,34 @@ func kindFromMime(m string) string {
 	}
 }
 
+// extsPerigosas são as extensões que o navegador EXECUTA na nossa origem.
+//
+// A mídia é servida por /media/:name, no mesmo domínio do painel. Um .html ou
+// .svg enviado como anexo e aberto pela vítima roda JavaScript com acesso ao
+// que o painel guarda — XSS armazenado, com o agravante de o link parecer
+// legítimo porque é do nosso domínio.
+var extsPerigosas = map[string]bool{
+	".html": true, ".htm": true, ".xhtml": true, ".svg": true, ".xml": true,
+	".js": true, ".mjs": true, ".pdf": false, // pdf é seguro com Content-Disposition
+}
+
+// extFromMime escolhe a extensão do arquivo salvo.
+//
+// A extensão vem do MIME primeiro, e não do nome enviado pelo cliente: o nome é
+// dado por quem faz o upload e era o caminho para gravar "nota.html". Se o nome
+// trouxer algo executável no navegador, cai para .bin — o arquivo continua
+// baixável, só deixa de ser uma página no nosso domínio.
 func extFromMime(m, filename string) string {
-	if e := filepath.Ext(filename); e != "" {
-		return e
-	}
-	if exts, _ := mime.ExtensionsByType(m); len(exts) > 0 {
+	if exts, _ := mime.ExtensionsByType(m); len(exts) > 0 && !extsPerigosas[strings.ToLower(exts[0])] {
 		return exts[0]
 	}
-	return ""
+	if e := strings.ToLower(filepath.Ext(filename)); e != "" {
+		if extsPerigosas[e] {
+			return ".bin"
+		}
+		return e
+	}
+	return ".bin"
 }
 
 func randomName(ext string) string {

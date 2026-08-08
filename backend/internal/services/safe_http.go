@@ -20,6 +20,11 @@ var ErrBlockedTarget = errors.New("destino não permitido (endereço interno)")
 // URL. Isso cobre três buracos de uma vez: domínio público que aponta para IP
 // privado, DNS que muda entre a validação e a conexão (rebinding), e redirecionamento
 // para um alvo interno (cada salto abre uma conexão nova e passa pelo mesmo filtro).
+// SafeHTTPClient expõe o mesmo cliente para outros pacotes: qualquer lugar em
+// que a URL venha do cliente precisa desta proteção, e ter duas implementações
+// garantiria que uma delas ficasse para trás.
+func SafeHTTPClient() *http.Client { return safeHTTPClient() }
+
 func safeHTTPClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: blockInternalDial}
 	return &http.Client{

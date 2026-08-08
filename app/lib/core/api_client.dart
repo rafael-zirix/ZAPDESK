@@ -68,6 +68,7 @@ class ApiClient {
     required String filename,
     String? contentType,
     Map<String, String>? fields,
+    bool retry = true,
   }) async {
     try {
       final req = http.MultipartRequest('POST', _u(path));
@@ -80,6 +81,15 @@ class ApiClient {
         contentType: contentType != null ? MediaType.parse(contentType) : null,
       ));
       final res = await http.Response.fromStream(await req.send());
+      // Renova a sessão e reenvia, como o _send faz. Sem isto, um anexo enviado
+      // com o token vencido falhava sozinho no meio de uma conversa que estava
+      // funcionando — e o atendente não tinha como saber o motivo.
+      if (res.statusCode == 401 && retry && _refreshToken != null) {
+        if (await _tryRefresh()) {
+          return uploadFile(path,
+              bytes: bytes, filename: filename, contentType: contentType, fields: fields, retry: false);
+        }
+      }
       return _parse(res);
     } catch (e) {
       return ApiResult(ok: false, message: 'Falha ao enviar o arquivo: $e');

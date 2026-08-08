@@ -22,6 +22,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	if err := h.auth.RequestOTP(req.Identifier); err != nil {
+		if errors.Is(err, services.ErrAuthTooManyRequests) {
+			c.Header("Retry-After", "900")
+			RespondError(c, http.StatusTooManyRequests, "TOO_MANY_REQUESTS",
+				"Muitos pedidos de código. Aguarde alguns minutos.", nil)
+			return
+		}
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao enviar o código", nil)
 		return
 	}
@@ -44,7 +50,12 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	if err := h.auth.Signup(req.CompanyName, req.AdminName, req.Phone, req.Email); err != nil {
 		switch {
 		case errors.Is(err, services.ErrPhoneAlreadyUsed):
-			RespondError(c, http.StatusConflict, ErrValidation, "Esses dados já têm conta. É só entrar.", nil)
+			// Resposta IDÊNTICA à do sucesso, de propósito: distinguir os dois
+			// transformava o cadastro público num verificador de "esse e-mail é
+			// cliente do HotZap?" — de graça e sem login. Quem já tem conta recebe
+			// o código pelo login normal.
+			RespondSuccess(c, http.StatusOK, "Conta criada — enviamos um código de acesso", nil)
+			return
 		case errors.Is(err, services.ErrSignupInvalid):
 			RespondError(c, http.StatusBadRequest, ErrValidation, "Confira os dados — informe um e-mail válido.", nil)
 		default:
@@ -64,6 +75,15 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 	}
 	res, err := h.auth.VerifyOTP(req.Identifier, req.Code)
 	if err != nil {
+		if errors.Is(err, services.ErrAuthTooManyRequests) {
+			c.Header("Retry-After", "900")
+			RespondError(c, http.StatusTooManyRequests, "TOO_MANY_REQUESTS",
+				"Muitas tentativas. Aguarde alguns minutos e peça um código novo.", nil)
+			return
+		}
+		// Usuário inexistente e código errado devolvem a MESMA resposta: separar
+		// os dois transformaria o login num verificador de "esse telefone tem
+		// conta aqui?".
 		if errors.Is(err, services.ErrAuthInvalidCode) || errors.Is(err, services.ErrAuthUserNotFound) {
 			RespondError(c, http.StatusUnauthorized, ErrUnauthorized, "Código inválido ou expirado", nil)
 			return

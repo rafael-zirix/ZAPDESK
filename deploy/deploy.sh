@@ -14,7 +14,7 @@ echo "==> build backend (linux/arm64)"
 
 echo "==> build web (Flutter)"
 # App servido em /app/ (a raiz "/" é a landing do cliente).
-( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --base-href /app/ --dart-define=API_BASE_URL="$URL" >/dev/null )
+( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --base-href /app/ --no-web-resources-cdn --dart-define=API_BASE_URL="$URL" >/dev/null )
 
 echo "==> empacota"
 rm -rf "$ROOT/deploy/migrations" "$ROOT/deploy/web"

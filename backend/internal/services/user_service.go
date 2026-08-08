@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"log/slog"
 
 	"zapdesk/internal/models"
 	"zapdesk/internal/repository"
@@ -13,6 +14,13 @@ var ErrUserNotFound = errors.New("usuário não encontrado")
 type UserService struct {
 	users    *repository.UserRepository
 	accounts *repository.AccountRepository // régua do plano (assentos)
+	sessions *repository.AuthRepository    // para derrubar sessões ao excluir
+}
+
+// WithSessions liga a revogação de sessões (exclusão de usuário).
+func (s *UserService) WithSessions(auth *repository.AuthRepository) *UserService {
+	s.sessions = auth
+	return s
 }
 
 func NewUserService(users *repository.UserRepository) *UserService {
@@ -92,6 +100,14 @@ func (s *UserService) Delete(accountID, id string) error {
 	}
 	if !ok {
 		return ErrUserNotFound
+	}
+	// Derruba as sessões na hora. O refresh já barraria o usuário excluído na
+	// próxima renovação, mas esperar por ela é confiar que o outro lado vai
+	// bater à porta — melhor cortar de dentro.
+	if s.sessions != nil {
+		if err := s.sessions.RevokeAllRefreshTokens(id); err != nil {
+			slog.Error("falha ao revogar as sessões do usuário excluído", "erro", err, "usuario", id)
+		}
 	}
 	return nil
 }

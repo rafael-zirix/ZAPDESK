@@ -300,10 +300,16 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 }
 
 // validSignatureWith confere o HMAC-SHA256 do corpo com o app secret informado.
-// Se não houver app secret (dev), aceita.
+//
+// Sem segredo, RECUSA. Antes aceitava, "para facilitar o dev" — só que o mesmo
+// código roda em produção, e um App Secret vazio (esquecido no .env, apagado num
+// deploy) transformava o webhook em porta aberta: qualquer um poderia injetar
+// mensagens falsas na caixa de entrada de qualquer empresa. Falhar fechado
+// atrapalha o desenvolvedor uma vez; falhar aberto entrega o sistema em silêncio.
 func validSignatureWith(secret, header string, body []byte) bool {
 	if secret == "" {
-		return true
+		slog.Error("webhook: sem app secret configurado — payload recusado")
+		return false
 	}
 	sig := strings.TrimPrefix(header, "sha256=")
 	mac := hmac.New(sha256.New, []byte(secret))

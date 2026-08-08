@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -25,7 +26,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS())
+	// Atrás do Caddy, o IP do cliente vem no X-Forwarded-For. Sem declarar o
+	// proxy como confiável, o freio por IP puniria o proxy (um IP só) em vez de
+	// quem ataca — e bastaria forjar o cabeçalho para escapar dele.
+	_ = r.SetTrustedProxies([]string{"127.0.0.1", "::1", "172.16.0.0/12", "10.0.0.0/8"})
+	r.Use(gin.Logger(), gin.Recovery(),
+		middleware.SecurityHeaders(!cfg.IsProduction()),
+		middleware.CORS(cfg.CORSOrigins, !cfg.IsProduction()))
 
 	// --- Wiring: repositórios → serviços → handlers ---
 	userRepo := repository.NewUserRepository(db)
@@ -69,7 +76,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	jwtSvc := services.NewJWTService(cfg.JWTSecret)
 	authSvc := services.NewAuthService(userRepo, authRepo, accountRepo, jwtSvc, !cfg.IsProduction(), mailer, waOTP).
 		WithSignupTrial(cfg.SignupTrialTokens)
-	userSvc := services.NewUserService(userRepo).WithAccounts(accountRepo) // teto de assentos do plano
+	userSvc := services.NewUserService(userRepo).
+		WithAccounts(accountRepo). // teto de assentos do plano
+		WithSessions(authRepo)     // exclusão derruba as sessões na hora
 	metaClient := services.NewMetaClient(cfg.MetaAPIBase, cfg.MetaToken, cfg.MetaPhoneNumberID)
 	aiRepo := repository.NewAIRepository(db)
 	aiActionRepo := repository.NewAIActionRepository(db)
@@ -142,7 +151,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	modSubSvc.StartDunningWorker()
 	modSubH := handlers.NewModuleSubscriptionHandler(modSubSvc)
 	billingH = billingH.WithModuleSubs(modSubSvc) // o webhook do MP também trata a mensalidade
-	supportSvc.WithModuleCheck(moduleSvc.Has) // regras vendidas à parte só rodam p/ quem contratou
+	supportSvc.WithModuleCheck(moduleSvc.Has)     // regras vendidas à parte só rodam p/ quem contratou
 	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
 
 	// Health.
@@ -151,12 +160,22 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	})
 
 	// Autenticação (público).
+	//
+	// O freio por IP barra quem varre identificadores; o freio por identificador
+	// (no AuthService) protege UMA conta de ser martelada. Nenhum cobre o outro.
+	//
+	// Cada rota tem o SEU balde, e por um motivo prático: um escritório inteiro
+	// sai por um IP só (NAT). Um balde compartilhado faria a renovação de sessão
+	// de dez atendentes consumir a cota do login e trancar a empresa toda no meio
+	// do expediente — a defesa viraria o incidente. Por isso o /refresh, que toda
+	// aba aberta chama sozinha, tem cota larga; o /signup, que ninguém faz em
+	// série, tem a mais estreita.
 	auth := r.Group("/auth")
 	{
-		auth.POST("/login", authH.Login)     // pede o OTP
-		auth.POST("/verify", authH.Verify)   // valida o OTP → tokens
-		auth.POST("/refresh", authH.Refresh) //
-		auth.POST("/signup", authH.Signup)   // auto-cadastro público (empresa + admin + trial)
+		auth.POST("/login", middleware.RateLimitIP(60, 15*time.Minute), authH.Login)
+		auth.POST("/verify", middleware.RateLimitIP(60, 15*time.Minute), authH.Verify)
+		auth.POST("/refresh", middleware.RateLimitIP(600, 15*time.Minute), authH.Refresh)
+		auth.POST("/signup", middleware.RateLimitIP(10, time.Hour), authH.Signup)
 	}
 
 	// Webhook da Meta (público: autenticado pela assinatura HMAC / verify token).
@@ -169,8 +188,12 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Webhook do Mercado Pago (público): confirma o pagamento e credita os tokens.
 	// Não confia no corpo — re-consulta o status autenticado antes de creditar.
 	// Aceita GET e POST (o MP valida a URL com um GET ao configurar).
-	r.POST("/webhook/mercadopago", billingH.Webhook)
-	r.GET("/webhook/mercadopago", billingH.Webhook)
+	// Freio largo: o Mercado Pago manda poucas notificações e o handler
+	// re-consulta o status autenticado antes de creditar. O limite existe para
+	// impedir que um curioso use a rota como martelo contra a API do MP.
+	mpFreio := middleware.RateLimitIP(120, time.Minute)
+	r.POST("/webhook/mercadopago", mpFreio, billingH.Webhook)
+	r.GET("/webhook/mercadopago", mpFreio, billingH.Webhook)
 
 	// Webhook do Stripe (público): no setup do cartão, liga a recarga automática.
 	r.POST("/webhook/stripe", billingH.StripeWebhook)
@@ -227,54 +250,54 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
-			support.POST("/tickets/:id/media", supportH.SendMedia)                    // envia foto/anexo
-			support.POST("/tickets/:id/template", supportH.SendTemplate)              // envia um modelo aprovado
-			support.POST("/tickets/:id/interactive", supportH.SendInteractive)        // envia botões ou menu de lista
-			support.POST("/tickets/:id/read", supportH.MarkRead)                      // marca como lida (+ digitando)
-			support.POST("/tickets/:id/location", supportH.SendLocation)              // envia localização
-			support.POST("/tickets/:id/contact", supportH.SendContact)                // envia cartão de contato
-			support.POST("/tickets/:id/messages/:msgId/retry", supportH.RetryMessage) // reenvia mensagem que falhou
-			support.POST("/forward", supportH.ForwardMessage)                        // encaminha uma mensagem a outro contato
-			support.GET("/templates", supportH.ListTemplates)                        // modelos da conta (todos os status)
-			support.POST("/templates", supportH.CreateTemplate)                      // cria um modelo (vai p/ aprovação da Meta)
+			support.POST("/tickets/:id/media", supportH.SendMedia)                                    // envia foto/anexo
+			support.POST("/tickets/:id/template", supportH.SendTemplate)                              // envia um modelo aprovado
+			support.POST("/tickets/:id/interactive", supportH.SendInteractive)                        // envia botões ou menu de lista
+			support.POST("/tickets/:id/read", supportH.MarkRead)                                      // marca como lida (+ digitando)
+			support.POST("/tickets/:id/location", supportH.SendLocation)                              // envia localização
+			support.POST("/tickets/:id/contact", supportH.SendContact)                                // envia cartão de contato
+			support.POST("/tickets/:id/messages/:msgId/retry", supportH.RetryMessage)                 // reenvia mensagem que falhou
+			support.POST("/forward", supportH.ForwardMessage)                                         // encaminha uma mensagem a outro contato
+			support.GET("/templates", supportH.ListTemplates)                                         // modelos da conta (todos os status)
+			support.POST("/templates", supportH.CreateTemplate)                                       // cria um modelo (vai p/ aprovação da Meta)
 			support.POST("/templates/full", middleware.RequireAdmin(), supportH.CreateTemplateFull)   // modelo completo (cabeçalho/variáveis/botões)
 			support.POST("/templates/image", middleware.RequireAdmin(), supportH.UploadTemplateImage) // imagem de exemplo do cabeçalho
-			support.PUT("/templates/:name/enabled", supportH.SetTemplateEnabled)     // liga/desliga na barra de mensagens prontas
-			support.PUT("/templates/:name/usage", supportH.SetTemplateUsage)         // conversa × campanha
-			support.GET("/ai-state", supportH.AIState)                               // Atendente IA ligado na empresa? (exibe o toggle na conversa)
-			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)        // consumo/valores da própria empresa (admin)
-			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                    // liga/pausa a IA nesta conversa
+			support.PUT("/templates/:name/enabled", supportH.SetTemplateEnabled)                      // liga/desliga na barra de mensagens prontas
+			support.PUT("/templates/:name/usage", supportH.SetTemplateUsage)                          // conversa × campanha
+			support.GET("/ai-state", supportH.AIState)                                                // Atendente IA ligado na empresa? (exibe o toggle na conversa)
+			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)                        // consumo/valores da própria empresa (admin)
+			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                                     // liga/pausa a IA nesta conversa
 			// Cmd+I: rascunho da IA para o atendente revisar (não envia nada).
 			support.POST("/tickets/:id/suggest", middleware.RequireModule(moduleSvc, services.ModuleIA), supportH.SuggestReply)
 			// Fase 1 de atendimento: assumir, transferir, ciclo de vida e histórico.
-			support.POST("/tickets/:id/claim", supportH.ClaimTicket)                // assumir a conversa (puxar p/ si)
-			support.POST("/tickets/:id/transfer", supportH.TransferTicket)          // transferir p/ atendente e/ou setor
-			support.PUT("/tickets/:id/status", supportH.SetTicketStatus)            // resolver / fechar / reabrir…
-			support.GET("/tickets/:id/events", supportH.ListTicketEvents)           // timeline (transferências, status, notas)
-			support.GET("/sectors", supportH.ListSectors)                           // setores (todos veem, p/ transferir)
+			support.POST("/tickets/:id/claim", supportH.ClaimTicket)       // assumir a conversa (puxar p/ si)
+			support.POST("/tickets/:id/transfer", supportH.TransferTicket) // transferir p/ atendente e/ou setor
+			support.PUT("/tickets/:id/status", supportH.SetTicketStatus)   // resolver / fechar / reabrir…
+			support.GET("/tickets/:id/events", supportH.ListTicketEvents)  // timeline (transferências, status, notas)
+			support.GET("/sectors", supportH.ListSectors)                  // setores (todos veem, p/ transferir)
 			support.POST("/sectors", middleware.RequireAdmin(), supportH.CreateSector)
 			support.PUT("/sectors/:id", middleware.RequireAdmin(), supportH.UpdateSector)
 			support.DELETE("/sectors/:id", middleware.RequireAdmin(), supportH.DeleteSector)
 			support.PUT("/sectors/:id/ad", middleware.RequireAdmin(), supportH.SetAdSector) // recebe os leads de anúncio
 			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
-			support.POST("/tickets/:id/notes", supportH.AddNote)          // nota interna (só a equipe vê)
-			support.PUT("/tickets/:id/phone", supportH.LinkPhone)          // cadastra o WhatsApp de um contato do Instagram
+			support.POST("/tickets/:id/notes", supportH.AddNote)  // nota interna (só a equipe vê)
+			support.PUT("/tickets/:id/phone", supportH.LinkPhone) // cadastra o WhatsApp de um contato do Instagram
 			// Roteiro do 1º atendimento: é do módulo Leads (a IA é só o motor).
 			// Leitura liberada para a tela mostrar a vitrine; gravar exige o módulo.
 			support.GET("/lead-qualification", middleware.RequireAdmin(), supportH.LeadQualification)
 			support.PUT("/lead-qualification", middleware.RequireAdmin(),
 				middleware.RequireModule(moduleSvc, services.ModuleLeads), supportH.SetLeadQualification)
-			support.PUT("/tickets/:id/tags", supportH.SetTicketTags)      // etiqueta a conversa
-			support.POST("/tickets/claim-next", supportH.ClaimNext)       // pega o próximo da fila
-			support.GET("/quick-replies", supportH.ListQuickReplies)      // atalhos de texto (/boleto…)
+			support.PUT("/tickets/:id/tags", supportH.SetTicketTags) // etiqueta a conversa
+			support.POST("/tickets/claim-next", supportH.ClaimNext)  // pega o próximo da fila
+			support.GET("/quick-replies", supportH.ListQuickReplies) // atalhos de texto (/boleto…)
 			support.POST("/quick-replies", supportH.CreateQuickReply)
 			support.PUT("/quick-replies/:id", supportH.UpdateQuickReply)
 			support.DELETE("/quick-replies/:id", supportH.DeleteQuickReply)
-			support.GET("/tags", supportH.ListTags)                       // etiquetas da empresa
+			support.GET("/tags", supportH.ListTags) // etiquetas da empresa
 			support.POST("/tags", supportH.CreateTag)
 			support.PUT("/tags/:id", middleware.RequireAdmin(), supportH.UpdateTag)
 			support.DELETE("/tags/:id", middleware.RequireAdmin(), supportH.DeleteTag)
-			support.PUT("/presence", supportH.SetMyPresence)              // disponível / ausente
+			support.PUT("/presence", supportH.SetMyPresence) // disponível / ausente
 			// Fase 4: dashboard de métricas de atendimento (admin).
 			support.GET("/metrics", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleMetricas), supportH.SupportMetrics)
 		}
@@ -347,7 +370,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		ai := api.Group("/ai", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleIA))
 		{
 			ai.GET("/config", aiH.GetConfig)
-			ai.GET("/models", aiH.Models)  // modelos que a empresa pode escolher
+			ai.GET("/models", aiH.Models)   // modelos que a empresa pode escolher
 			ai.PUT("/models", aiH.SetModel) // escolha do modelo (consumo por fator)
 			ai.PUT("/config", aiH.SetConfig)
 			ai.POST("/autorecharge/setup", billingH.StripeSetup)     // cadastra cartão (Stripe) p/ recarga a 10%
@@ -359,7 +382,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.POST("/upload-context", aiH.UploadContext)
 			ai.POST("/import-url", aiH.ImportURL)
 			ai.DELETE("/context/:id", aiH.DeleteContext)
-			ai.GET("/actions", aiH.ListActions)               // ferramentas (buscas externas) da IA
+			ai.GET("/actions", aiH.ListActions) // ferramentas (buscas externas) da IA
 			ai.POST("/actions", aiH.CreateAction)
 			ai.PUT("/actions/:id", aiH.UpdateAction)
 			ai.PUT("/actions/:id/enabled", aiH.ToggleAction)
@@ -382,13 +405,16 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			campaigns.GET("/:id", supportH.GetCampaign)
 			campaigns.GET("/:id/recipients", supportH.CampaignRecipients)
 			campaigns.POST("/:id/action", supportH.CampaignAction) // pause | resume | cancel
-			campaigns.DELETE("/:id", supportH.DeleteCampaign)     // exclui a campanha
+			campaigns.DELETE("/:id", supportH.DeleteCampaign)      // exclui a campanha
 			campaigns.PUT("/:id/name", supportH.RenameCampaign)    // renomeia (duplo clique na lista)
-			campaigns.POST("/media", supportH.AddCampaignMedia) // foto p/ modelo com cabeçalho de imagem
+			campaigns.POST("/media", supportH.AddCampaignMedia)    // foto p/ modelo com cabeçalho de imagem
 		}
 
 		// Onboarding do 1º acesso (admin): checklist + assistente de IA (por conta do HotZap).
-		onb := api.Group("/onboarding", middleware.RequireAdmin())
+		// A IA do onboarding gasta token igual à do atendimento: sem o portão do
+		// módulo, quem não contratou IA usava o motor de graça por aqui.
+		onb := api.Group("/onboarding", middleware.RequireAdmin(),
+			middleware.RequireModule(moduleSvc, services.ModuleIA))
 		{
 			onb.GET("/status", supportH.OnboardingStatus)
 			onb.POST("/done", supportH.OnboardingDone)
@@ -420,7 +446,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			admin.PUT("/accounts/:id/modules", moduleH.AdminSet)
 			admin.GET("/module-prices", moduleH.AdminPrices) // tabela de preços dos módulos
 			admin.PUT("/module-prices", moduleH.AdminSetPrices)
-			admin.GET("/accounts/:id/plan", moduleH.AdminLimits)  // assentos, números, retenção
+			admin.GET("/accounts/:id/plan", moduleH.AdminLimits) // assentos, números, retenção
 			admin.PUT("/accounts/:id/plan", moduleH.AdminSetLimits)
 			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.
 			admin.GET("/accounts/:id/ai", aiH.AdminAIInfo)

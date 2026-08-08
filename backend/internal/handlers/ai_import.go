@@ -9,10 +9,11 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+
+	"zapdesk/internal/services"
 
 	"zapdesk/internal/middleware"
 )
@@ -26,18 +27,11 @@ var (
 
 // siteClient busca páginas para importar (timeout curto; bloqueia redirect p/
 // rede interna — SSRF básico, já que a ação é do admin da empresa).
-var siteClient = &http.Client{
-	Timeout: 12 * time.Second,
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return fmt.Errorf("muitos redirecionamentos")
-		}
-		if isBlockedHost(req.URL.Hostname()) {
-			return fmt.Errorf("redirecionamento para rede interna bloqueado")
-		}
-		return nil
-	},
-}
+// siteClient busca páginas para importar. A URL vem do cliente, então usa o
+// MESMO cliente endurecido das Ações da IA: a checagem acontece no dial, sobre o
+// IP resolvido. A versão anterior só olhava o texto do host, e um domínio
+// público apontando para 169.254.169.254 passava direto.
+var siteClient = services.SafeHTTPClient()
 
 // ImportURL busca uma página, extrai o texto limpo e o cadastra como um item da
 // base de conhecimento (respeitando o teto de caracteres). Se já existir um item

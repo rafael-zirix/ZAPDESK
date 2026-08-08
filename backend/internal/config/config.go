@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -11,13 +12,14 @@ import (
 
 // Config agrupa toda a configuração da API.
 type Config struct {
-	Env         string // dev | prd
-	Port        string
+	Env           string // dev | prd
+	Port          string
 	DatabaseURL   string
 	JWTSecret     string
-	EncryptionKey string // 32 bytes em hex — cifra os tokens das empresas
-	WebDir        string // pasta do build Flutter web; vazio = não serve o front
-	MediaDir      string // pasta onde a mídia (fotos/anexos) é armazenada
+	CORSOrigins   []string // origens do painel autorizadas a chamar a API
+	EncryptionKey string   // 32 bytes em hex — cifra os tokens das empresas
+	WebDir        string   // pasta do build Flutter web; vazio = não serve o front
+	MediaDir      string   // pasta onde a mídia (fotos/anexos) é armazenada
 
 	// Meta WhatsApp — nesta fase, credenciais de UM número de teste (globais).
 	// Na fase multi-número virão da tabela whatsapp_accounts, por conta.
@@ -88,34 +90,35 @@ func (c *Config) SignupTrialDays() int { return c.SignupTrialModuleDays }
 func Load() *Config {
 	_ = godotenv.Load()
 	return &Config{
-		Env:             getenv("ENV", "dev"),
-		Port:            getenv("PORT", "8080"),
-		DatabaseURL:     getenv("DATABASE_URL", "postgres://zapdesk:zapdesk@localhost:5432/zapdesk?sslmode=disable"),
-		JWTSecret:       getenv("JWT_SECRET", ""),
-		EncryptionKey:   os.Getenv("ENCRYPTION_KEY"),
-		WebDir:          os.Getenv("WEB_DIR"),
-		MediaDir:        getenv("MEDIA_DIR", "/app/media"),
-		MetaAppSecret:        os.Getenv("META_APP_SECRET"),
-		MetaVerifyToken:      os.Getenv("META_VERIFY_TOKEN"),
-		PublicURL:            strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"),
-		MetaAPIBase:          getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),
-		MetaToken:            os.Getenv("META_TOKEN"),
-		MetaPhoneNumberID:    os.Getenv("META_PHONE_NUMBER_ID"),
-		MetaDefaultAccountID: os.Getenv("META_DEFAULT_ACCOUNT_ID"),
-		MetaAppID:            os.Getenv("META_APP_ID"),
-		MetaESConfigID:       os.Getenv("META_ES_CONFIG_ID"),
-		MetaIGConfigID:       os.Getenv("META_IG_CONFIG_ID"),
-		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
-		ResendFromEmail: os.Getenv("RESEND_FROM_EMAIL"),
-		AuthOTPAccountID: os.Getenv("AUTH_OTP_ACCOUNT_ID"),
-		AuthOTPTemplate:  getenv("AUTH_OTP_TEMPLATE", "login_code"),
-		AuthOTPLang:      getenv("AUTH_OTP_LANG", "pt_BR"),
-		AIBaseURL:        os.Getenv("AI_BASE_URL"),
-		AIAPIKey:         os.Getenv("AI_API_KEY"),
-		AIModel:          os.Getenv("AI_MODEL"),
-		NuPayBaseURL:       getenv("NUPAY_BASE_URL", "https://sandbox-api.spinpay.com.br"),
-		NuPayMerchantKey:   os.Getenv("NUPAY_MERCHANT_KEY"),
-		NuPayMerchantToken: os.Getenv("NUPAY_MERCHANT_TOKEN"),
+		Env:                    getenv("ENV", "dev"),
+		Port:                   getenv("PORT", "8080"),
+		DatabaseURL:            getenv("DATABASE_URL", "postgres://zapdesk:zapdesk@localhost:5432/zapdesk?sslmode=disable"),
+		JWTSecret:              getenv("JWT_SECRET", ""),
+		CORSOrigins:            corsOrigins(),
+		EncryptionKey:          os.Getenv("ENCRYPTION_KEY"),
+		WebDir:                 os.Getenv("WEB_DIR"),
+		MediaDir:               getenv("MEDIA_DIR", "/app/media"),
+		MetaAppSecret:          os.Getenv("META_APP_SECRET"),
+		MetaVerifyToken:        os.Getenv("META_VERIFY_TOKEN"),
+		PublicURL:              strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"),
+		MetaAPIBase:            getenv("META_API_BASE_URL", "https://graph.facebook.com/v20.0"),
+		MetaToken:              os.Getenv("META_TOKEN"),
+		MetaPhoneNumberID:      os.Getenv("META_PHONE_NUMBER_ID"),
+		MetaDefaultAccountID:   os.Getenv("META_DEFAULT_ACCOUNT_ID"),
+		MetaAppID:              os.Getenv("META_APP_ID"),
+		MetaESConfigID:         os.Getenv("META_ES_CONFIG_ID"),
+		MetaIGConfigID:         os.Getenv("META_IG_CONFIG_ID"),
+		ResendAPIKey:           os.Getenv("RESEND_API_KEY"),
+		ResendFromEmail:        os.Getenv("RESEND_FROM_EMAIL"),
+		AuthOTPAccountID:       os.Getenv("AUTH_OTP_ACCOUNT_ID"),
+		AuthOTPTemplate:        getenv("AUTH_OTP_TEMPLATE", "login_code"),
+		AuthOTPLang:            getenv("AUTH_OTP_LANG", "pt_BR"),
+		AIBaseURL:              os.Getenv("AI_BASE_URL"),
+		AIAPIKey:               os.Getenv("AI_API_KEY"),
+		AIModel:                os.Getenv("AI_MODEL"),
+		NuPayBaseURL:           getenv("NUPAY_BASE_URL", "https://sandbox-api.spinpay.com.br"),
+		NuPayMerchantKey:       os.Getenv("NUPAY_MERCHANT_KEY"),
+		NuPayMerchantToken:     os.Getenv("NUPAY_MERCHANT_TOKEN"),
 		MercadoPagoBaseURL:     getenv("MERCADOPAGO_BASE_URL", "https://api.mercadopago.com"),
 		MercadoPagoAccessToken: os.Getenv("MERCADOPAGO_ACCESS_TOKEN"),
 		StripeSecretKey:        os.Getenv("STRIPE_SECRET_KEY"),
@@ -176,4 +179,37 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// corsOrigins monta a allowlist do CORS. Por padrão, a própria PUBLIC_URL — que
+// é onde o painel roda. CORS_ORIGINS acrescenta outras (separadas por vírgula),
+// para quem serve o painel em mais de um domínio.
+func corsOrigins() []string {
+	var out []string
+	if u := strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"); u != "" {
+		out = append(out, u)
+	}
+	for _, o := range strings.Split(os.Getenv("CORS_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// Validate recusa subir com configuração que compromete a segurança.
+//
+// Falhar no boot é de propósito: sem JWT_SECRET a API assina token com chave
+// vazia e QUALQUER pessoa forja um superadmin; sem ENCRYPTION_KEY os tokens da
+// Meta iriam para o banco em claro. Nos dois casos o sistema "funciona" e o
+// estrago só aparece depois — por isso não pode ser aviso, tem que ser parada.
+func (c *Config) Validate() error {
+	if len(c.JWTSecret) < 32 {
+		return errors.New("JWT_SECRET ausente ou curto demais (mínimo 32 caracteres): " +
+			"sem ele qualquer pessoa forja um token de administrador")
+	}
+	if c.EncryptionKey == "" {
+		return errors.New("ENCRYPTION_KEY ausente: os tokens da Meta seriam gravados sem cifra")
+	}
+	return nil
 }

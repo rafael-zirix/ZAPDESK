@@ -66,23 +66,49 @@ func (s *InstagramService) Connect(accountID, igUserID, pageID, username, token 
 	if err != nil {
 		return err
 	}
-	// Token errado é recusado na entrada: salvar um token de usuário deixa a conta
-	// "conectada" e mudinha, que é pior que não conectar.
-	if err := checkPageToken(s.apiBase, pageID, token); err != nil {
+	// O ig_user_id é DESCOBERTO a partir do token, nunca aceito de quem chamou.
+	//
+	// Ele é a chave de roteamento do webhook: gravar o id informado pelo cliente
+	// permitiria a uma empresa cadastrar o id do Instagram de OUTRA e passar a
+	// receber as conversas dela. Quem manda é a Meta — perguntamos a ela qual é a
+	// conta ligada à Página cujo token foi apresentado.
+	igReal, err := checkPageToken(s.apiBase, pageID, token)
+	if err != nil {
 		return err
 	}
-	// Assinar a Página é o que faz a Meta ENTREGAR Direct e leads aqui. Sem isto a
-	// conta salva bonita e não recebe nada. Best-effort: com o token já validado,
-	// falha aqui é permissão faltando, e a tela avisa.
-	if err := subscribePage(s.apiBase, pageID, token); err != nil {
-		slog.Warn("Instagram: falha ao assinar a Página nos webhooks", "erro", err, "page_id", pageID)
-		return fmt.Errorf("token válido, mas a Meta recusou assinar a Página: %w", err)
+	if igUserID != "" && igUserID != igReal {
+		slog.Warn("Instagram: ig_user_id informado diverge do real — usando o da Meta",
+			"informado", igUserID, "real", igReal, "conta", accountID)
 	}
+	igUserID = igReal
+	// Salva ANTES de assinar: assinatura é conserto de um clique (o ⟳), conexão
+	// perdida obriga a refazer o popup inteiro.
 	acc := &repository.InstagramAccount{
 		AccountID: accountID, IGUserID: igUserID, PageID: pageID,
 		Username: strings.TrimPrefix(strings.TrimSpace(username), "@"), TokenEnc: enc,
 	}
-	return s.repo.Upsert(acc)
+	if err := s.repo.Upsert(acc); err != nil {
+		return err
+	}
+	logGrantedScopes(s.apiBase, token)
+	if err := subscribeLeadgen(s.apiBase, pageID, token); err != nil {
+		slog.Warn("Instagram: sem leadgen (formulários de anúncio ficam de fora)", "erro", err, "page_id", pageID)
+	}
+	// A Meta documenta a assinatura de mensagens na PÁGINA nesta variante, mas o
+	// comportamento varia com a configuração do app — então tentamos os dois
+	// objetos e basta um funcionar. Os erros dos dois vão para o log.
+	errPag := subscribePage(s.apiBase, pageID, token)
+	if errPag != nil {
+		slog.Warn("Instagram: assinatura na Página falhou", "erro", errPag, "page_id", pageID)
+	}
+	errIG := subscribeIG(s.apiBase, igUserID, token)
+	if errIG != nil {
+		slog.Warn("Instagram: assinatura na conta do Instagram falhou", "erro", errIG, "ig_user_id", igUserID)
+	}
+	if errPag != nil && errIG != nil {
+		return fmt.Errorf("conta salva, mas a Meta recusou as duas assinaturas. Página: %v · Instagram: %v", errPag, errIG)
+	}
+	return nil
 }
 
 // AccountIDFor resolve a empresa dona de uma conta do Instagram.

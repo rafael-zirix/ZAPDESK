@@ -82,8 +82,9 @@ func (s *InstagramService) ConnectViaLogin(accountID, code, redirectURI string) 
 	if strings.TrimSpace(code) == "" {
 		return "", nil, errors.New("o popup da Meta não devolveu autorização")
 	}
-	// Com o redirect_uri primeiro (é o que o SDK usa); sem ele como alternativa,
-	// para o caso de a Meta tratar o código como do fluxo do Embedded Signup.
+	// COM o redirect_uri: o diálogo é aberto por nós (ver zapFacebookLogin no
+	// index.html), então o endereço é o mesmo dos dois lados — que é exatamente o
+	// que o subcode 36008 exige. Sem ele só quando o front não mandar.
 	userToken, err := exchangeCode(s.apiBase, s.fbAppID, s.fbSecret, code, redirectURI)
 	if err != nil && redirectURI != "" {
 		slog.Warn("Instagram login: troca com redirect_uri falhou, tentando sem", "erro", err)
@@ -153,7 +154,7 @@ func (s *InstagramService) Reactivate(accountID, id string) error {
 	if err != nil {
 		return err
 	}
-	return subscribePage(s.apiBase, acc.PageID, token)
+	return s.reassinar(acc.PageID, acc.IGUserID, token)
 }
 
 // Resubscribe reassina a Página nos webhooks usando o token já guardado. Serve
@@ -167,7 +168,20 @@ func (s *InstagramService) Resubscribe(accountID string) error {
 	if err != nil || acc == nil {
 		return ErrInstagramNotConnected
 	}
-	return subscribePage(s.apiBase, acc.PageID, token)
+	return s.reassinar(acc.PageID, acc.IGUserID, token)
+}
+
+// reassinar refaz as assinaturas. Só as MENSAGENS decidem o veredito: leadgen e
+// a tentativa no objeto do Instagram são acessórias, e reportá-las como falha
+// fazia um reassinamento bem-sucedido aparecer em vermelho na tela.
+func (s *InstagramService) reassinar(pageID, igUserID, token string) error {
+	if err := subscribeLeadgen(s.apiBase, pageID, token); err != nil {
+		slog.Warn("Instagram: sem leadgen", "erro", err, "page_id", pageID)
+	}
+	if err := subscribeIG(s.apiBase, igUserID, token); err != nil {
+		slog.Warn("Instagram: objeto do Instagram recusou (esperado nesta variante)", "erro", err)
+	}
+	return subscribePage(s.apiBase, pageID, token)
 }
 
 func novaSessaoLogin(accountID string, paginas []IGCandidate) string {
@@ -229,45 +243,113 @@ func fetchIGPages(apiBase, userToken string) ([]IGCandidate, error) {
 
 // checkPageToken confere que o token é MESMO da Página informada.
 //
-// Existe porque o formulário manual aceita qualquer string, e um token de
-// usuário (o que o Graph API Explorer entrega por padrão) salva sem reclamar e
-// só falha depois, na hora de assinar — a conta fica "conectada" sem receber
-// nada. Melhor recusar na entrada, dizendo o que veio no lugar.
-func checkPageToken(apiBase, pageID, token string) error {
-	req, err := http.NewRequest(http.MethodGet, apiBase+"/me?fields=id,name", nil)
+// Existe porque o formulário manual aceita qualquer string: um token de usuário
+// (o que o Graph API Explorer entrega por padrão) salvava sem reclamar e só
+// falhava depois, na hora de assinar. E devolve o IG User ID REAL da Página —
+// nunca o que veio na requisição, que é o que impede uma empresa de cadastrar o
+// id do Instagram de outra e desviar as conversas dela.
+func checkPageToken(apiBase, pageID, token string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("%s/%s?fields=id,name,instagram_business_account{id,username}", apiBase, pageID), nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := esHTTP.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("a Meta recusou o token: %s", metaErrorMessage(data))
+		return "", fmt.Errorf("a Meta recusou o token para esta Página: %s", metaErrorMessage(data))
 	}
-	var me struct {
+	var pag struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
+		IG   struct {
+			ID string `json:"id"`
+		} `json:"instagram_business_account"`
 	}
-	if err := json.Unmarshal(data, &me); err != nil {
-		return err
+	if err := json.Unmarshal(data, &pag); err != nil {
+		return "", err
 	}
-	if me.ID != pageID {
-		return fmt.Errorf("esse token não é da Página %s — ele pertence a \"%s\" (%s). "+
-			"No Graph API Explorer, rode GET /me/accounts?fields=id,name,access_token,"+
-			"instagram_business_account{id,username} e copie o access_token DA PÁGINA",
-			pageID, me.Name, me.ID)
+	if pag.ID != pageID {
+		return "", fmt.Errorf("esse token não é da Página %s — ele responde por \"%s\" (%s)",
+			pageID, pag.Name, pag.ID)
 	}
-	return nil
+	if pag.IG.ID == "" {
+		return "", fmt.Errorf("a Página %s não tem conta profissional do Instagram vinculada", pageID)
+	}
+	return pag.IG.ID, nil
 }
 
-// subscribePage assina o nosso app nos eventos da Página. Sem isto a Meta não
-// entrega nem o Direct (`messages`) nem os formulários de anúncio (`leadgen`).
+// logGrantedScopes registra as permissões que o token REALMENTE recebeu.
+//
+// Vale o custo de uma chamada: os erros da Meta para permissão faltando são
+// enganosos (ora "user access token is required", ora "object does not exist"),
+// e sem a lista a gente fica trocando de endpoint no escuro.
+func logGrantedScopes(apiBase, token string) {
+	req, err := http.NewRequest(http.MethodGet, apiBase+"/me/permissions", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := esHTTP.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Data []struct {
+			Permission string `json:"permission"`
+			Status     string `json:"status"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(data, &out) != nil {
+		return
+	}
+	var ok, negadas []string
+	for _, p := range out.Data {
+		if p.Status == "granted" {
+			ok = append(ok, p.Permission)
+		} else {
+			negadas = append(negadas, p.Permission)
+		}
+	}
+	slog.Info("Instagram: permissões do token", "concedidas", strings.Join(ok, ","), "negadas", strings.Join(negadas, ","))
+}
+
+// subscribeIG assina o app nas MENSAGENS da conta do Instagram.
+//
+// Este é o objeto certo para o Direct: a assinatura vai na conta do Instagram,
+// com o token da Página. Assinar a Página com `messages` devolve erro 102
+// ("user access token is required"), que engana — a chamada não está errada de
+// token, está errada de objeto.
+func subscribeIG(apiBase, igUserID, pageToken string) error {
+	u := fmt.Sprintf("%s/%s/subscribed_apps?subscribed_fields=messages,messaging_postbacks", apiBase, igUserID)
+	return postSubscribe(u, pageToken)
+}
+
+// subscribePage assina as MENSAGENS da Página — é o que faz o Direct chegar.
+//
+// Separado do leadgen de propósito: a Meta reprova a chamada INTEIRA quando um
+// dos campos pedidos não tem permissão, então juntar os dois fazia o `leadgen`
+// (que exige leads_retrieval) derrubar as mensagens junto.
 func subscribePage(apiBase, pageID, pageToken string) error {
-	u := fmt.Sprintf("%s/%s/subscribed_apps?subscribed_fields=messages,messaging_postbacks,leadgen", apiBase, pageID)
+	u := fmt.Sprintf("%s/%s/subscribed_apps?subscribed_fields=messages,messaging_postbacks", apiBase, pageID)
+	return postSubscribe(u, pageToken)
+}
+
+// subscribeLeadgen assina os formulários de anúncio. Opcional: sem ele o canal
+// de mensagens funciona igual, só os leads de formulário não entram.
+func subscribeLeadgen(apiBase, pageID, pageToken string) error {
+	u := fmt.Sprintf("%s/%s/subscribed_apps?subscribed_fields=leadgen", apiBase, pageID)
+	return postSubscribe(u, pageToken)
+}
+
+func postSubscribe(u, pageToken string) error {
 	req, err := http.NewRequest(http.MethodPost, u, nil)
 	if err != nil {
 		return err
@@ -280,7 +362,7 @@ func subscribePage(apiBase, pageID, pageToken string) error {
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("meta subscribe da Página respondeu %d: %s", resp.StatusCode, string(data))
+		return fmt.Errorf("%s", metaErrorMessage(data))
 	}
 	return nil
 }

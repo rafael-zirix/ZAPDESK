@@ -14,6 +14,14 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// Antes de qualquer coisa: configuração insegura não sobe. Um sistema que
+	// aceita chave vazia funciona normalmente e só mostra o problema quando
+	// alguém já entrou.
+	if err := cfg.Validate(); err != nil {
+		slog.Error("Configuração insegura — a API não vai subir", "erro", err)
+		os.Exit(1)
+	}
+
 	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("Falha ao conectar no banco", "erro", err)

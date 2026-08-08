@@ -8,7 +8,12 @@ import (
 )
 
 // AccessTokenTTL é a validade do token de acesso.
-const AccessTokenTTL = 24 * time.Hour
+//
+// Curto de propósito: não há como revogar um JWT já emitido, então esta é a
+// janela em que um usuário excluído (ou um token roubado) continua entrando. O
+// front renova sozinho pelo refresh token, então encurtar não incomoda ninguém
+// — 8h cobre um turno inteiro de trabalho sem pedir login de novo.
+const AccessTokenTTL = 8 * time.Hour
 
 // Claims são as informações que trafegam no JWT de acesso.
 type Claims struct {

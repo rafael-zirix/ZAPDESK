@@ -19,6 +19,10 @@ var (
 	ErrAuthUserNotFound = errors.New("usuário não encontrado para este identificador")
 	ErrAuthInvalidCode  = errors.New("código inválido ou expirado")
 	ErrAuthInvalidToken = errors.New("sessão inválida ou expirada")
+	// Freio do login: vira 429 no handler, com Retry-After.
+	ErrAuthTooManyRequests = errors.New("muitas tentativas — aguarde alguns minutos")
+	// Nenhum canal disponível para entregar o código em produção.
+	ErrAuthNoOTPChannel = errors.New("não foi possível enviar o código")
 	ErrSignupInvalid    = errors.New("dados de cadastro inválidos")
 	// Re-exportado do repositório para o handler não depender da camada de dados.
 	ErrPhoneAlreadyUsed = repository.ErrPhoneAlreadyUsed
@@ -39,6 +43,10 @@ type AuthService struct {
 	isDev       bool
 	mailer      Mailer         // envio de e-mail (canal reserva; pode ser nil)
 	whatsapp    WhatsAppSender // envio por WhatsApp (canal principal; pode ser nil)
+	// Freios do login. Por identificador, porque é o alvo: quem ataca conhece o
+	// telefone da vítima e varia o IP, não o contrário.
+	limitePedido *RateLimiter // pedidos de código
+	limiteTenta  *RateLimiter // tentativas de validação
 	signupTrial int64          // tokens de IA concedidos no auto-cadastro público
 	modules     *ModuleService // módulos em teste na conta recém-criada
 	moduleDays  int            // duração desse teste (0 = a conta nasce só com o núcleo)
@@ -116,9 +124,22 @@ type WhatsAppSender interface {
 	Configured() bool
 }
 
+// Limites do login. Generosos para gente e apertados para robô: cinco pedidos e
+// dez tentativas por identificador a cada 15 minutos.
+const (
+	otpPedidosPorJanela   = 5
+	otpTentativasPorJanela = 10
+	otpJanelaFreio        = 15 * time.Minute
+)
+
 func NewAuthService(users *repository.UserRepository, auth *repository.AuthRepository,
 	accounts *repository.AccountRepository, jwt *JWTService, isDev bool, mailer Mailer, whatsapp WhatsAppSender) *AuthService {
-	return &AuthService{users: users, auth: auth, accounts: accounts, jwt: jwt, isDev: isDev, mailer: mailer, whatsapp: whatsapp}
+	return &AuthService{
+		users: users, auth: auth, accounts: accounts, jwt: jwt, isDev: isDev,
+		mailer: mailer, whatsapp: whatsapp,
+		limitePedido: NewRateLimiter(otpPedidosPorJanela, otpJanelaFreio),
+		limiteTenta:  NewRateLimiter(otpTentativasPorJanela, otpJanelaFreio),
+	}
 }
 
 // isPhoneIdentifier diz se o identificador é telefone (sem @). O login aceita
@@ -155,16 +176,40 @@ func (s *AuthService) RequestOTP(identifier string) error {
 	if err != nil {
 		return err
 	}
+	// A CHAVE do freio é o usuário encontrado, não o texto digitado.
+	//
+	// Motivo: a busca por telefone casa pelos 11 últimos dígitos, então
+	// "5521999998888", "05521999998888" e "005521999998888" chegam ao MESMO
+	// usuário. Se a contagem fosse pelo texto, bastaria variar o prefixo para
+	// ganhar um orçamento novo de tentativas a cada vez — o freio existiria só
+	// no papel. Sem usuário, cai no texto normalizado, que ainda segura a
+	// varredura de identificadores.
+	chave := identifier
+	if user != nil {
+		chave = user.ID
+	}
+	if s.limitePedido != nil && !s.limitePedido.Allow(chave) {
+		return ErrAuthTooManyRequests
+	}
 	if user == nil {
 		// Não vaza existência; apenas não envia nada.
 		slog.Info("OTP solicitado para identificador sem usuário", "identifier", identifier)
 		return nil
 	}
+	// Teto DURÁVEL, no banco: o limitador acima vive em memória e zera a cada
+	// deploy. Sem este, cada reinício do container devolveria orçamento novo.
+	if n, err := s.auth.CountRecentOTPs(user.ID, time.Now().UTC().Add(-otpJanelaFreio)); err != nil {
+		return err
+	} else if n >= otpPedidosPorJanela {
+		return ErrAuthTooManyRequests
+	}
 	code, err := randomCode()
 	if err != nil {
 		return err
 	}
-	if err := s.auth.CreateOTP(identifier, hashCode(code), time.Now().UTC().Add(otpTTL)); err != nil {
+	// Um código novo aposenta os anteriores: sem isso, pedir outro código seria
+	// a forma trivial de zerar o contador de tentativas.
+	if err := s.auth.CreateOTP(user.ID, hashCode(code), time.Now().UTC().Add(otpTTL)); err != nil {
 		return err
 	}
 	// Canais permitidos pela empresa do usuário (super-admin da plataforma não
@@ -199,6 +244,15 @@ func (s *AuthService) RequestOTP(identifier string) error {
 		}
 	}
 	// Sem provedor (ou falha em dev): o código vai para o log, para testar E2E.
+	//
+	// NUNCA em produção: quem lê log entraria em qualquer conta. Se chegou aqui
+	// em produção, é falha de configuração — o certo é recusar o login e gritar,
+	// não seguir em frente com um código que ninguém recebeu.
+	if !s.isDev {
+		slog.Error("OTP não pôde ser enviado: nenhum canal disponível",
+			"identifier", identifier, "telefone", phone)
+		return ErrAuthNoOTPChannel
+	}
 	slog.Info("OTP (dev) gerado", "identifier", identifier, "code", code)
 	return nil
 }
@@ -210,15 +264,30 @@ func (s *AuthService) VerifyOTP(identifier, code string) (*models.AuthResponse, 
 	if err != nil {
 		return nil, err
 	}
+	chave := identifier
+	if user != nil {
+		chave = user.ID // ver a explicação da chave canônica em RequestOTP
+	}
+	if s.limiteTenta != nil && !s.limiteTenta.Allow(chave) {
+		return nil, ErrAuthTooManyRequests
+	}
 	if user == nil {
 		return nil, ErrAuthUserNotFound
 	}
-	ok, err := s.auth.ConsumeOTP(identifier, hashCode(code))
+	ok, _, err := s.auth.ConsumeOTP(user.ID, hashCode(code))
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, ErrAuthInvalidCode
+	}
+	// Quem provou quem é não carrega o peso das tentativas anteriores — senão
+	// um vizinho de IP (ou um dedo trêmulo) tranca o dono da conta.
+	if s.limiteTenta != nil {
+		s.limiteTenta.Reset(chave)
+	}
+	if s.limitePedido != nil {
+		s.limitePedido.Reset(chave)
 	}
 	return s.issueTokens(user)
 }

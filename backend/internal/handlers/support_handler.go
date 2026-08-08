@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -150,7 +151,13 @@ func (h *SupportHandler) Reply(c *gin.Context) {
 }
 
 // SendMedia envia um anexo (foto/documento) na conversa.
+// maxUpload é o teto de um anexo. A Meta recusa acima de 16MB de qualquer
+// forma; sem teto, io.ReadAll carregava o corpo INTEIRO na memória e um único
+// POST de alguns GB derrubava a API para todos os clientes.
+const maxUpload = 16 << 20 // 16 MiB
+
 func (h *SupportHandler) SendMedia(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUpload)
 	fh, err := c.FormFile("file")
 	if err != nil {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Nenhum arquivo enviado", nil)
@@ -432,6 +439,7 @@ func (h *SupportHandler) MyUsage(c *gin.Context) {
 
 // UploadWhatsAppPhoto salva a foto (avatar) de um número conectado.
 func (h *SupportHandler) UploadWhatsAppPhoto(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUpload)
 	fh, err := c.FormFile("file")
 	if err != nil {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Nenhuma imagem enviada", nil)
@@ -462,7 +470,19 @@ func (h *SupportHandler) UploadWhatsAppPhoto(c *gin.Context) {
 
 // ServeMedia devolve o arquivo de mídia (rota pública; o nome é aleatório).
 func (h *SupportHandler) ServeMedia(c *gin.Context) {
-	c.File(h.support.MediaPath(c.Param("name")))
+	// Segunda trava, depois da extensão: mesmo que algo executável chegue ao
+	// disco, o navegador é instruído a não interpretar nem embutir o arquivo.
+	// nosniff impede a adivinhação do tipo; a CSP isola o que for renderizado.
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
+	nome := filepath.Base(c.Param("name"))
+	if ext := strings.ToLower(filepath.Ext(nome)); ext == ".html" || ext == ".htm" ||
+		ext == ".svg" || ext == ".xml" || ext == ".xhtml" || ext == ".js" {
+		// Arquivos legados, gravados antes de a extensão passar a vir do MIME.
+		c.Header("Content-Disposition", "attachment; filename=\""+nome+"\"")
+		c.Header("Content-Type", "application/octet-stream")
+	}
+	c.File(h.support.MediaPath(nome))
 }
 
 // ListTemplates devolve os modelos (templates) aprovados da conta na Meta.
