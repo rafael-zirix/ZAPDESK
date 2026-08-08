@@ -55,6 +55,50 @@ func (r *AIRepository) AccountModel(accountID string) (string, error) {
 	return m, err
 }
 
+// AccountAIState devolve o modelo atual, o pendente (troca agendada) e o saldo.
+func (r *AIRepository) AccountAIState(accountID string) (current, pending string, balance int64, err error) {
+	err = r.db.QueryRow(`SELECT COALESCE(ai_model,''), COALESCE(pending_ai_model,''), COALESCE(ai_token_balance,0)
+		FROM accounts WHERE id=$1 AND deleted_at IS NULL`, accountID).Scan(&current, &pending, &balance)
+	return
+}
+
+// SchedulePendingModel agenda a troca: mantém o modelo e o saldo atuais; a troca
+// acontece quando o saldo zerar (ver moveTokens). Passar "" cancela o agendamento.
+func (r *AIRepository) SchedulePendingModel(accountID, model string) error {
+	_, err := r.db.Exec(`UPDATE accounts SET pending_ai_model=NULLIF($2,''), updated_at=$3
+		WHERE id=$1 AND deleted_at IS NULL`, accountID, model, time.Now().UTC())
+	return err
+}
+
+// SwitchModelForfeit troca o modelo AGORA e encerra o saldo atual (a escolha
+// explícita "perco o saldo"). O forfeit vira uma linha no extrato, para o cliente
+// ver que zerou por opção, não por erro.
+func (r *AIRepository) SwitchModelForfeit(accountID, model string) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC()
+	var saldo int64
+	if err := tx.QueryRow(`SELECT COALESCE(ai_token_balance,0) FROM accounts WHERE id=$1 AND deleted_at IS NULL`,
+		accountID).Scan(&saldo); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE accounts SET ai_model=$2, pending_ai_model=NULL,
+		ai_token_balance=0, updated_at=$3 WHERE id=$1 AND deleted_at IS NULL`, accountID, model, now); err != nil {
+		return err
+	}
+	if saldo > 0 {
+		nota := "saldo encerrado na troca de IA"
+		if _, err := tx.Exec(`INSERT INTO ai_token_ledger (account_id, delta, balance_after, kind, note, created_at)
+			VALUES ($1,$2,0,'forfeit',$3,$4)`, accountID, -saldo, nota, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SetAccountModel grava a escolha do modelo (vazio volta ao padrão).
 func (r *AIRepository) SetAccountModel(accountID, model string) error {
 	_, err := r.db.Exec(`UPDATE accounts SET ai_model=$2, updated_at=$3 WHERE id=$1 AND deleted_at IS NULL`,
@@ -117,6 +161,13 @@ func (r *AIRepository) moveTokens(accountID string, delta int64, kind, note, tic
 	if err := tx.QueryRow(`UPDATE accounts SET ai_token_balance = GREATEST(ai_token_balance + $2, 0), updated_at=$3
 		WHERE id=$1 AND deleted_at IS NULL RETURNING ai_token_balance`, accountID, delta, now).Scan(&balance); err != nil {
 		return 0, err
+	}
+	// Troca de IA agendada: se o saldo chegou a zero e havia um modelo pendente,
+	// a hora de aplicar é AGORA — o crédito da IA anterior acabou de esgotar.
+	if balance <= 0 {
+		_, _ = tx.Exec(`UPDATE accounts
+			SET ai_model = pending_ai_model, pending_ai_model = NULL
+			WHERE id=$1 AND pending_ai_model IS NOT NULL AND pending_ai_model <> ''`, accountID)
 	}
 	var tid, noteP *string
 	if ticketID != "" {

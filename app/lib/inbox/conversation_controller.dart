@@ -11,11 +11,44 @@ import '../models/support.dart';
 /// então atualizam de forma independente (uma pode carregar/enviar sem mexer
 /// nas outras). Faz polling silencioso para trazer as respostas em tempo real.
 class ConversationController extends ChangeNotifier {
-  ConversationController(this.ticket) {
+  ConversationController(this.ticket, {this.myUserId, this.iAmAdmin = false}) {
     aiPaused = ticket.aiPaused;
     load();
     composer.addListener(_onComposerChanged);
     _poll = Timer.periodic(const Duration(seconds: 6), (_) => _refresh());
+  }
+
+  /// Quem está usando o app/painel — define se ele pode ou não responder aqui.
+  final String? myUserId;
+  final bool iAmAdmin;
+
+  /// A conversa é de outro atendente? Nesse caso o envio ao cliente fica
+  /// bloqueado (a mesma regra roda no servidor; aqui é só para a tela não
+  /// oferecer o que vai levar 403). Nota interna continua liberada.
+  bool get lockedByOther {
+    final dono = ticket.assignedUserId;
+    if (dono == null || dono.isEmpty) return false;
+    if (myUserId == null) return false;
+    return dono != myUserId;
+  }
+
+  /// Nome de quem está com a conversa (para explicar o bloqueio na tela).
+  String? get lockedByName => lockedByOther ? ticket.assignedUserName : null;
+
+  // --- Citação ("responder a") ---
+
+  /// Mensagem que o atendente está citando (null = resposta comum).
+  Message? replyTo;
+
+  void setReply(Message m) {
+    replyTo = m;
+    notifyListeners();
+  }
+
+  void clearReply() {
+    if (replyTo == null) return;
+    replyTo = null;
+    notifyListeners();
   }
 
   /// Atendente IA pausado NESTA conversa (controle manual no header). Espelha o
@@ -127,20 +160,29 @@ class ConversationController extends ChangeNotifier {
   int recordSeconds = 0;
   Timer? _recTimer;
 
-  /// Recarrega as mensagens sem spinner; só notifica se mudou a quantidade.
+  /// Recarrega as mensagens sem spinner. Compara quantidade E a última mensagem:
+  /// só pelo tamanho, uma mudança de status (✓✓) ou a citação resolvida pelo
+  /// servidor nunca chegariam à tela.
   Future<void> _refresh() async {
     if (sending) return;
     final r = await _api.get('/support/tickets/${ticket.id}/messages');
     if (r.ok && r.data is List) {
       final fresh = (r.data as List).map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
-      if (fresh.length != messages.length) {
-        final grew = fresh.length > messages.length;
+      final grew = fresh.length > messages.length;
+      if (fresh.length != messages.length || _lastChanged(fresh)) {
         messages = fresh;
         notifyListeners();
         // Chegou mensagem nova do cliente com a conversa aberta → marca lida.
         if (grew && fresh.isNotEmpty && !fresh.last.isOutbound) unawaited(markRead());
       }
     }
+  }
+
+  /// A última mensagem mudou de id ou de status desde o último refresh?
+  bool _lastChanged(List<Message> fresh) {
+    if (fresh.isEmpty || messages.isEmpty) return fresh.length != messages.length;
+    final a = fresh.last, b = messages.last;
+    return a.id != b.id || a.status != b.status;
   }
 
   Future<void> load() async {
@@ -180,9 +222,16 @@ class ConversationController extends ChangeNotifier {
     }
     pendingTemplate = null;
     composer.clear();
+    // Guarda a citação e limpa a prévia junto com o campo: se o envio falhar, a
+    // mensagem volta pelo histórico, e deixar a prévia pendurada confundiria.
+    final citada = replyTo;
+    replyTo = null;
     sending = true;
     notifyListeners();
-    final r = await _api.post('/support/tickets/${ticket.id}/messages', {'content': text});
+    final r = await _api.post('/support/tickets/${ticket.id}/messages', {
+      'content': text,
+      if (citada != null) 'reply_to_id': citada.id,
+    });
     sending = false;
     if (r.ok && r.data != null) {
       messages = [...messages, Message.fromJson(r.data as Map<String, dynamic>)];
@@ -192,9 +241,19 @@ class ConversationController extends ChangeNotifier {
       notifyListeners();
       return true;
     }
+    // 403 da exclusividade: a conversa foi assumida por outro enquanto este
+    // atendente digitava. Devolve o texto ao campo para ele não perder o que
+    // escreveu.
+    if (r.status == 403) {
+      composer.text = text;
+      lastError = r.message;
+    }
     notifyListeners();
     return false;
   }
+
+  /// Motivo da última falha de envio (exibido pela tela).
+  String? lastError;
 
   /// Envia um modelo (template) aprovado. Retorna false em falha.
   Future<bool> sendTemplate(String name, String language, String body) async {
@@ -372,9 +431,17 @@ class ConversationController extends ChangeNotifier {
   }
 
   /// Encaminha uma mensagem para a conversa de outro contato.
-  Future<bool> forward(String messageId, String contactId) async {
+  /// Devolve null em sucesso, ou o motivo da recusa — o servidor distingue
+  /// "não pode" (nota interna, modelo) de "não saiu agora" (sem número
+  /// conectado), e o atendente precisa saber a diferença.
+  Future<String?> forward(String messageId, String contactId) async {
     final r = await _api.post('/support/forward', {'source_message_id': messageId, 'contact_id': contactId});
-    return r.ok;
+    if (r.ok) {
+      // 202 = gravada, mas não enviada. A API devolve o aviso na mensagem.
+      if (r.status == 202) return r.message ?? 'Gravada, mas ainda não enviada';
+      return null;
+    }
+    return r.message ?? 'Não foi possível encaminhar';
   }
 
   // --- Fase 1 de atendimento: assumir, transferir, status e histórico ---

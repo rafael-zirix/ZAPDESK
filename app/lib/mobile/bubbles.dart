@@ -12,12 +12,28 @@ import 'widgets.dart';
 /// Bolha de mensagem. Recebida à esquerda (branca), enviada à direita (verde) —
 /// e a NOTA INTERNA em amarelo, com aviso explícito de que não foi ao cliente.
 class Bubble extends StatelessWidget {
-  const Bubble({super.key, required this.message, this.onRetry});
+  const Bubble({
+    super.key,
+    required this.message,
+    this.onRetry,
+    this.onReply,
+    this.onForward,
+    this.onQuoteTap,
+  });
 
   final Message message;
 
   /// Reenvio (só aparece nas que falharam).
   final Future<void> Function()? onRetry;
+
+  /// Responder citando esta mensagem (null = a conversa não aceita envio agora).
+  final VoidCallback? onReply;
+
+  /// Encaminhar esta mensagem para outra conversa.
+  final VoidCallback? onForward;
+
+  /// Toque no bloco citado: rola até a mensagem original.
+  final void Function(String messageId)? onQuoteTap;
 
   bool get _note => message.internal;
 
@@ -57,6 +73,8 @@ class Bubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_note) _cabecalhoNota(),
+              if (m.forwarded) _marcaEncaminhada(),
+              if (m.replyTo != null) _blocoCitado(m.replyTo!),
               if (m.hasMedia) _midia(context, m),
               if ((m.content ?? '').isNotEmpty)
                 Padding(
@@ -86,6 +104,63 @@ class Bubble extends StatelessWidget {
             style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF8A6D00)),
           ),
         ],
+      ),
+    );
+  }
+
+  /// "↪ Encaminhada" — marca do HotZap. A Cloud API não deixa marcar como
+  /// encaminhada no WhatsApp do cliente; aqui serve para a equipe saber que
+  /// aquele texto veio de outra conversa.
+  Widget _marcaEncaminhada() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.shortcut, size: 13, color: MobileTheme.textFaint),
+          const SizedBox(width: 3),
+          Text('Encaminhada',
+              style: TextStyle(
+                  fontSize: 11.5, fontStyle: FontStyle.italic, color: MobileTheme.textFaint)),
+        ],
+      ),
+    );
+  }
+
+  /// Bloco da mensagem citada, no formato do WhatsApp: barra colorida à
+  /// esquerda, autor em destaque e uma prévia curta.
+  Widget _blocoCitado(QuotedMessage q) {
+    final cor = q.isOutbound ? MobileTheme.brand : const Color(0xFF6C6BCE);
+    return GestureDetector(
+      onTap: q.id == null || onQuoteTap == null ? null : () => onQuoteTap!(q.id!),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(5),
+          border: Border(left: BorderSide(color: cor, width: 3.5)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!q.unavailable)
+              Text(q.author,
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: cor)),
+            Text(
+              q.unavailable ? 'Mensagem indisponível' : q.preview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.25,
+                fontStyle: q.unavailable ? FontStyle.italic : FontStyle.normal,
+                color: MobileTheme.textFaint,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -203,6 +278,26 @@ class Bubble extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SheetTitle('Mensagem'),
+            // Nota interna não pode ser citada nem encaminhada: ela não existe
+            // na Meta e nunca pode chegar ao cliente (o servidor recusa).
+            if (onReply != null && !message.internal)
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: const Text('Responder'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  onReply!();
+                },
+              ),
+            if (onForward != null && !message.internal)
+              ListTile(
+                leading: const Icon(Icons.shortcut),
+                title: const Text('Encaminhar'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  onForward!();
+                },
+              ),
             if (texto.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.copy),

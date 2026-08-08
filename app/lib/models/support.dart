@@ -240,6 +240,43 @@ class TicketEvent {
       );
 }
 
+/// Resumo da mensagem citada, exibido dentro da bolha de quem respondeu.
+/// Vem pronto do servidor: a original pode nem estar carregada na tela.
+class QuotedMessage {
+  QuotedMessage({
+    this.id,
+    this.direction,
+    this.type,
+    required this.preview,
+    this.senderName,
+    this.unavailable = false,
+  });
+
+  final String? id;
+  final String? direction; // in | out
+  final String? type;
+  final String preview;
+  final String? senderName;
+
+  /// A citada saiu do histórico (retenção) ou nunca existiu aqui (o cliente
+  /// respondeu a um disparo de campanha).
+  final bool unavailable;
+
+  bool get isOutbound => direction == 'out';
+
+  /// Quem escreveu a mensagem citada, do ponto de vista do atendente.
+  String get author => isOutbound ? (senderName ?? 'Você') : 'Cliente';
+
+  factory QuotedMessage.fromJson(Map<String, dynamic> j) => QuotedMessage(
+        id: j['id'],
+        direction: j['direction'],
+        type: j['type'],
+        preview: j['preview'] ?? '',
+        senderName: j['sender_name'],
+        unavailable: j['unavailable'] == true,
+      );
+}
+
 /// Uma mensagem da conversa.
 class Message {
   Message({
@@ -254,6 +291,8 @@ class Message {
     required this.createdAt,
     this.internal = false,
     this.senderName,
+    this.forwarded = false,
+    this.replyTo,
   });
 
   final String id;
@@ -267,6 +306,8 @@ class Message {
   final DateTime createdAt;
   final bool internal; // nota interna: só a equipe vê (nunca vai ao cliente)
   final String? senderName; // atendente que enviou (exibido nas notas)
+  final bool forwarded; // veio de "encaminhar" (marca interna do HotZap)
+  final QuotedMessage? replyTo; // esta mensagem responde a outra
 
   bool get isOutbound => direction == 'out';
   bool get isImage => type == 'image';
@@ -285,5 +326,25 @@ class Message {
         createdAt: DateTime.tryParse(j['created_at'] ?? '')?.toLocal() ?? DateTime.now(),
         internal: j['internal'] == true,
         senderName: j['sender_name'],
+        forwarded: j['forwarded'] == true,
+        replyTo: j['reply_to'] == null
+            ? null
+            : QuotedMessage.fromJson(j['reply_to'] as Map<String, dynamic>),
       );
+
+  /// Resumo de uma linha desta mensagem — usado na prévia de "respondendo a…"
+  /// e na citação que o app monta localmente logo após enviar.
+  String get shortPreview {
+    final t = (content ?? '').replaceAll('\n', ' ').trim();
+    if (t.isNotEmpty) return t;
+    return switch (type) {
+      'image' => '📷 Foto',
+      'audio' => '🎤 Áudio',
+      'video' => '🎬 Vídeo',
+      'document' => fileName ?? '📄 Documento',
+      'location' => '📍 Localização',
+      'contact' => '👤 Contato',
+      _ => 'Mensagem',
+    };
+  }
 }

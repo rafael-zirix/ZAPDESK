@@ -159,6 +159,47 @@ func (s *SupportService) SetAccountAIModel(accountID, model string) error {
 	return s.aiRepo.SetAccountModel(accountID, model)
 }
 
+// AIAccountState é o que a tela "Meu plano" mostra: modelo atual, troca agendada
+// e saldo. current/pending vazio = usando o padrão da plataforma.
+func (s *SupportService) AIModelState(accountID string) (current, pending string, balance int64, err error) {
+	return s.aiRepo.AccountAIState(accountID)
+}
+
+// SwitchAIModel troca a IA da empresa respeitando a regra do saldo.
+//
+// forfeit=false: agenda — mantém a IA e o saldo atuais e só troca quando o saldo
+// zerar (nada se perde). forfeit=true: troca agora e encerra o saldo (a escolha
+// explícita do cliente, com o valor perdido mostrado antes). Trocar para a MESMA
+// IA que já está em uso apenas cancela um agendamento pendente.
+func (s *SupportService) SwitchAIModel(accountID, model string, forfeit bool) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return errors.New("escolha a IA")
+	}
+	ok := false
+	for _, m := range s.OfferedModels() {
+		if strings.EqualFold(m.Model, model) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return errors.New("modelo indisponível")
+	}
+	current, _, _, err := s.aiRepo.AccountAIState(accountID)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(current, model) {
+		// Já está nesta IA: só desfaz qualquer troca agendada.
+		return s.aiRepo.SchedulePendingModel(accountID, "")
+	}
+	if forfeit {
+		return s.aiRepo.SwitchModelForfeit(accountID, model)
+	}
+	return s.aiRepo.SchedulePendingModel(accountID, model)
+}
+
 // SaveAICosts grava a tabela de custos dos modelos.
 func (s *SupportService) SaveAICosts(t AICostTable) error {
 	now := time.Now().UTC()

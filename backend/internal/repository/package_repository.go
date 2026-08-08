@@ -92,3 +92,20 @@ func (r *PackageRepository) Delete(id string) error {
 	_, err := r.db.Exec(`DELETE FROM packages WHERE id=$1`, id)
 	return err
 }
+
+// AssignToAccount marca qual pacote a empresa contratou.
+func (r *PackageRepository) AssignToAccount(accountID, packageID string) error {
+	_, err := r.db.Exec(`UPDATE accounts SET package_id=$2, updated_at=now() WHERE id=$1 AND deleted_at IS NULL`,
+		accountID, packageID)
+	return err
+}
+
+// AccountPackage devolve o pacote da empresa (nil = nenhum).
+func (r *PackageRepository) AccountPackage(accountID string) (*models.Package, error) {
+	p, err := scanPackage(r.db.QueryRow(`SELECT `+pkgCols+` FROM packages
+		WHERE id = (SELECT package_id FROM accounts WHERE id=$1 AND deleted_at IS NULL)`, accountID))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return p, err
+}

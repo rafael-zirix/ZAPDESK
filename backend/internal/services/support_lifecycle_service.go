@@ -59,13 +59,23 @@ func (s *SupportService) DeleteSector(accountID, id string) error {
 }
 
 // ClaimTicket faz o atendente assumir a conversa (puxar para si).
-func (s *SupportService) ClaimTicket(accountID, ticketID, userID string) (*models.SupportTicketListItem, error) {
+func (s *SupportService) ClaimTicket(accountID, ticketID, userID string, actorIsAdmin bool) (*models.SupportTicketListItem, error) {
 	t, err := s.repo.GetTicket(accountID, ticketID)
 	if err != nil {
 		return nil, err
 	}
 	if t == nil {
 		return nil, ErrTicketNotFound
+	}
+	// Sem esta trava a exclusividade seria decorativa: bastava clicar em
+	// "Assumir" para tomar a conversa do colega e então responder. Assumir o que
+	// é de outro fica com o administrador — para o atendente, o caminho é pedir
+	// a transferência.
+	if !actorIsAdmin && t.AssignedUserID != nil && *t.AssignedUserID != "" && *t.AssignedUserID != userID {
+		exclusive, _, pErr := s.repo.AccountAssignmentPolicy(accountID)
+		if pErr == nil && exclusive {
+			return nil, ErrNotAssigneeOrAdmin
+		}
 	}
 	if t.AssignedUserID == nil || *t.AssignedUserID != userID {
 		if err := s.repo.UpdateTicketRouting(accountID, ticketID, &userID, true, nil, false); err != nil {

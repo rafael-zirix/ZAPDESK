@@ -30,6 +30,15 @@ Widget _canalIcone(TicketListItem t) => Padding(
       ),
     );
 
+/// Âncoras das bolhas, por conversa. Tocar numa citação tem de rolar até a
+/// mensagem original, e só uma GlobalKey estável diz onde ela está na lista.
+/// Fica num Expando para o mapa morrer junto com o controller (painel fechado
+/// = chaves liberadas), em vez de crescer para sempre num cache global.
+final _bubbleKeys = Expando<Map<String, GlobalKey>>('bubbleKeys');
+
+GlobalKey _bubbleKey(ConversationController conv, String messageId) =>
+    (_bubbleKeys[conv] ??= <String, GlobalKey>{}).putIfAbsent(messageId, GlobalKey.new);
+
 class InboxScreen extends StatefulWidget {
   const InboxScreen({super.key});
 
@@ -563,6 +572,9 @@ class _ConversationPane extends StatelessWidget {
                     style: TextStyle(fontSize: 11.5, color: Color(0xFF93370D)),
                   ),
                 ),
+              // Fica FORA do _composer porque a citação vale em qualquer estado
+              // dele (texto livre, janela fechada, gravando ou bloqueado).
+              _replyPreview(),
               // Cmd/Ctrl+I pede o rascunho da IA sem tirar a mão do teclado.
               CallbackShortcuts(
                 bindings: {
@@ -578,6 +590,64 @@ class _ConversationPane extends StatelessWidget {
     );
   }
 
+  /// Faixa "Respondendo a…" logo acima do compositor: lembra o que vai ser
+  /// citado e dá o X para desistir. Usa Flexible (nunca Expanded) nos textos —
+  /// no CanvasKit o Expanded colapsa a largura e a frase sai na vertical.
+  Widget _replyPreview() {
+    final m = conv.replyTo;
+    if (m == null) return const SizedBox.shrink();
+    // Do lado de cá o nome do contato diz mais que um "Cliente" genérico.
+    final author = m.isOutbound ? (m.senderName ?? 'Você') : conv.ticket.displayName;
+    return Container(
+      color: conv.noteMode ? Colors.amber.withValues(alpha: 0.12) : AppTheme.surface,
+      padding: const EdgeInsets.fromLTRB(10, 8, 8, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.bg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.seed.withValues(alpha: 0.35)),
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.reply, size: 16, color: AppTheme.seed),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Respondendo a $author',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppTheme.seed)),
+                        Text(m.shortPreview,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: conv.clearReply,
+              tooltip: 'Cancelar a resposta',
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.close, size: 18, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // Barra de modelos aprovados, acima do compositor.
   Widget _templatesBar(BuildContext context) {
     if (templates.isEmpty) return const SizedBox.shrink();
@@ -587,8 +657,10 @@ class _ConversationPane extends StatelessWidget {
       child: Align(
         alignment: Alignment.centerLeft,
         child: Builder(
+          // Modelo é mensagem AO CLIENTE: cai na exclusividade igual ao resto
+          // (inclusive em modo nota, que só libera a nota interna).
           builder: (btnCtx) => TextButton.icon(
-            onPressed: conv.sending ? null : () => _pickTemplate(btnCtx),
+            onPressed: (conv.sending || conv.lockedByOther) ? null : () => _pickTemplate(btnCtx),
             icon: const Icon(Icons.article_outlined, size: 18),
             label: const Text('Mensagens prontas'),
             style: TextButton.styleFrom(foregroundColor: AppTheme.seed, visualDensity: VisualDensity.compact),
@@ -1009,6 +1081,7 @@ class _ConversationPane extends StatelessWidget {
     final mapUrl = _mapUrl(m.content);
     final text = mapUrl != null ? m.content!.replaceAll(mapUrl, '').trim() : (m.content ?? '');
     return Align(
+      key: _bubbleKey(conv, m.id), // âncora p/ o toque numa citação rolar até aqui
       alignment: out ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
         onLongPressStart: (d) => _msgMenu(context, m, d.globalPosition),
@@ -1031,6 +1104,10 @@ class _ConversationPane extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Encaminhada e citação vêm ANTES do conteúdo: são o contexto que
+              // explica o que se lê embaixo.
+              if (m.forwarded) _forwardedTag(),
+              if (m.replyTo != null) _quotedBlock(m.replyTo!, out),
               if (m.hasMedia) _media(m),
               if (mapUrl != null) _locationCard(mapUrl),
               // Texto e, "ao lado" dele, a hora + os tracinhos de envio — alinhados
@@ -1052,6 +1129,94 @@ class _ConversationPane extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// Marca de mensagem encaminhada: o atendente precisa saber, de relance, que
+  /// aquele texto não foi escrito nesta conversa. Ícone em vez do caractere "↪"
+  /// porque a fonte do CanvasKit nem sempre traz a seta.
+  Widget _forwardedTag() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.shortcut, size: 13, color: Colors.grey.shade600),
+          const SizedBox(width: 4),
+          Text('Encaminhada',
+              style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey.shade600)),
+        ],
+      ),
+    );
+  }
+
+  /// Bloco da mensagem citada, no alto da bolha (estilo WhatsApp): barra
+  /// colorida + autor + resumo. O fundo é calculado em cima da cor da bolha
+  /// (alphaBlend) e fica OPACO — translúcido pegaria o tom da barra colorida.
+  Widget _quotedBlock(QuotedMessage q, bool out) {
+    final barColor = q.unavailable
+        ? Colors.grey
+        : (q.isOutbound ? AppTheme.seed : const Color(0xFF53BDEB));
+    final quoteBg = Color.alphaBlend(
+      (AppTheme.isDark ? Colors.white : Colors.black).withValues(alpha: 0.06),
+      out ? AppTheme.bubbleOut : AppTheme.bubbleIn,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: InkWell(
+        // Sem id (ou citada perdida) não há para onde ir — o toque nem existe.
+        onTap: (q.unavailable || q.id == null) ? null : () => _scrollToQuoted(q.id!),
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          decoration: BoxDecoration(color: barColor, borderRadius: BorderRadius.circular(6)),
+          padding: const EdgeInsets.only(left: 3.5), // a "barra" é a borda que sobra do pai
+          child: Container(
+            decoration: BoxDecoration(
+              color: quoteBg,
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(3), right: Radius.circular(6)),
+            ),
+            padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!q.unavailable) ...[
+                  Text(q.author,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: barColor)),
+                  const SizedBox(height: 1),
+                ],
+                Text(
+                  q.unavailable ? 'Mensagem indisponível' : q.preview,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.25,
+                    fontStyle: q.unavailable ? FontStyle.italic : FontStyle.normal,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Rola a thread até a mensagem citada. Se ela não estiver montada (histórico
+  /// antigo, fora da lista carregada), não faz nada: melhor ignorar o toque do
+  /// que jogar o atendente para um ponto qualquer da conversa.
+  void _scrollToQuoted(String messageId) {
+    final target = _bubbleKeys[conv]?[messageId]?.currentContext;
+    if (target == null) return;
+    Scrollable.ensureVisible(
+      target,
+      alignment: 0.3,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
     );
   }
 
@@ -1140,21 +1305,33 @@ class _ConversationPane extends StatelessWidget {
     );
   }
 
-  /// Menu de contexto da mensagem (long-press / clique direito): Encaminhar.
+  /// Menu de contexto da mensagem (long-press / clique direito): Responder e
+  /// Encaminhar.
   Future<void> _msgMenu(BuildContext ctx, Message m, Offset at) async {
     final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox;
     final choice = await showMenu<String>(
       context: ctx,
       position: RelativeRect.fromLTRB(at.dx, at.dy, overlay.size.width - at.dx, overlay.size.height - at.dy),
-      items: const [
-        PopupMenuItem<String>(
+      items: [
+        // Nota interna não pode ser citada — o backend recusa a citação dela.
+        if (!m.internal)
+          const PopupMenuItem<String>(
+            value: 'reply',
+            height: 44,
+            child: Row(children: [Icon(Icons.reply, size: 18), SizedBox(width: 10), Text('Responder')]),
+          ),
+        const PopupMenuItem<String>(
           value: 'forward',
           height: 44,
           child: Row(children: [Icon(Icons.forward, size: 18), SizedBox(width: 10), Text('Encaminhar')]),
         ),
       ],
     );
-    if (choice == 'forward' && ctx.mounted) await _forwardFlow(ctx, m);
+    if (choice == 'reply') {
+      conv.setReply(m);
+    } else if (choice == 'forward' && ctx.mounted) {
+      await _forwardFlow(ctx, m);
+    }
   }
 
   /// Escolhe o contato de destino e encaminha a mensagem.
@@ -1167,10 +1344,12 @@ class _ConversationPane extends StatelessWidget {
       builder: (_) => _ContactPickerDialog(contacts: inbox.contacts, title: 'Encaminhar para'),
     );
     if (picked == null || !ctx.mounted) return;
-    final ok = await conv.forward(m.id, picked.id);
+    // O controller devolve null em sucesso, ou o motivo da recusa — repassar o
+    // texto do servidor distingue "não pode encaminhar isso" de "não saiu agora".
+    final erro = await conv.forward(m.id, picked.id);
     if (!ctx.mounted) return;
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-        content: Text(ok ? 'Mensagem encaminhada para ${picked.displayName}' : 'Não foi possível encaminhar')));
+    ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(content: Text(erro ?? 'Mensagem encaminhada para ${picked.displayName}')));
   }
 
   /// Item do menu de anexos (círculo colorido + label).
@@ -1298,8 +1477,12 @@ class _ConversationPane extends StatelessWidget {
       // Modo NOTA: grava a nota interna (nunca vai à Meta/cliente).
       final ok = conv.noteMode ? await conv.sendNote() : await conv.send();
       if (!ok && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(conv.noteMode ? 'Não foi possível salvar a nota' : 'Não foi possível enviar a mensagem')));
+        // O 403 da exclusividade chega no lastError com o motivo real (quem
+        // assumiu a conversa); um "não foi possível" genérico esconderia isso.
+        final motivo = conv.noteMode
+            ? 'Não foi possível salvar a nota'
+            : (conv.lastError ?? 'Não foi possível enviar a mensagem');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(motivo)));
       }
     }
 
@@ -1542,6 +1725,12 @@ class _ConversationPane extends StatelessWidget {
     // Durante a gravação, o compositor vira a barra de gravação.
     if (conv.recording) return _recordingBar(context);
 
+    // Exclusividade do atendimento: quem assumiu é quem responde — nem o
+    // administrador escreve por cima (a API devolve 403). Vem ANTES da regra das
+    // 24h porque bloqueia tudo que vai ao cliente, modelo inclusive. A NOTA
+    // interna não vai à Meta, então o modo nota derruba o bloqueio.
+    if (conv.lockedByOther && !conv.noteMode) return _lockedComposer(context);
+
     // Fora da janela de 24h a Meta só entrega MODELO aprovado → bloqueia o texto
     // livre e direciona para os modelos. NOTA interna pode sempre (não vai à Meta).
     //
@@ -1636,6 +1825,47 @@ class _ConversationPane extends StatelessWidget {
                     : Icon(note ? Icons.push_pin : (hasText ? Icons.send : Icons.mic), color: Colors.white, size: 20),
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Compositor bloqueado pela exclusividade: explica com quem está a conversa
+  /// e deixa só a saída legítima — a nota interna. Mesmo desenho empilhado do
+  /// compositor de janela fechada (sem Expanded-em-Row, que colapsa no CanvasKit).
+  Widget _lockedComposer(BuildContext context) {
+    final quem = conv.lockedByName ?? 'outro atendente';
+    return Container(
+      width: double.infinity,
+      color: AppTheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text.rich(
+            TextSpan(children: [
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Icon(Icons.headset_mic_outlined, size: 16, color: Colors.grey.shade600),
+              ),
+              const TextSpan(text: '  '),
+              TextSpan(text: 'Em atendimento com $quem — peça a transferência para responder.'),
+            ]),
+            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 8),
+          // Nota interna funciona mesmo bloqueado (não vai ao cliente).
+          OutlinedButton.icon(
+            onPressed: conv.toggleNoteMode,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFB45309),
+              side: BorderSide(color: Colors.amber.withValues(alpha: 0.7)),
+              minimumSize: const Size(0, 40),
+            ),
+            icon: const Icon(Icons.push_pin_outlined, size: 17),
+            label: const Text('Escrever nota interna'),
           ),
         ],
       ),

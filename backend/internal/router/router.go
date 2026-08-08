@@ -143,7 +143,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	webhookH := handlers.NewWebhookHandler(supportSvc, cfg.MetaVerifyToken, cfg.MetaAppSecret, cfg.MetaDefaultAccountID)
 	aiH := handlers.NewAIHandler(supportSvc, cfg.AIConfigured())
 	billingH := handlers.NewBillingHandler(billingSvc)
-	packageH := handlers.NewPackageHandler(repository.NewPackageRepository(db), supportRepo)
+	packageRepo := repository.NewPackageRepository(db)
 
 	// Canal do Instagram (Direct + Lead Ads). Compartilha o webhook da Meta.
 	igRepo := repository.NewInstagramRepository(db)
@@ -156,6 +156,9 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
 	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo).WithSettings(supportRepo)
 	moduleH := handlers.NewModuleHandler(moduleSvc)
+	// Pacotes: o CRUD + a atribuição (que aplica módulos/limites) + o "Meu plano".
+	packageSvc := services.NewPackageService(packageRepo, moduleSvc)
+	packageH := handlers.NewPackageHandler(packageRepo, supportRepo, packageSvc, supportSvc)
 	// Mensalidade dos módulos (Mercado Pago): assinatura por empresa + corte por
 	// inadimplência depois da carência.
 	modSubSvc := services.NewModuleSubscriptionService(
@@ -375,6 +378,13 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		}
 
 		// Embedded Signup: conectar número via popup da Meta (admin da empresa).
+		// "Meu plano" (admin da empresa): pacote atual, vitrine e troca de IA.
+		plan := api.Group("/plan", middleware.RequireAdmin())
+		{
+			plan.GET("", packageH.Plan)
+			plan.PUT("/ai-model", packageH.SwitchAI)
+		}
+
 		es := api.Group("/settings/embedded", middleware.RequireAdmin())
 		{
 			es.GET("/config", waH.EmbeddedConfig)
@@ -469,6 +479,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			admin.DELETE("/packages/:id", packageH.Delete)
 			admin.GET("/credit-packs", packageH.CreditPacks)
 			admin.PUT("/credit-packs", packageH.SetCreditPacks)
+			admin.GET("/accounts/:id/package", packageH.AdminCurrent)
+			admin.PUT("/accounts/:id/package", packageH.AdminAssign)
 			admin.GET("/accounts/:id/plan", moduleH.AdminLimits) // assentos, números, retenção
 			admin.PUT("/accounts/:id/plan", moduleH.AdminSetLimits)
 			// Atendente IA de uma empresa: saldo/extrato e recarga de tokens.

@@ -654,7 +654,8 @@ func (s *SupportService) templateCategory(accountID, name string) string {
 // ProcessInbound registra uma mensagem recebida: acha/cria o contato e a
 // conversa aberta, e grava a mensagem (idempotente por wamid). Devolve o id da
 // conversa (para o webhook disparar o Atendente IA).
-func (s *SupportService) ProcessInbound(accountID, phone string, name *string, wamid, text string) (string, error) {
+// replyToWamid (opcional) é o wamid que o cliente citou ao responder.
+func (s *SupportService) ProcessInbound(accountID, phone string, name *string, wamid, text, replyToWamid string) (string, error) {
 	contact, err := s.repo.FindOrCreateContact(accountID, phone, name)
 	if err != nil {
 		return "", err
@@ -665,14 +666,17 @@ func (s *SupportService) ProcessInbound(accountID, phone string, name *string, w
 	}
 	content := text
 	extID := wamid
+	quotedID, quotedExt := s.quotedFromClient(accountID, replyToWamid)
 	_, err = s.repo.InsertMessage(&models.SupportMessage{
-		AccountID:  accountID,
-		TicketID:   ticket.ID,
-		Direction:  models.DirectionIn,
-		Type:       "text",
-		Content:    &content,
-		Status:     "received",
-		ExternalID: &extID,
+		AccountID:         accountID,
+		TicketID:          ticket.ID,
+		Direction:         models.DirectionIn,
+		Type:              "text",
+		Content:           &content,
+		Status:            "received",
+		ExternalID:        &extID,
+		ReplyToID:         quotedID,
+		ReplyToExternalID: quotedExt,
 	})
 	// Campanhas: resposta do contato conta no funil ("respondeu"); "SAIR" (e
 	// variações) descadastra o contato de qualquer campanha futura.
@@ -684,6 +688,28 @@ func (s *SupportService) ProcessInbound(accountID, phone string, name *string, w
 		s.NotifyInbound(accountID, ticket.ID, text)
 	}
 	return ticket.ID, err
+}
+
+// quotedFromClient resolve a citação que veio do cliente.
+//
+// Devolve (idLocal, nil) quando o wamid citado é de uma mensagem nossa, e
+// (nil, wamid) quando não é — o cliente pode citar um disparo de campanha, que
+// de propósito não vira mensagem de conversa. Guardar o wamid cru evita perder a
+// informação de que houve citação e permite a bolha mostrar "mensagem
+// indisponível" em vez de esconder o fato.
+func (s *SupportService) quotedFromClient(accountID, replyToWamid string) (*string, *string) {
+	if replyToWamid == "" {
+		return nil, nil
+	}
+	id, err := s.repo.MessageIDByExternalID(accountID, replyToWamid)
+	if err != nil {
+		slog.Warn("citação recebida: falha ao resolver a mensagem citada", "erro", err, "wamid", replyToWamid)
+		return nil, &replyToWamid
+	}
+	if id != nil {
+		return id, nil
+	}
+	return nil, &replyToWamid
 }
 
 // NotifyInbound avisa no celular que chegou mensagem do cliente.
@@ -1536,8 +1562,34 @@ func isMediaType(t string) bool {
 	return false
 }
 
+// resolveQuoted valida a mensagem citada e devolve (idLocal, wamidParaAMeta).
+//
+// Devolve wamid vazio quando a citada existe aqui mas não tem correspondente na
+// Meta (envio que falhou, nota interna): nesse caso a citação é gravada só do
+// nosso lado e a mensagem sai SEM o bloco context — melhor perder o efeito
+// visual no celular do cliente do que ter a mensagem inteira recusada.
+func (s *SupportService) resolveQuoted(accountID, ticketID string, replyToID *string) (*string, string, error) {
+	if replyToID == nil || *replyToID == "" {
+		return nil, "", nil
+	}
+	q, err := s.repo.GetMessage(accountID, *replyToID)
+	if err != nil {
+		return nil, "", err
+	}
+	// Citada inexistente ou de outra conversa: ignora a citação em vez de recusar
+	// a resposta — o atendente não perde o texto que escreveu.
+	if q == nil || q.TicketID != ticketID {
+		return nil, "", nil
+	}
+	if q.Internal || q.ExternalID == nil || *q.ExternalID == "" {
+		return &q.ID, "", nil
+	}
+	return &q.ID, *q.ExternalID, nil
+}
+
 // Reply envia uma resposta de texto do atendente pela conversa e grava a saída.
-func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*models.SupportMessage, error) {
+// replyToID (opcional) cita outra mensagem da MESMA conversa.
+func (s *SupportService) Reply(accountID, ticketID, userID, text string, replyToID *string) (*models.SupportMessage, error) {
 	ticket, err := s.repo.GetTicket(accountID, ticketID)
 	if err != nil {
 		return nil, err
@@ -1563,6 +1615,10 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 			})
 		}
 	}
+	quotedID, quotedWamid, err := s.resolveQuoted(accountID, ticketID, replyToID)
+	if err != nil {
+		return nil, err
+	}
 	content := text
 	sender := userID
 	msg := &models.SupportMessage{
@@ -1573,6 +1629,7 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 		Content:   &content,
 		Status:    "pending",
 		SenderID:  &sender,
+		ReplyToID: quotedID,
 	}
 
 	// Conversa do Instagram: a resposta sai pelo Direct (não existe template lá —
@@ -1611,7 +1668,7 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string) (*model
 		return nil, err
 	}
 	if client != nil {
-		wamid, sendErr := client.SendText(phone, text)
+		wamid, sendErr := client.SendTextReply(phone, text, quotedWamid)
 		if sendErr != nil {
 			slog.Error("envio à Meta falhou", "op", "reply", "conta", accountID, "ticket", ticketID, "erro", sendErr)
 			msg.Status = "failed"
@@ -1749,7 +1806,7 @@ func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []by
 }
 
 // ProcessInboundMedia baixa a mídia recebida da Meta, salva local e grava a msg.
-func (s *SupportService) ProcessInboundMedia(accountID, phone string, profileName *string, wamid, mediaID, caption, filename string) error {
+func (s *SupportService) ProcessInboundMedia(accountID, phone string, profileName *string, wamid, mediaID, caption, filename, replyToWamid string) error {
 	contact, err := s.repo.FindOrCreateContact(accountID, phone, profileName)
 	if err != nil {
 		return err
@@ -1780,10 +1837,12 @@ func (s *SupportService) ProcessInboundMedia(accountID, phone string, profileNam
 		fn = &filename
 	}
 	kind := kindFromMime(mimeType)
+	quotedID, quotedExt := s.quotedFromClient(accountID, replyToWamid)
 	_, err = s.repo.InsertMessage(&models.SupportMessage{
 		AccountID: accountID, TicketID: ticket.ID, Direction: models.DirectionIn,
 		Type: kind, Content: cap, MediaURL: &mediaURL, MimeType: &mimeType, FileName: fn,
 		Status: "received", ExternalID: &extID,
+		ReplyToID: quotedID, ReplyToExternalID: quotedExt,
 	})
 	if err == nil {
 		// Sem texto para mostrar: a notificação diz o TIPO do anexo, como o

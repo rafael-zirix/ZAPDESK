@@ -30,7 +30,9 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // Depois do primeiro frame: precisa do context para ler o AuthController.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final inbox = context.read<InboxController>();
-      inbox.myUserId = context.read<AuthController>().me?.id;
+      final me = context.read<AuthController>().me;
+      inbox.myUserId = me?.id;
+      inbox.iAmAdmin = me?.isAdmin ?? false;
       inbox.loadTickets();
       inbox.startPolling();
     });

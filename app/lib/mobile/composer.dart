@@ -32,12 +32,19 @@ class _ComposerState extends State<Composer> {
     if (_conv.recording) return _gravando();
 
     final nota = _conv.noteMode;
+    // Conversa de outro atendente: só a NOTA INTERNA continua liberada (ela não
+    // chega ao cliente). A mesma regra roda no servidor — aqui é para a tela não
+    // oferecer o que vai voltar 403.
+    final travado = _conv.lockedByOther && !nota;
+
     return SafeArea(
       top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (_conv.lockedByOther) _avisoTravado(),
           if (nota) _avisoNota(),
+          if (_conv.replyTo != null) _avisoResposta(),
           if (_conv.pendingTemplate != null) _avisoModelo(),
           Container(
             color: nota ? MobileTheme.noteBg : MobileTheme.composerBg,
@@ -49,11 +56,11 @@ class _ComposerState extends State<Composer> {
                   tooltip: 'Anexar',
                   icon: const Icon(Icons.add_circle_outline),
                   color: MobileTheme.textFaint,
-                  onPressed: () => attachSheet(context, _conv, widget.inbox),
+                  onPressed: travado ? null : () => attachSheet(context, _conv, widget.inbox),
                 ),
-                Expanded(child: _campo(nota)),
+                Expanded(child: _campo(nota, travado)),
                 const SizedBox(width: 4),
-                _botaoDireita(nota),
+                _botaoDireita(nota, travado),
               ],
             ),
           ),
@@ -62,7 +69,74 @@ class _ComposerState extends State<Composer> {
     );
   }
 
-  Widget _campo(bool nota) {
+  /// Faixa que explica por que o campo está travado e o que fazer a respeito.
+  Widget _avisoTravado() {
+    final quem = _conv.lockedByName ?? 'outro atendente';
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFFFF4CC),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_outline, size: 16, color: Color(0xFF8A6D00)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _conv.noteMode
+                  ? 'Em atendimento com $quem — sua nota interna não vai ao cliente.'
+                  : 'Em atendimento com $quem. Peça a transferência para responder.',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF8A6D00), height: 1.3),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Prévia "respondendo a…" — o mesmo desenho da faixa de nota, com o X.
+  Widget _avisoResposta() {
+    final m = _conv.replyTo!;
+    final autor = m.isOutbound ? (m.senderName ?? 'Você') : 'Cliente';
+    return Container(
+      width: double.infinity,
+      color: MobileTheme.composerBg,
+      padding: const EdgeInsets.fromLTRB(10, 6, 4, 0),
+      child: Row(
+        children: [
+          Container(width: 3.5, height: 34, color: MobileTheme.brand),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Respondendo a $autor',
+                    style: TextStyle(
+                        fontSize: 11.5, fontWeight: FontWeight.w700, color: MobileTheme.brand)),
+                Text(
+                  m.shortPreview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12.5, color: MobileTheme.textFaint),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            color: MobileTheme.textFaint,
+            visualDensity: VisualDensity.compact,
+            onPressed: () {
+              _conv.clearReply();
+              setState(() {});
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _campo(bool nota, bool travado) {
     return Container(
       decoration: BoxDecoration(
         color: nota ? Colors.white.withValues(alpha: 0.55) : MobileTheme.composerField,
@@ -76,6 +150,7 @@ class _ComposerState extends State<Composer> {
           Expanded(
             child: TextField(
               controller: _conv.composer,
+              enabled: !travado,
               minLines: 1,
               maxLines: 5,
               textCapitalization: TextCapitalization.sentences,
@@ -85,13 +160,17 @@ class _ComposerState extends State<Composer> {
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
-                hintText: nota ? 'Nota interna (só a equipe vê)' : 'Mensagem',
+                hintText: travado
+                    ? 'Conversa de outro atendente'
+                    : nota
+                        ? 'Nota interna (só a equipe vê)'
+                        : 'Mensagem',
                 hintStyle: TextStyle(color: MobileTheme.textFaint, fontSize: 15),
                 contentPadding: const EdgeInsets.symmetric(vertical: 11),
               ),
             ),
           ),
-          if (!nota) ...[
+          if (!nota && !travado) ...[
             IconButton(
               tooltip: 'Mensagens prontas',
               icon: const Icon(Icons.bolt, size: 22),
@@ -122,9 +201,15 @@ class _ComposerState extends State<Composer> {
 
   /// Direita: enviar quando há texto; microfone quando não há. Nota interna
   /// nunca vira áudio (nota é sempre texto).
-  Widget _botaoDireita(bool nota) {
+  Widget _botaoDireita(bool nota, bool travado) {
     final temTexto = _conv.composer.text.trim().isNotEmpty;
     final enviando = _conv.sending;
+
+    // Travado: cadeado inerte no lugar do microfone, para não parecer que o
+    // atendente pode gravar um áudio que nunca sairia.
+    if (travado) {
+      return _Redondo(cor: MobileTheme.textFaint, icone: Icons.lock_outline, onTap: null);
+    }
 
     if (temTexto || nota) {
       return _Redondo(
@@ -237,7 +322,15 @@ class _ComposerState extends State<Composer> {
     if (!mounted) return;
     setState(() {});
     if (!ok) {
-      toast(context, nota ? 'Não foi possível gravar a nota' : 'A mensagem não saiu', isError: true);
+      // A conversa pode ter sido assumida por outro no meio da digitação: nesse
+      // caso o controller devolve o texto ao campo e traz o motivo do servidor.
+      final motivo = _conv.lastError;
+      toast(
+        context,
+        motivo ?? (nota ? 'Não foi possível gravar a nota' : 'A mensagem não saiu'),
+        isError: true,
+      );
+      _conv.lastError = null;
       return;
     }
     widget.onSent?.call();

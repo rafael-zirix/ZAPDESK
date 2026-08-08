@@ -7,8 +7,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"zapdesk/internal/middleware"
 	"zapdesk/internal/models"
 	"zapdesk/internal/repository"
+	"zapdesk/internal/services"
 )
 
 // PackageHandler é o CRUD de pacotes comerciais (super-admin) e a lista de
@@ -16,10 +18,13 @@ import (
 type PackageHandler struct {
 	repo     *repository.PackageRepository
 	settings *repository.SupportRepository // guarda os valores de crédito (platform_settings)
+	svc      *services.PackageService      // atribuição (aplica módulos/limites)
+	support  *services.SupportService      // estado e troca de IA
 }
 
-func NewPackageHandler(repo *repository.PackageRepository, settings *repository.SupportRepository) *PackageHandler {
-	return &PackageHandler{repo: repo, settings: settings}
+func NewPackageHandler(repo *repository.PackageRepository, settings *repository.SupportRepository,
+	svc *services.PackageService, support *services.SupportService) *PackageHandler {
+	return &PackageHandler{repo: repo, settings: settings, svc: svc, support: support}
 }
 
 // creditPacksKey guarda os VALORES em reais dos pacotes de crédito. São só valores;
@@ -139,4 +144,77 @@ func (h *PackageHandler) creditPackValues() []int {
 		return defaultCreditPacks
 	}
 	return vals
+}
+
+// ---- Super-admin: atribuir pacote a uma empresa ----
+
+func (h *PackageHandler) AdminAssign(c *gin.Context) {
+	var req struct {
+		PackageID string `json:"package_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Informe o pacote", err.Error())
+		return
+	}
+	p, err := h.svc.Assign(c.Param("id"), req.PackageID)
+	if err == services.ErrPackageNotFound {
+		RespondError(c, http.StatusNotFound, ErrNotFound, "Pacote não encontrado", nil)
+		return
+	}
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Não foi possível aplicar o pacote", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "Pacote aplicado", p)
+}
+
+func (h *PackageHandler) AdminCurrent(c *gin.Context) {
+	p, err := h.svc.Current(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao carregar o pacote", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "OK", p) // p pode ser nil (sem pacote)
+}
+
+// ---- Cliente (admin da empresa): "Meu plano" ----
+
+// Plan devolve tudo que a tela "Meu plano" precisa numa chamada: o pacote atual,
+// os pacotes disponíveis, e o estado da IA (modelo atual, troca agendada, saldo,
+// modelos ofertados). Uma chamada só evita a tela piscando em etapas.
+func (h *PackageHandler) Plan(c *gin.Context) {
+	accountID := middleware.AccountID(c)
+	current, _ := h.svc.Current(accountID)
+	available, _ := h.repo.List(true)
+	curModel, pending, balance, _ := h.support.AIModelState(accountID)
+	RespondSuccess(c, http.StatusOK, "OK", gin.H{
+		"current":      current, // nil = sem pacote
+		"packages":     available,
+		"credit_packs": h.creditPackValues(),
+		"ai_current":   curModel,
+		"ai_pending":   pending,
+		"ai_balance":   balance,
+		"ai_offered":   h.support.OfferedModels(),
+	})
+}
+
+// SwitchAI troca a IA da empresa. forfeit=true encerra o saldo agora; false
+// agenda a troca para quando o saldo zerar.
+func (h *PackageHandler) SwitchAI(c *gin.Context) {
+	var req struct {
+		Model   string `json:"model" binding:"required"`
+		Forfeit bool   `json:"forfeit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Escolha a IA", err.Error())
+		return
+	}
+	if err := h.support.SwitchAIModel(middleware.AccountID(c), req.Model, req.Forfeit); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, err.Error(), nil)
+		return
+	}
+	curModel, pending, balance, _ := h.support.AIModelState(middleware.AccountID(c))
+	RespondSuccess(c, http.StatusOK, "IA atualizada", gin.H{
+		"ai_current": curModel, "ai_pending": pending, "ai_balance": balance,
+	})
 }

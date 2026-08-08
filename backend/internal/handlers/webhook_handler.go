@@ -114,6 +114,15 @@ type metaPayload struct {
 						Text    string `json:"text"`
 						Payload string `json:"payload"`
 					} `json:"button"`
+					// O cliente RESPONDEU CITANDO uma mensagem nossa: ID é o wamid
+					// citado. Atenção: a Meta manda `context` também em mensagem
+					// ENCAMINHADA e em resposta a anúncio/produto — tratar tudo como
+					// citação criaria bolhas citadas fantasma (ver replyToOf).
+					Context *struct {
+						From      string `json:"from"`
+						ID        string `json:"id"`
+						Forwarded bool   `json:"forwarded"`
+					} `json:"context"`
 				} `json:"messages"`
 				Statuses []struct {
 					ID          string `json:"id"`     // wamid da mensagem de saída
@@ -130,6 +139,24 @@ type metaPayload struct {
 			} `json:"value"`
 		} `json:"changes"`
 	} `json:"entry"`
+}
+
+// replyToOf extrai o wamid citado de uma mensagem recebida.
+//
+// A Meta reaproveita o objeto `context` para três coisas diferentes: resposta
+// citando (o que queremos), mensagem ENCAMINHADA pelo cliente e resposta a
+// anúncio/produto. Tratar todas como citação encheria a conversa de bolhas
+// citando mensagens que ninguém citou — por isso o encaminhamento é descartado
+// aqui.
+func replyToOf(ctx *struct {
+	From      string `json:"from"`
+	ID        string `json:"id"`
+	Forwarded bool   `json:"forwarded"`
+}) string {
+	if ctx == nil || ctx.Forwarded {
+		return ""
+	}
+	return ctx.ID
 }
 
 // Receive processa as mensagens recebidas (POST). Valida a assinatura HMAC.
@@ -197,7 +224,7 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 					name = &n
 				}
 				if m.Type == "text" {
-					tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body)
+					tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Text.Body, replyToOf(m.Context))
 					if err != nil {
 						slog.Error("Falha ao processar mensagem recebida", "erro", err, "wamid", m.ID)
 					} else if tid != "" {
@@ -220,7 +247,7 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 				if m.Type == "location" && m.Location != nil {
 					link := fmt.Sprintf("📍 Localização\nhttps://www.google.com/maps?q=%.6f,%.6f",
 						m.Location.Latitude, m.Location.Longitude)
-					if _, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, link); err != nil {
+					if _, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, link, replyToOf(m.Context)); err != nil {
 						slog.Error("Falha ao processar localização recebida", "erro", err, "wamid", m.ID)
 					}
 					continue
@@ -236,7 +263,7 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 						title = m.Interactive.ListReply.Title
 					}
 					if title != "" {
-						tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, title)
+						tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, title, replyToOf(m.Context))
 						if err != nil {
 							slog.Error("Falha ao processar resposta interativa", "erro", err, "wamid", m.ID)
 						} else if tid != "" {
@@ -248,7 +275,7 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 				// Resposta a botão de TEMPLATE (quick-reply).
 				if m.Type == "button" && m.Button != nil {
 					if m.Button.Text != "" {
-						tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Button.Text)
+						tid, err := h.support.ProcessInbound(accountID, m.From, name, m.ID, m.Button.Text, replyToOf(m.Context))
 						if err != nil {
 							slog.Error("Falha ao processar botão recebido", "erro", err, "wamid", m.ID)
 						} else if tid != "" {
@@ -272,7 +299,7 @@ func (h *WebhookHandler) Receive(c *gin.Context) {
 				if md == nil || md.ID == "" {
 					continue // tipo não suportado (sticker, location, etc)
 				}
-				if err := h.support.ProcessInboundMedia(accountID, m.From, name, m.ID, md.ID, md.Caption, md.Filename); err != nil {
+				if err := h.support.ProcessInboundMedia(accountID, m.From, name, m.ID, md.ID, md.Caption, md.Filename, replyToOf(m.Context)); err != nil {
 					slog.Error("Falha ao processar mídia recebida", "erro", err, "wamid", m.ID)
 				}
 			}

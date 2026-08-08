@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../admin/accounts_screen.dart';
 import '../admin/packages_screen.dart';
+import '../plans/meu_plano_screen.dart';
 import '../ai/ai_screen.dart';
 import '../auth/auth_controller.dart';
 import '../campaigns/campaigns_screen.dart';
@@ -172,6 +173,7 @@ class _AppShellState extends State<AppShell> {
               TemplatesScreen(usage: 'campaign'))));
       items.add(_gated('ia',
           const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen())));
+      items.add(const _NavDest(Icons.inventory_2_outlined, Icons.inventory_2, 'Meu plano', MeuPlanoScreen()));
       items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
       items.add(const _NavDest(Icons.key_outlined, Icons.key, 'Tipo de login', SettingsScreen()));

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/api_client.dart';
 import '../core/theme.dart';
 import '../models/app_module.dart';
+import '../models/package.dart';
 
 /// Tabela de MÓDULOS de uma empresa (super-admin): é onde a venda acontece —
 /// liga, desliga, dá teste por N dias e negocia preço fora da tabela.
@@ -28,6 +29,11 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
   bool salvandoPlano = false;
   String? salvando; // chave do módulo em gravação
 
+  // Pacote aplicado à empresa: aplicá-lo já liga os módulos e ajusta os limites.
+  List<AppPackage> pacotes = [];
+  String? pacoteId;
+  bool aplicandoPacote = false;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +43,8 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
   Future<void> _load() async {
     final r = await _api.get('/admin/accounts/${widget.accountId}/modules');
     final p = await _api.get('/admin/accounts/${widget.accountId}/plan');
+    final lp = await _api.get('/admin/packages');
+    final cp = await _api.get('/admin/accounts/${widget.accountId}/package');
     if (!mounted) return;
     if (p.ok && p.data is Map) {
       final m = p.data as Map;
@@ -49,7 +57,71 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
       modulos = r.ok && r.data is List
           ? (r.data as List).map((e) => AppModule.fromJson(e as Map<String, dynamic>)).toList()
           : [];
+      pacotes = lp.ok && lp.data is List
+          ? (lp.data as List).map((e) => AppPackage.fromJson((e as Map).cast<String, dynamic>())).toList()
+          : [];
+      pacoteId = (cp.ok && cp.data is Map) ? (cp.data as Map)['id']?.toString() : null;
     });
+  }
+
+  Future<void> _aplicarPacote() async {
+    if (pacoteId == null) return;
+    setState(() => aplicandoPacote = true);
+    final r = await _api.put('/admin/accounts/${widget.accountId}/package', {'package_id': pacoteId});
+    if (!mounted) return;
+    setState(() => aplicandoPacote = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.ok ? 'Pacote aplicado — módulos e limites ajustados' : (r.message ?? 'Não foi possível aplicar'))));
+    if (r.ok) await _load();
+  }
+
+  Widget _pacoteCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+          color: AppTheme.seed.withValues(alpha: .06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.seed.withValues(alpha: .3))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.inventory_2_outlined, size: 18, color: AppTheme.seed),
+          const SizedBox(width: 8),
+          const Text('Pacote da empresa', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+        ]),
+        const SizedBox(height: 4),
+        Text('Aplicar um pacote liga os módulos que ele inclui e ajusta linhas/atendentes de uma vez.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              initialValue: pacoteId,
+              isExpanded: true,
+              decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  filled: true,
+                  fillColor: AppTheme.surface,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
+              hint: const Text('Escolha um pacote'),
+              items: pacotes
+                  .map((p) => DropdownMenuItem(
+                      value: p.id, child: Text('${p.name} — R\$ ${reaisFromCents(p.priceMonthCents)}/mês')))
+                  .toList(),
+              onChanged: (v) => setState(() => pacoteId = v),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: (pacoteId == null || aplicandoPacote) ? null : _aplicarPacote,
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            child: aplicandoPacote
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('Aplicar'),
+          ),
+        ]),
+      ]),
+    );
   }
 
   Future<void> _salvar(AppModule m, {required bool enabled, int? priceCents, int trialDays = 0}) async {
@@ -154,6 +226,8 @@ class _AccountModulesDialogState extends State<AccountModulesDialog> {
                         'da tabela.',
                         style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4)),
                     const SizedBox(height: 12),
+                    _pacoteCard(),
+                    const SizedBox(height: 10),
                     _planoCard(),
                     for (final m in modulos) _linha(m),
                   ],

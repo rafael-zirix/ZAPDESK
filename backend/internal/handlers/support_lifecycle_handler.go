@@ -101,10 +101,15 @@ func (h *SupportHandler) DeleteSector(c *gin.Context) {
 
 // ClaimTicket faz o atendente logado assumir a conversa.
 func (h *SupportHandler) ClaimTicket(c *gin.Context) {
-	item, err := h.support.ClaimTicket(middleware.AccountID(c), c.Param("id"), middleware.UserID(c))
+	item, err := h.support.ClaimTicket(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), middleware.IsAdmin(c))
 	if err != nil {
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
+			return
+		}
+		if errors.Is(err, services.ErrNotAssigneeOrAdmin) {
+			RespondError(c, http.StatusForbidden, ErrForbidden,
+				"Esta conversa já está com outro atendente — peça a transferência", nil)
 			return
 		}
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao assumir a conversa", err.Error())

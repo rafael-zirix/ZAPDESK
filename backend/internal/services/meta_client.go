@@ -88,40 +88,26 @@ func (c *MetaClient) RegisterPhone(pin string) error {
 
 // SendText envia uma mensagem de texto e devolve o wamid.
 func (c *MetaClient) SendText(to, text string) (string, error) {
+	return c.SendTextReply(to, text, "")
+}
+
+// SendTextReply é o SendText CITANDO outra mensagem (o "responder" do WhatsApp).
+// O bloco `context` vai na raiz do corpo, irmão de `type`, com o wamid citado.
+//
+// Com replyToWamid vazio manda mensagem comum: nunca enviar `context` vazio — a
+// Meta recusa a mensagem inteira, e o atendente perderia a resposta por causa de
+// uma citação que não existia.
+func (c *MetaClient) SendTextReply(to, text, replyToWamid string) (string, error) {
 	body := map[string]any{
 		"messaging_product": "whatsapp",
 		"to":                to,
 		"type":              "text",
 		"text":              map[string]string{"body": text},
 	}
-	raw, _ := json.Marshal(body)
-	url := fmt.Sprintf("%s/%s/messages", c.apiBase, c.phoneNumberID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return "", err
+	if replyToWamid != "" {
+		body["context"] = map[string]string{"message_id": replyToWamid}
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("meta respondeu %d: %s", resp.StatusCode, string(data))
-	}
-	var out struct {
-		Messages []struct {
-			ID string `json:"id"`
-		} `json:"messages"`
-	}
-	_ = json.Unmarshal(data, &out)
-	if len(out.Messages) > 0 {
-		return out.Messages[0].ID, nil
-	}
-	return "", nil
+	return c.postMessage(body)
 }
 
 // TemplateInfo é um template de mensagem aprovado (com prévia do corpo).
@@ -433,6 +419,11 @@ func (c *MetaClient) UploadMedia(data []byte, filename, mimeType string) (string
 
 // SendMedia envia uma mensagem com mídia (por media_id). kind = image|document|audio|video.
 func (c *MetaClient) SendMedia(to, kind, mediaID, filename, caption string) (string, error) {
+	return c.SendMediaReply(to, kind, mediaID, filename, caption, "")
+}
+
+// SendMediaReply é o SendMedia citando outra mensagem (anexo como resposta).
+func (c *MetaClient) SendMediaReply(to, kind, mediaID, filename, caption, replyToWamid string) (string, error) {
 	media := map[string]any{"id": mediaID}
 	if caption != "" && (kind == "image" || kind == "document" || kind == "video") {
 		media["caption"] = caption
@@ -446,32 +437,10 @@ func (c *MetaClient) SendMedia(to, kind, mediaID, filename, caption string) (str
 		"type":              kind,
 		kind:                media,
 	}
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s/messages", c.apiBase, c.phoneNumberID), bytes.NewReader(raw))
-	if err != nil {
-		return "", err
+	if replyToWamid != "" {
+		body["context"] = map[string]string{"message_id": replyToWamid}
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("meta respondeu %d: %s", resp.StatusCode, string(data))
-	}
-	var out struct {
-		Messages []struct {
-			ID string `json:"id"`
-		} `json:"messages"`
-	}
-	_ = json.Unmarshal(data, &out)
-	if len(out.Messages) > 0 {
-		return out.Messages[0].ID, nil
-	}
-	return "", nil
+	return c.postMessage(body)
 }
 
 // postMessage envia um payload já montado ao endpoint de mensagens e devolve o wamid.

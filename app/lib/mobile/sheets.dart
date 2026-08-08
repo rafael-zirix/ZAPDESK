@@ -37,6 +37,16 @@ Future<TicketListItem?> claimNextTicket(InboxController inbox) async {
 
 // --- Nova conversa ----------------------------------------------------------
 
+/// Escolhe um contato da agenda. Usado para iniciar conversa, encaminhar
+/// mensagem e enviar cartão de contato — daí o título ser parametrizável.
+Future<Contact?> pickContact(
+  BuildContext context,
+  InboxController inbox, {
+  String title = 'Nova conversa',
+}) {
+  return _sheet<Contact>(context, (ctx) => _ContactPicker(inbox: inbox, title: title));
+}
+
 /// Escolhe um contato e abre (ou reabre) a conversa dele. Devolve o ticket.
 Future<TicketListItem?> pickContactAndStart(BuildContext context, InboxController inbox) async {
   final contact = await _sheet<Contact>(context, (ctx) => _ContactPicker(inbox: inbox));
@@ -49,8 +59,9 @@ Future<TicketListItem?> pickContactAndStart(BuildContext context, InboxControlle
 }
 
 class _ContactPicker extends StatefulWidget {
-  const _ContactPicker({required this.inbox});
+  const _ContactPicker({required this.inbox, this.title = 'Nova conversa'});
   final InboxController inbox;
+  final String title;
 
   @override
   State<_ContactPicker> createState() => _ContactPickerState();
@@ -82,7 +93,7 @@ class _ContactPickerState extends State<_ContactPicker> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SheetTitle('Nova conversa'),
+        SheetTitle(widget.title),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
           child: TextField(

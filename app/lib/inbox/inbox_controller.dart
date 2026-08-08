@@ -28,6 +28,7 @@ class InboxController extends ChangeNotifier {
   String statusFilter = 'all';
   String? sectorFilter; // id do setor (null = todos)
   String? myUserId; // preenchido pela tela (p/ o filtro "Minhas")
+  bool iAmAdmin = false; // admin pode transferir conversa de outro atendente
 
   void setStatusFilter(String f) {
     statusFilter = f;
@@ -248,7 +249,7 @@ class InboxController extends ChangeNotifier {
         if (open.length >= paneCount) break;
         final idx = tickets.indexWhere((x) => x.id == id);
         if (idx >= 0 && !isOpen(id)) {
-          open.add(ConversationController(tickets[idx]));
+          open.add(ConversationController(tickets[idx], myUserId: myUserId, iAmAdmin: iAmAdmin));
         }
       }
       final sel = data['selected'];
@@ -375,7 +376,7 @@ class InboxController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final conv = ConversationController(t);
+    final conv = ConversationController(t, myUserId: myUserId, iAmAdmin: iAmAdmin);
     if (open.length < paneCount) {
       open.add(conv);
       selectedPane = open.length - 1;

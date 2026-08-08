@@ -137,7 +137,7 @@ func (h *SupportHandler) Reply(c *gin.Context) {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
 		return
 	}
-	msg, err := h.support.Reply(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Content)
+	msg, err := h.support.Reply(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Content, req.ReplyToID)
 	if err != nil {
 		if errors.Is(err, services.ErrNotAssignee) {
 			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
@@ -349,6 +349,14 @@ func (h *SupportHandler) RetryMessage(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "Reenviada", msg.ToResponse())
 }
 
+// msgOrNil protege o corpo da resposta quando o envio falhou antes de gravar.
+func msgOrNil(m *models.SupportMessage) any {
+	if m == nil {
+		return nil
+	}
+	return m.ToResponse()
+}
+
 // ForwardMessage encaminha uma mensagem para a conversa de outro contato.
 func (h *SupportHandler) ForwardMessage(c *gin.Context) {
 	var req struct {
@@ -366,6 +374,20 @@ func (h *SupportHandler) ForwardMessage(c *gin.Context) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Mensagem não encontrada", nil)
 		case errors.Is(err, services.ErrContactNotFound):
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Contato não encontrado", nil)
+		case errors.Is(err, services.ErrNotAssignee):
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+		case errors.Is(err, services.ErrForwardInternal), errors.Is(err, services.ErrForwardTemplate):
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+		case errors.Is(err, services.ErrForwardNoMedia), errors.Is(err, services.ErrForwardNoPhone):
+			RespondError(c, http.StatusBadRequest, ErrValidation, err.Error(), nil)
+		case errors.Is(err, services.ErrForwardNotSent):
+			// A mensagem existe na conversa, porém como PENDENTE. Responder 201
+			// "Encaminhada" aqui seria mentir para o atendente.
+			c.JSON(http.StatusAccepted, gin.H{
+				"success": true,
+				"message": "Gravada, mas ainda não enviada: " + err.Error(),
+				"data":    msgOrNil(msg),
+			})
 		default:
 			RespondError(c, http.StatusBadGateway, ErrInternal, "Não foi possível encaminhar", err.Error())
 		}

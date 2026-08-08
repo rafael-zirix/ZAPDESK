@@ -30,10 +30,22 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _clock;
   int _lastCount = 0;
 
+  /// Uma chave por mensagem: é o que permite rolar até a citada ao tocar no
+  /// bloco de citação.
+  final _keys = <String, GlobalKey>{};
+
+  /// Mensagem destacada por um instante depois do "ir até a citada".
+  String? _highlightId;
+
   @override
   void initState() {
     super.initState();
-    _conv = ConversationController(widget.ticket);
+    final auth = context.read<AuthController>();
+    _conv = ConversationController(
+      widget.ticket,
+      myUserId: auth.me?.id,
+      iAmAdmin: auth.me?.isAdmin ?? false,
+    );
     _conv.addListener(_onChange);
     // O contador da janela de 24h anda sozinho: sem este relógio ele só
     // atualizaria quando chegasse mensagem nova.
@@ -96,10 +108,15 @@ class _ChatScreenState extends State<ChatScreen> {
                     cor: const Color(0xFF8A6D00),
                     fundo: const Color(0xFFFFF4CC),
                     texto: 'Em atendimento com ${t.assignedUserName}',
-                    acao: TextButton(
-                      onPressed: () => _assumir(conv, inbox, roubando: true),
-                      child: const Text('Assumir'),
-                    ),
+                    // Só o administrador toma a conversa de outro (o servidor
+                    // recusa para o atendente comum). Oferecer o botão a todos
+                    // seria prometer o que a regra não permite.
+                    acao: conv.iAmAdmin
+                        ? TextButton(
+                            onPressed: () => _assumir(conv, inbox, roubando: true),
+                            child: const Text('Assumir'),
+                          )
+                        : null,
                   ),
                 if (!conv.windowOpen && !t.isInstagram && conv.messages.isNotEmpty)
                   _Faixa(
@@ -361,7 +378,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final item = itens[i];
         if (item is DateTime) return SystemNote(_rotuloDia(item));
         final m = item as Message;
-        return Bubble(
+        final key = _keys.putIfAbsent(m.id, () => GlobalKey());
+        final bolha = Bubble(
+          key: key,
           message: m,
           onRetry: m.status == 'failed'
               ? () async {
@@ -369,8 +388,52 @@ class _ChatScreenState extends State<ChatScreen> {
                   if (context.mounted && !ok) toast(context, 'Não saiu desta vez', isError: true);
                 }
               : null,
+          // Sem "Responder" quando a conversa é de outro: o envio voltaria 403.
+          onReply: conv.lockedByOther
+              ? null
+              : () {
+                  conv.setReply(m);
+                  setState(() {});
+                },
+          onForward: () => _encaminhar(m),
+          onQuoteTap: _irAteMensagem,
         );
+        if (_highlightId != m.id) return bolha;
+        // Destaque temporário: sem ele, a rolagem até a citada deixa o atendente
+        // sem saber qual das bolhas era.
+        return ColoredBox(color: MobileTheme.brand.withValues(alpha: 0.12), child: bolha);
       },
+    );
+  }
+
+  /// Rola até a mensagem citada e a destaca por um instante.
+  Future<void> _irAteMensagem(String messageId) async {
+    final key = _keys[messageId];
+    final ctx = key?.currentContext;
+    if (ctx == null) {
+      // Fora da área construída (ou já expurgada do histórico): avisa em vez de
+      // deixar o toque sem resposta nenhuma.
+      toast(context, 'A mensagem citada não está nesta parte da conversa');
+      return;
+    }
+    await Scrollable.ensureVisible(ctx, alignment: 0.3, duration: const Duration(milliseconds: 300));
+    if (!mounted) return;
+    setState(() => _highlightId = messageId);
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (mounted) setState(() => _highlightId = null);
+  }
+
+  /// Encaminha a mensagem para a conversa de outro contato.
+  Future<void> _encaminhar(Message m) async {
+    final inbox = context.read<InboxController>();
+    final contato = await pickContact(context, inbox, title: 'Encaminhar para');
+    if (contato == null || !mounted) return;
+    final erro = await _conv.forward(m.id, contato.id);
+    if (!mounted) return;
+    toast(
+      context,
+      erro ?? 'Encaminhada para ${contato.displayName}',
+      isError: erro != null,
     );
   }
 
