@@ -139,6 +139,10 @@ func (h *SupportHandler) Reply(c *gin.Context) {
 	}
 	msg, err := h.support.Reply(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Content)
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return
@@ -181,6 +185,10 @@ func (h *SupportHandler) SendMedia(c *gin.Context) {
 	msg, err := h.support.SendMedia(middleware.AccountID(c), c.Param("id"), middleware.UserID(c),
 		data, fh.Filename, mimeType, c.PostForm("caption"))
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return
@@ -206,6 +214,10 @@ func (h *SupportHandler) SendLocation(c *gin.Context) {
 	msg, err := h.support.SendLocation(middleware.AccountID(c), c.Param("id"), middleware.UserID(c),
 		req.Latitude, req.Longitude, req.Name, req.Address)
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return
@@ -228,6 +240,10 @@ func (h *SupportHandler) SendContact(c *gin.Context) {
 	}
 	msg, err := h.support.SendContact(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Name, req.Phone)
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return
@@ -290,6 +306,10 @@ func (h *SupportHandler) SendInteractive(c *gin.Context) {
 		return
 	}
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return
@@ -313,8 +333,12 @@ func (h *SupportHandler) MarkRead(c *gin.Context) {
 
 // RetryMessage re-tenta o envio de uma mensagem que havia falhado.
 func (h *SupportHandler) RetryMessage(c *gin.Context) {
-	msg, err := h.support.RetryMessage(middleware.AccountID(c), c.Param("id"), c.Param("msgId"))
+	msg, err := h.support.RetryMessage(middleware.AccountID(c), c.Param("id"), c.Param("msgId"), middleware.UserID(c))
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Mensagem não encontrada", nil)
 			return
@@ -508,6 +532,10 @@ func (h *SupportHandler) SendTemplate(c *gin.Context) {
 	}
 	msg, err := h.support.SendTemplate(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Name, req.Language, req.Body)
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return

@@ -120,11 +120,13 @@ func (h *SupportHandler) TransferTicket(c *gin.Context) {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
 		return
 	}
-	item, err := h.support.TransferTicket(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req)
+	item, err := h.support.TransferTicket(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), middleware.IsAdmin(c), req)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrTicketNotFound):
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
+		case errors.Is(err, services.ErrNotAssigneeOrAdmin):
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
 		case errors.Is(err, services.ErrTransferTarget):
 			RespondError(c, http.StatusBadRequest, ErrValidation, "Informe o atendente ou o setor de destino", nil)
 		case errors.Is(err, services.ErrSectorNotFound):

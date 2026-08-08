@@ -119,6 +119,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	supportSvc.StartMetaPricingWorker()
 	// Retenção de histórico do plano (desligada por padrão; ver RETENTION_ENABLED).
 	services.StartRetentionWorker(accountRepo)
+	// Devolve à fila a conversa presa com um atendente que sumiu (o cliente está
+	// esperando há mais que o prazo da conta). É a válvula de escape da
+	// exclusividade: sem ela, uma conversa assumida por engano trava para sempre.
+	supportSvc.StartTicketReleaseWorker()
 	accountSvc := services.NewAccountService(accountRepo, waRepo, cipher).
 		WithEmbeddedSignup(cfg.MetaAPIBase, cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaESConfigID, cfg.GraphVersion()).
 		WithWebhookAutoConfig(cfg.PublicURL, cfg.MetaVerifyToken)

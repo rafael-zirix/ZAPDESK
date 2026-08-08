@@ -25,6 +25,10 @@ func (h *SupportHandler) AddNote(c *gin.Context) {
 	}
 	msg, err := h.support.AddNote(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Content)
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return
@@ -168,6 +172,10 @@ func (h *SupportHandler) SetTicketTags(c *gin.Context) {
 	}
 	item, err := h.support.SetTicketTags(middleware.AccountID(c), c.Param("id"), req.TagIDs)
 	if err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
 		if errors.Is(err, services.ErrTicketNotFound) {
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
 			return

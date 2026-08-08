@@ -76,6 +76,15 @@ var (
 	ErrTicketNotFound  = errors.New("conversa não encontrada")
 	ErrContactExists   = errors.New("já existe um contato com este telefone")
 	ErrContactNotFound = errors.New("contato não encontrado")
+
+	// Encaminhamento — recusas explícitas, para o atendente saber o motivo em vez
+	// de receber um "erro ao encaminhar" genérico.
+	ErrForwardInternal = errors.New("nota interna não pode ser encaminhada ao cliente")
+	ErrForwardTemplate = errors.New("modelo aprovado não pode ser encaminhado; envie o modelo pela barra de mensagens prontas")
+	ErrForwardNoMedia  = errors.New("o anexo original não está mais disponível")
+	ErrForwardNoPhone  = errors.New("este contato não tem telefone cadastrado")
+	// ErrForwardNotSent: a mensagem ficou gravada como pendente, mas NÃO saiu.
+	ErrForwardNotSent = errors.New("a mensagem não pôde ser enviada agora (número não conectado)")
 )
 
 var nonDigits = regexp.MustCompile(`\D`)
@@ -1379,6 +1388,18 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 	if src == nil {
 		return nil, ErrTicketNotFound
 	}
+	// NOTA INTERNA NUNCA SAI. A tela já esconde a opção, mas a rota aceitava
+	// qualquer id da conta: bastava um POST à mão para mandar um recado da
+	// equipe ao cliente.
+	if src.Internal {
+		return nil, ErrForwardInternal
+	}
+	// Modelo aprovado não se encaminha: o texto até sai, mas como mensagem comum
+	// — e fora da janela de 24h a Meta recusa, deixando o atendente achar que
+	// enviou. Melhor recusar aqui e mandar o modelo pelo caminho certo.
+	if src.Type == "template" {
+		return nil, ErrForwardTemplate
+	}
 	ok, err := s.repo.ContactExists(accountID, destContactID)
 	if err != nil {
 		return nil, err
@@ -1386,12 +1407,28 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 	if !ok {
 		return nil, ErrContactNotFound
 	}
+
+	// Tudo que pode falhar é validado ANTES de criar/reabrir a conversa de
+	// destino: antes, um anexo sumido do disco deixava um ticket vazio no
+	// destino e ainda devolvia erro ao atendente.
+	var media []byte
+	if isMediaType(src.Type) {
+		if src.MediaURL == nil {
+			return nil, ErrForwardNoMedia
+		}
+		media, err = os.ReadFile(s.MediaPath(filepath.Base(*src.MediaURL)))
+		if err != nil {
+			return nil, ErrForwardNoMedia
+		}
+	}
+
 	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, destContactID)
 	if err != nil {
 		return nil, err
 	}
-	phone, err := s.repo.ContactPhone(ticket.ID)
-	if err != nil {
+	// A conversa de destino também respeita a exclusividade: não dá para furar a
+	// regra encaminhando algo para o atendimento de outra pessoa.
+	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
 
@@ -1400,26 +1437,60 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 		AccountID: accountID, TicketID: ticket.ID, Direction: models.DirectionOut,
 		Type: src.Type, Content: src.Content, MediaURL: src.MediaURL, MimeType: src.MimeType, FileName: src.FileName,
 		Status: "pending", SenderID: &sender,
+		Forwarded: true, ForwardedFromID: &src.ID,
 	}
+
+	// Destino no Instagram: sai pelo Direct, como faz o Reply. Antes disso, a
+	// função pedia o telefone do contato — que no Direct é nulo — e estourava.
+	if ch, _ := s.repo.TicketChannel(accountID, ticket.ID); ch == ChannelInstagram {
+		body := ""
+		if src.Content != nil {
+			body = *src.Content
+		}
+		if s.igSend == nil || body == "" {
+			// Sem canal ligado (ou anexo, que o Direct não reenvia por aqui): grava
+			// pendente e avisa, em vez de responder "encaminhada" sem nada ter saído.
+			saved, e := s.repo.InsertMessage(msg)
+			if e != nil {
+				return nil, e
+			}
+			return saved, ErrForwardNotSent
+		}
+		igsid, _ := s.repo.ContactExternalID(ticket.ID)
+		mid, sendErr := s.igSend(accountID, ticket.ID, igsid, body)
+		applySendResult(msg, mid, sendErr)
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, sendErr
+	}
+
+	phone, err := s.repo.ContactPhone(ticket.ID)
+	if err != nil {
+		return nil, err
+	}
+	if phone == "" {
+		return nil, ErrForwardNoPhone
+	}
+
 	client, _, err := s.clientFor(accountID)
 	if err != nil {
 		return nil, err
 	}
 	if client == nil {
-		return s.repo.InsertMessage(msg)
+		// Sem número conectado nada saiu: grava pendente e devolve o sentinela
+		// para o handler responder a verdade (antes respondia 201 "Encaminhada").
+		saved, e := s.repo.InsertMessage(msg)
+		if e != nil {
+			return nil, e
+		}
+		return saved, ErrForwardNotSent
 	}
 
 	var wamid string
 	var sendErr error
-	switch src.Type {
-	case "image", "document", "audio", "video":
-		if src.MediaURL == nil {
-			return nil, ErrTicketNotFound
-		}
-		data, rErr := os.ReadFile(s.MediaPath(filepath.Base(*src.MediaURL)))
-		if rErr != nil {
-			return nil, rErr
-		}
+	if isMediaType(src.Type) {
 		fn, mt, caption := "", "application/octet-stream", ""
 		if src.FileName != nil {
 			fn = *src.FileName
@@ -1430,13 +1501,13 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 		if src.Content != nil {
 			caption = *src.Content
 		}
-		mediaID, upErr := client.UploadMedia(data, fn, mt)
+		mediaID, upErr := client.UploadMedia(media, fn, mt)
 		if upErr != nil {
 			sendErr = upErr
 		} else {
 			wamid, sendErr = client.SendMedia(phone, src.Type, mediaID, fn, caption)
 		}
-	default: // text (inclui localização, gravada como texto com o link)
+	} else { // text (inclui localização, gravada como texto com o link)
 		body := ""
 		if src.Content != nil {
 			body = *src.Content
@@ -1448,7 +1519,21 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 	if e != nil {
 		return nil, e
 	}
+	if saved == nil {
+		// Idempotência do InsertMessage devolve (nil, nil) em duplicata; sem isto o
+		// handler chamava ToResponse() num ponteiro nil e derrubava a API.
+		return nil, ErrForwardNotSent
+	}
 	return saved, sendErr
+}
+
+// isMediaType diz se o tipo carrega arquivo (e portanto precisa de upload).
+func isMediaType(t string) bool {
+	switch t {
+	case "image", "document", "audio", "video":
+		return true
+	}
+	return false
 }
 
 // Reply envia uma resposta de texto do atendente pela conversa e grava a saída.
