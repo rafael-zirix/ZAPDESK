@@ -92,7 +92,10 @@
       function launch() {
         window.FB.login(function (response) {
           var code = response && response.authResponse && response.authResponse.code;
-          resolve(code ? { code: code } : null); // null = usuário cancelou
+          // A troca do código exige o MESMO redirect_uri que o diálogo usou —
+          // com o SDK, é a URL da página (sem query nem fragmento).
+          var redirect = window.location.origin + window.location.pathname;
+          resolve(code ? { code: code, redirect_uri: redirect } : null); // null = cancelou
         }, {
           config_id: configId,
           response_type: 'code',

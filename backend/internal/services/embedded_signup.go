@@ -16,8 +16,20 @@ var esHTTP = &http.Client{Timeout: 20 * time.Second}
 // exchangeEmbeddedCode troca o `code` do popup da Meta por um token de acesso
 // (de longa duração) da empresa. client_id/secret são do app da plataforma.
 func exchangeEmbeddedCode(apiBase, appID, appSecret, code string) (string, error) {
+	return exchangeCode(apiBase, appID, appSecret, code, "")
+}
+
+// exchangeCode troca o código por token. O `redirectURI` distingue dois fluxos da
+// Meta que parecem iguais: o Embedded Signup do WhatsApp devolve um código
+// especial, trocado SEM redirect_uri; já o Login para Empresas pelo SDK devolve
+// um código de OAuth comum, e a Meta exige o MESMO redirect_uri que o diálogo
+// registrou (a URL da página) — sem ele responde 36008.
+func exchangeCode(apiBase, appID, appSecret, code, redirectURI string) (string, error) {
 	u := fmt.Sprintf("%s/oauth/access_token?client_id=%s&client_secret=%s&code=%s",
 		apiBase, url.QueryEscape(appID), url.QueryEscape(appSecret), url.QueryEscape(code))
+	if redirectURI != "" {
+		u += "&redirect_uri=" + url.QueryEscape(redirectURI)
+	}
 	resp, err := esHTTP.Get(u)
 	if err != nil {
 		return "", err

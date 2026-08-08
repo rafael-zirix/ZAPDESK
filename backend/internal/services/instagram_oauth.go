@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -74,28 +75,41 @@ var ErrIGChooseAccount = errors.New("escolha a conta do Instagram")
 //
 // Devolve (conta conectada, nil) no caminho feliz; (candidatas, ErrIGChooseAccount)
 // quando há mais de uma Página — aí a tela chama ConnectChosen.
-func (s *InstagramService) ConnectViaLogin(accountID, code string) (string, []IGCandidate, error) {
+func (s *InstagramService) ConnectViaLogin(accountID, code, redirectURI string) (string, []IGCandidate, error) {
 	if s.fbAppID == "" || s.fbSecret == "" {
 		return "", nil, errors.New("conexão pela Meta não está configurada")
 	}
 	if strings.TrimSpace(code) == "" {
 		return "", nil, errors.New("o popup da Meta não devolveu autorização")
 	}
-	userToken, err := exchangeEmbeddedCode(s.apiBase, s.fbAppID, s.fbSecret, code)
+	// Com o redirect_uri primeiro (é o que o SDK usa); sem ele como alternativa,
+	// para o caso de a Meta tratar o código como do fluxo do Embedded Signup.
+	userToken, err := exchangeCode(s.apiBase, s.fbAppID, s.fbSecret, code, redirectURI)
+	if err != nil && redirectURI != "" {
+		slog.Warn("Instagram login: troca com redirect_uri falhou, tentando sem", "erro", err)
+		userToken, err = exchangeCode(s.apiBase, s.fbAppID, s.fbSecret, code, "")
+	}
 	if err != nil {
+		slog.Warn("Instagram login: troca do code falhou", "erro", err)
 		return "", nil, err
 	}
 	paginas, err := fetchIGPages(s.apiBase, userToken)
 	if err != nil {
+		slog.Warn("Instagram login: falha ao listar as Páginas", "erro", err)
 		return "", nil, err
 	}
+	slog.Info("Instagram login: Páginas com Instagram encontradas", "qtd", len(paginas))
 	switch len(paginas) {
 	case 0:
 		// Erro comum e específico: vale explicar em vez de dizer "falhou".
 		return "", nil, errors.New("nenhuma Página com conta profissional do Instagram vinculada. " +
 			"Confira no Instagram se o perfil é Profissional e está ligado a uma Página do Facebook")
 	case 1:
-		return "", nil, s.conectar(accountID, paginas[0])
+		if err := s.conectar(accountID, paginas[0]); err != nil {
+			slog.Warn("Instagram login: falha ao conectar", "erro", err, "page_id", paginas[0].PageID)
+			return "", nil, err
+		}
+		return "", nil, nil
 	}
 	sessao := novaSessaoLogin(accountID, paginas)
 	return sessao, paginas, ErrIGChooseAccount

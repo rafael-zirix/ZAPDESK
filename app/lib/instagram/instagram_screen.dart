@@ -325,11 +325,12 @@ class _InstagramScreenState extends State<InstagramScreen> {
   Future<void> _connectViaMeta() async {
     setState(() => conectando = true);
     try {
-      final code = await runFacebookLogin(
+      final res = await runFacebookLogin(
           appId: _fbAppId, configId: _fbConfigId, graphVersion: _fbGraph);
       if (!mounted) return;
-      if (code == null) return; // cancelou ou o SDK não carregou
-      final r = await _api.post('/settings/instagram/login', {'code': code});
+      if (res == null) return; // cancelou ou o SDK não carregou
+      final r = await _api.post('/settings/instagram/login',
+          {'code': res.$1, 'redirect_uri': res.$2});
       if (!mounted) return;
       if (r.ok && r.data is Map && (r.data as Map)['escolher'] == true) {
         await _escolherConta(r.data as Map);

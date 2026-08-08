@@ -9,7 +9,7 @@ Future<EmbeddedResult?> runEmbeddedSignup({
     null;
 
 /// Fora do web, o login da Meta não está disponível.
-Future<String?> runFacebookLogin({
+Future<(String, String)?> runFacebookLogin({
   required String appId,
   required String configId,
   required String graphVersion,

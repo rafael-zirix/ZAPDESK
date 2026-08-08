@@ -61,13 +61,14 @@ func (h *InstagramHandler) LoginConfig(c *gin.Context) {
 // refazer a troca depois da escolha não funcionaria).
 func (h *InstagramHandler) ConnectViaLogin(c *gin.Context) {
 	var req struct {
-		Code string `json:"code" binding:"required"`
+		Code        string `json:"code" binding:"required"`
+		RedirectURI string `json:"redirect_uri"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Autorização da Meta ausente", err.Error())
 		return
 	}
-	sessao, cands, err := h.ig.ConnectViaLogin(middleware.AccountID(c), req.Code)
+	sessao, cands, err := h.ig.ConnectViaLogin(middleware.AccountID(c), req.Code, req.RedirectURI)
 	if errors.Is(err, services.ErrIGChooseAccount) {
 		RespondSuccess(c, http.StatusMultipleChoices, "Escolha a conta", gin.H{
 			"escolher": true, "sessao": sessao, "contas": cands,

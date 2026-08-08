@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -31,8 +32,18 @@ func (h *SupportHandler) WithAIModel(model string) *SupportHandler {
 
 // ListTickets devolve as conversas da conta (inbox).
 func (h *SupportHandler) ListTickets(c *gin.Context) {
-	list, err := h.support.ListInbox(middleware.AccountID(c))
+	// Superadmin não pertence a empresa nenhuma: sem conta, não há caixa de
+	// entrada. Antes isso virava um 500 a cada 10s (o inbox faz polling) porque a
+	// consulta recebia uuid vazio.
+	accountID := middleware.AccountID(c)
+	if accountID == "" {
+		RespondSuccess(c, http.StatusOK, "Conversas", []any{})
+		return
+	}
+	list, err := h.support.ListInbox(accountID)
 	if err != nil {
+		// Sem log, um 500 intermitente aqui é indistinguível de problema de rede.
+		slog.Error("inbox: falha ao listar conversas", "erro", err, "conta", accountID)
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao listar conversas", nil)
 		return
 	}
