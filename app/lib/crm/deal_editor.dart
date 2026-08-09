@@ -18,20 +18,22 @@ const _sources = [
   ('manual', 'Manual'),
 ];
 
-/// Abre o editor de negócio. `deal` nulo = criar. Devolve true se salvou.
+/// Abre o editor de lead. `deal` nulo = criar (opcionalmente já numa etapa).
+/// Devolve true se salvou.
 Future<bool> showDealEditor(BuildContext context, CrmController crm,
-    {CrmDeal? deal}) async {
+    {CrmDeal? deal, String? stageId}) async {
   final saved = await showDialog<bool>(
     context: context,
-    builder: (_) => _DealEditorDialog(crm: crm, deal: deal),
+    builder: (_) => _DealEditorDialog(crm: crm, deal: deal, stageId: stageId),
   );
   return saved == true;
 }
 
 class _DealEditorDialog extends StatefulWidget {
-  const _DealEditorDialog({required this.crm, this.deal});
+  const _DealEditorDialog({required this.crm, this.deal, this.stageId});
   final CrmController crm;
   final CrmDeal? deal;
+  final String? stageId; // etapa de destino no criar (veio do "+" da coluna)
 
   @override
   State<_DealEditorDialog> createState() => _DealEditorDialogState();
@@ -120,6 +122,7 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
     if (isEdit) {
       err = await widget.crm.updateDeal(widget.deal!.id, body);
     } else {
+      if (widget.stageId != null) body['stage_id'] = widget.stageId;
       if (_newContact) {
         body['contact_name'] = _contactName.text.trim();
         body['contact_phone'] = _contactPhone.text.trim();
@@ -161,7 +164,7 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(isEdit ? 'Editar negócio' : 'Novo negócio'),
+      title: Text(isEdit ? 'Editar lead' : 'Novo lead'),
       content: SizedBox(
         width: 460,
         child: SingleChildScrollView(

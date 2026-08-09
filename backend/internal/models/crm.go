@@ -95,13 +95,16 @@ type CrmLossReasonRequest struct {
 	Ordinal *int   `json:"ordinal"`
 }
 
-// CreateCrmDealRequest abre um negócio: com um contato existente (contact_id)
-// OU criando/reusando um pelo telefone (cadastro único — telefone repetido
-// reaproveita o contato).
+// CreateCrmDealRequest abre um negócio: com um contato existente (contact_id),
+// criando/reusando um pelo telefone (cadastro único — telefone repetido
+// reaproveita o contato) OU a partir de uma CONVERSA (ticket_id — o servidor
+// resolve o contato e o card nasce ligado ao atendimento).
 type CreateCrmDealRequest struct {
 	ContactID      string  `json:"contact_id"`
 	ContactName    string  `json:"contact_name"`
 	ContactPhone   string  `json:"contact_phone"`
+	TicketID       string  `json:"ticket_id"`
+	DedupOpen      bool    `json:"dedup_open"` // true: se o contato já tem negócio ABERTO, devolve-o em vez de duplicar
 	StageID        string  `json:"stage_id"` // vazio = primeira etapa
 	Title          *string `json:"title"`
 	ValueCents     int64   `json:"value_cents"`

@@ -188,12 +188,17 @@ func (h *CrmHandler) CreateDeal(c *gin.Context) {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
 		return
 	}
-	d, err := h.crm.CreateDeal(accountID, userID, isAdmin, req)
+	d, created, err := h.crm.CreateDeal(accountID, userID, isAdmin, req)
 	if err != nil {
 		crmError(c, err)
 		return
 	}
-	RespondSuccess(c, http.StatusCreated, "Negócio criado", d)
+	if !created {
+		// dedup_open: o contato já está no funil — devolve o card existente.
+		RespondSuccess(c, http.StatusOK, "Este contato já tem um lead aberto no funil", d)
+		return
+	}
+	RespondSuccess(c, http.StatusCreated, "Lead aberto no funil", d)
 }
 
 func (h *CrmHandler) UpdateDeal(c *gin.Context) {

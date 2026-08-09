@@ -241,20 +241,36 @@ func (s *CrmService) dealForWrite(accountID, userID string, isAdmin bool, dealID
 
 // --- Negócios ---
 
-func (s *CrmService) CreateDeal(accountID, userID string, isAdmin bool, req models.CreateCrmDealRequest) (*models.CrmDeal, error) {
+// CreateDeal abre um negócio. Devolve também se CRIOU de fato: com DedupOpen,
+// contato que já tem negócio aberto recebe o card existente (created=false).
+func (s *CrmService) CreateDeal(accountID, userID string, isAdmin bool, req models.CreateCrmDealRequest) (deal *models.CrmDeal, created bool, err error) {
 	if err := s.EnsureDefaults(accountID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	// Contato: existente, ou find-or-create por telefone (cadastro único —
-	// telefone repetido reaproveita a ficha em vez de duplicar). Contato criado
-	// por aqui nasce DELIBERADAMENTE sem dono (compartilhado, como os do
-	// webhook): o dono do NEGÓCIO é quem recorta o funil, não o do contato.
+	// Contato: existente, resolvido pela CONVERSA (ticket), ou find-or-create
+	// por telefone (cadastro único — telefone repetido reaproveita a ficha em
+	// vez de duplicar). Contato criado por aqui nasce DELIBERADAMENTE sem dono
+	// (compartilhado, como os do webhook): o dono do NEGÓCIO é quem recorta o
+	// funil, não o do contato.
 	contactID := strings.TrimSpace(req.ContactID)
+	ticketID := strings.TrimSpace(req.TicketID)
+	if ticketID != "" {
+		t, err := s.support.GetTicket(accountID, ticketID)
+		if err != nil {
+			return nil, false, err
+		}
+		if t == nil {
+			return nil, false, ErrCrmContactNotFound
+		}
+		if contactID == "" {
+			contactID = t.ContactID
+		}
+	}
 	if contactID == "" {
 		name := strings.TrimSpace(req.ContactName)
 		phone := strings.TrimSpace(req.ContactPhone)
 		if phone == "" {
-			return nil, ErrCrmContactRequired
+			return nil, false, ErrCrmContactRequired
 		}
 		var namePtr *string
 		if name != "" {
@@ -262,13 +278,21 @@ func (s *CrmService) CreateDeal(accountID, userID string, isAdmin bool, req mode
 		}
 		ct, err := s.support.FindOrCreateContact(accountID, normalizePhone(phone), namePtr)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		contactID = ct.ID
 	} else if f, err := s.repo.ContactFicha(accountID, contactID); err != nil {
-		return nil, err
+		return nil, false, err
 	} else if f == nil {
-		return nil, ErrCrmContactNotFound
+		return nil, false, ErrCrmContactNotFound
+	}
+	// Abrir da conversa é idempotente: lead que já está no funil não duplica.
+	if req.DedupOpen {
+		if d, err := s.repo.FindOpenDealByContact(accountID, contactID); err != nil {
+			return nil, false, err
+		} else if d != nil {
+			return d, false, nil
+		}
 	}
 
 	// Etapa: a informada (validada na conta) ou a de entrada.
@@ -276,16 +300,16 @@ func (s *CrmService) CreateDeal(accountID, userID string, isAdmin bool, req mode
 	if stageID == "" {
 		first, err := s.repo.FirstStage(accountID)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if first == nil {
-			return nil, ErrCrmStageNotFound
+			return nil, false, ErrCrmStageNotFound
 		}
 		stageID = first.ID
 	} else if st, err := s.repo.StageByID(accountID, stageID); err != nil {
-		return nil, err
+		return nil, false, err
 	} else if st == nil {
-		return nil, ErrCrmStageNotFound
+		return nil, false, ErrCrmStageNotFound
 	}
 
 	owner := req.OwnerUserID
@@ -298,19 +322,23 @@ func (s *CrmService) CreateDeal(accountID, userID string, isAdmin bool, req mode
 		}
 	}
 	if err := s.validateOwner(accountID, userID, isAdmin, owner); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	followUp, _, err := parseCrmDate(req.NextFollowUpAt)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	d := &models.CrmDeal{
 		AccountID: accountID, ContactID: contactID, StageID: stageID,
 		OwnerUserID: owner, Title: req.Title, ValueCents: req.ValueCents,
 		Source: req.Source, Notes: req.Notes, NextFollowUpAt: followUp,
 	}
+	if ticketID != "" { // nascido da conversa: card e atendimento ficam ligados
+		d.TicketID = &ticketID
+	}
 	// O evento de nascimento (from NULL) sai na mesma transação do INSERT.
-	return s.repo.CreateDeal(d, userID)
+	deal, err = s.repo.CreateDeal(d, userID)
+	return deal, err == nil, err
 }
 
 // validateOwner barra dono de fora da conta e atendente atribuindo a outro:

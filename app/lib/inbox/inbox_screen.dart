@@ -855,11 +855,21 @@ class _ConversationPane extends StatelessWidget {
   Widget _actionsMenu(BuildContext context) {
     final t = conv.ticket;
     final closed = t.status == 'closed';
+    // Abrir lead direto da conversa é do módulo CRM.
+    final hasCrm = context.read<AuthController>().has('crm');
     return PopupMenuButton<String>(
       tooltip: 'Ações da conversa',
       icon: const Icon(Icons.more_vert, size: 20),
       onSelected: (v) => _runAction(context, v),
       itemBuilder: (_) => [
+        if (hasCrm)
+          const PopupMenuItem(
+              value: 'crm',
+              child: ListTile(
+                  leading: Icon(Icons.filter_alt_outlined, color: AppTheme.seed),
+                  title: Text('Abrir lead no CRM'),
+                  dense: true)),
+        if (hasCrm) const PopupMenuDivider(),
         if (!closed) ...[
           const PopupMenuItem(
               value: 'claim',
@@ -897,6 +907,21 @@ class _ConversationPane extends StatelessWidget {
   Future<void> _runAction(BuildContext context, String action) async {
     TicketListItem? updated;
     switch (action) {
+      case 'crm':
+        // O servidor resolve o contato pelo ticket; se já houver lead ABERTO
+        // deste contato, devolve-o em vez de duplicar (dedup_open).
+        final t = conv.ticket;
+        final r = await ApiClient.instance.post('/crm/deals', {
+          'ticket_id': t.id,
+          'source': t.channel,
+          'dedup_open': true,
+        });
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(r.message ??
+                  (r.ok ? 'Lead aberto no funil' : 'Erro ao abrir o lead'))));
+        }
+        return;
       case 'claim':
         updated = await conv.claim();
       case 'transfer':

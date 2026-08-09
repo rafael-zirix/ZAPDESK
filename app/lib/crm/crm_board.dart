@@ -86,7 +86,7 @@ class _CrmBoardViewState extends State<CrmBoardView> {
       FilledButton.icon(
         onPressed: () => showDealEditor(context, crm),
         icon: const Icon(Icons.add, size: 18),
-        label: const Text('Novo negócio'),
+        label: const Text('Novo lead'),
       ),
       const SizedBox(width: 8),
       if (crm.isAdmin)
@@ -190,7 +190,7 @@ class _CrmBoardViewState extends State<CrmBoardView> {
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
-                  width: 96,
+                  width: 66,
                   child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                     Text('${deals.length}',
                         style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.grey.shade600)),
@@ -200,14 +200,30 @@ class _CrmBoardViewState extends State<CrmBoardView> {
                         style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
                   ]),
                 ),
+                // Abre um lead JÁ nesta etapa — o caminho mais curto do quadro.
+                IconButton(
+                  tooltip: 'Abrir lead em "${stage.name}"',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => showDealEditor(context, crm, stageId: stage.id),
+                  icon: const Icon(Icons.add_circle_outline, size: 19, color: AppTheme.seed),
+                ),
               ]),
             ),
             const Divider(height: 1),
             Expanded(
               child: deals.isEmpty
                   ? Center(
-                      child: Text(hover ? 'Solte aqui' : '—',
-                          style: TextStyle(color: Colors.grey.shade400, fontSize: 13)))
+                      child: hover
+                          ? Text('Solte aqui',
+                              style: TextStyle(color: Colors.grey.shade400, fontSize: 13))
+                          : TextButton.icon(
+                              onPressed: () =>
+                                  showDealEditor(context, crm, stageId: stage.id),
+                              icon: const Icon(Icons.add, size: 16),
+                              label: const Text('Abrir lead'),
+                              style: TextButton.styleFrom(
+                                  foregroundColor: Colors.grey.shade500),
+                            ))
                   : ListView(
                       padding: const EdgeInsets.all(10),
                       children: [for (final d in deals) _draggableCard(d)],
