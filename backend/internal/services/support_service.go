@@ -131,6 +131,8 @@ type SupportService struct {
 	// Notificação no celular do atendente (opcional). Nil = app mobile sem push.
 	push    *PushService
 	devices *repository.DeviceRepository
+	// CRM (ligado no wiring): lead de anúncio vira card no funil. Nil = sem CRM.
+	crmLeadHook func(accountID, contactID, ticketID, source, detail string)
 	// Cache das categorias dos modelos por conta (para o relatório de consumo).
 	tplCacheMu sync.Mutex
 	tplCache   map[string]tplCacheEntry
@@ -140,6 +142,13 @@ type SupportService struct {
 type tplCacheEntry struct {
 	at     time.Time
 	byName map[string]string
+}
+
+// WithCrmLeadHook liga o CRM: chamado quando um lead de anúncio chega (primeira
+// vez na conversa), para o card nascer sozinho na etapa de entrada do funil.
+func (s *SupportService) WithCrmLeadHook(fn func(accountID, contactID, ticketID, source, detail string)) *SupportService {
+	s.crmLeadHook = fn
+	return s
 }
 
 // WithBilling liga o serviço de cobrança (para a recarga automática a 10%).

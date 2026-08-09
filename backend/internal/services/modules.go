@@ -67,10 +67,12 @@ func ModuleCatalog() []ModuleInfo {
 			PriceCents: 0,
 		},
 		{
-			Key:         ModuleCRM,
-			Name:        "CRM",
-			Description: "Funil de vendas ligado às conversas: negócios, etapas e acompanhamento do lead.",
-			ComingSoon:  true,
+			Key:  ModuleCRM,
+			Name: "CRM",
+			Description: "Funil de vendas ligado às conversas: Kanban de negócios com etapas " +
+				"personalizáveis, lead de anúncio entrando sozinho, funil de conversão, métricas, " +
+				"relatório de perdas e a ficha completa do contato (empresa, CPF/CNPJ, endereço).",
+			PriceCents: 0,
 		},
 		{
 			Key:  ModuleInstagram,

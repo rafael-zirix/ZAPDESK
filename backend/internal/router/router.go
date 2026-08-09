@@ -188,6 +188,19 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	// Módulos contratados (o catálogo vive em services.ModuleCatalog).
 	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo).WithSettings(supportRepo)
 	moduleH := handlers.NewModuleHandler(moduleSvc)
+
+	// CRM — funil de vendas ligado às conversas (módulo 'crm'). O contato do
+	// card é o MESMO do atendimento (cadastro único em support_contacts).
+	crmRepo := repository.NewCrmRepository(db)
+	crmSvc := services.NewCrmService(crmRepo, supportRepo).WithModuleCheck(moduleSvc.Has)
+	crmH := handlers.NewCrmHandler(crmSvc)
+	// Lead de anúncio (Lead Ads do Instagram / Click-to-WhatsApp) vira card na
+	// etapa de entrada do funil. Best-effort: falha aqui não trava o webhook.
+	supportSvc.WithCrmLeadHook(func(accountID, contactID, ticketID, source, detail string) {
+		if err := crmSvc.AutoCreateLeadDeal(accountID, contactID, ticketID, source, detail); err != nil {
+			log.Printf("[aviso] CRM: lead não virou card (conta %s): %v", accountID, err)
+		}
+	})
 	// Pacotes: o CRUD + a atribuição (que aplica módulos/limites) + o "Meu plano".
 	packageSvc := services.NewPackageService(packageRepo, moduleSvc)
 	packageH := handlers.NewPackageHandler(packageRepo, supportRepo, packageSvc, supportSvc)
@@ -366,6 +379,33 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			contacts.DELETE("/:id", supportH.DeleteContact)
 			contacts.PUT("/:id/groups", supportH.SetContactGroups) // grupos do contato
 			contacts.PUT("/:id/tags", supportH.SetContactTags)     // etiquetas do contato
+		}
+
+		// CRM (módulo 'crm'): Kanban de negócios ligado às conversas. Atendente
+		// vê os seus + os sem dono; admin vê tudo e filtra por vendedor.
+		crm := api.Group("/crm", middleware.RequireModule(moduleSvc, services.ModuleCRM),
+			middleware.RequireAccount()) // superadmin não tem conta — sem isto, 500 de uuid vazio
+		{
+			crm.GET("/board", crmH.Board)    // etapas + negócios abertos/ganhos (o Kanban numa chamada)
+			crm.GET("/reports", crmH.Report) // funil + resumo + perdas + perdidos
+			crm.GET("/stages", crmH.ListStages)
+			crm.POST("/stages", middleware.RequireAdmin(), crmH.CreateStage)
+			crm.PUT("/stages/:id", middleware.RequireAdmin(), crmH.UpdateStage)
+			crm.DELETE("/stages/:id", middleware.RequireAdmin(), crmH.DeleteStage)
+			crm.GET("/deals", crmH.ListDeals)
+			crm.POST("/deals", crmH.CreateDeal)
+			crm.PUT("/deals/:id", crmH.UpdateDeal)
+			crm.DELETE("/deals/:id", crmH.DeleteDeal)
+			crm.PATCH("/deals/:id/move", crmH.MoveDeal) // drag & drop entre etapas
+			crm.POST("/deals/:id/lose", crmH.LoseDeal)  // perde com motivo
+			crm.GET("/loss-reasons", crmH.ListLossReasons)
+			crm.POST("/loss-reasons", middleware.RequireAdmin(), crmH.CreateLossReason)
+			crm.PUT("/loss-reasons/:id", middleware.RequireAdmin(), crmH.UpdateLossReason)
+			crm.DELETE("/loss-reasons/:id", middleware.RequireAdmin(), crmH.DeleteLossReason)
+			crm.GET("/sellers", crmH.ListSellers) // dropdown do filtro por vendedor
+			// Ficha rica do cadastro único (empresa, CPF/CNPJ, endereço).
+			crm.GET("/contacts/:id/ficha", crmH.GetContactFicha)
+			crm.PUT("/contacts/:id/ficha", crmH.UpdateContactFicha)
 		}
 
 		// Grupos de contatos (listas de marketing — audiência das campanhas).

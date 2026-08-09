@@ -66,6 +66,21 @@ func RequireSuperAdmin() gin.HandlerFunc {
 	}
 }
 
+// RequireAccount barra quem não tem vínculo com uma empresa (superadmin tem
+// conta vazia): rotas escopadas por account_id quebrariam com uuid vazio.
+func RequireAccount() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if AccountID(c) == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   gin.H{"code": "FORBIDDEN", "message": "Recurso exige vínculo com uma empresa"},
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
 // AccountID devolve a conta do usuário autenticado.
 func AccountID(c *gin.Context) string { return c.GetString(CtxAccountID) }
 

@@ -60,6 +60,16 @@ func (s *SupportService) ApplyAdReferral(accountID, ticketID string, ref AdRefer
 		nota += "\n" + ref.SourceURL
 	}
 	s.systemNote(accountID, ticketID, nota)
+	// O lead vira card no funil do CRM (módulo ligado + sem duplicar por
+	// contato — a checagem é do hook). "form" = Lead Ads do Instagram; o resto
+	// é anúncio Click-to-WhatsApp.
+	if s.crmLeadHook != nil {
+		source := "whatsapp"
+		if ref.SourceType == "form" {
+			source = "instagram"
+		}
+		s.crmLeadHook(accountID, ticket.ContactID, ticketID, source, adTagName(ref))
+	}
 }
 
 // adTagName monta o nome curto da etiqueta do anúncio.
