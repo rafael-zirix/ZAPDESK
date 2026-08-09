@@ -184,6 +184,7 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
                     TextField(
                       controller: _value,
                       keyboardType: TextInputType.number,
+                      inputFormatters: [MoneyInputFormatter()],
                       decoration: const InputDecoration(hintText: '0,00', prefixText: 'R\$ '),
                     ),
                   ]),

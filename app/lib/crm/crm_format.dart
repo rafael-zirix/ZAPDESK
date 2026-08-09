@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 /// Helpers de formatação do CRM (dinheiro em centavos, cores hex, datas UTC-3).
@@ -7,6 +8,25 @@ final _money = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
 /// Centavos → "R$ 1.234,56".
 String moneyFromCents(int cents) => _money.format(cents / 100);
+
+final _moneyMask = NumberFormat('#,##0.00', 'pt_BR');
+
+/// Máscara de dinheiro no padrão BR (X.XXX,XX), estilo app de banco: os
+/// dígitos entram pelos centavos — "1" → 0,01 · "100" → 1,00 · "1000000" →
+/// 10.000,00. Sempre bem-formado, impossível digitar errado.
+class MoneyInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final d = digits.length > 12 ? digits.substring(0, 12) : digits;
+    if (d.isEmpty) return const TextEditingValue(text: '');
+    final masked = _moneyMask.format(int.parse(d) / 100);
+    return TextEditingValue(
+      text: masked,
+      selection: TextSelection.collapsed(offset: masked.length),
+    );
+  }
+}
 
 /// Texto digitado ("1.234,56", "1234,56", "1234.56") → centavos. Vazio = 0.
 int parseMoneyToCents(String text) {
