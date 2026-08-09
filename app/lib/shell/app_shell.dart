@@ -569,13 +569,16 @@ class _RailGroupState extends State<_RailGroup> {
       link: _link,
       child: OverlayPortal(
         controller: _overlay,
+        // O flyout abre PARA CIMA (ancorado no rodapé do botão): os grupos
+        // vivem no fim do rail e, abrindo para baixo, um grupo com muitos
+        // itens estourava a borda inferior da janela (itens cortados).
         overlayChildBuilder: (_) => CompositedTransformFollower(
           link: _link,
-          targetAnchor: Alignment.topRight,
-          followerAnchor: Alignment.topLeft,
-          offset: const Offset(6, -4),
+          targetAnchor: Alignment.bottomRight,
+          followerAnchor: Alignment.bottomLeft,
+          offset: const Offset(6, 4),
           child: Align(
-            alignment: Alignment.topLeft,
+            alignment: Alignment.bottomLeft,
             child: MouseRegion(
               onEnter: (_) => _open(),
               onExit: (_) => _scheduleClose(),
