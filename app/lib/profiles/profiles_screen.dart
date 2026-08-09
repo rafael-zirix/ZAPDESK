@@ -97,11 +97,58 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
                     onPressed: _load, icon: const Icon(Icons.refresh, size: 18), label: const Text('Tentar de novo')),
               ]),
             )
-          else if (_profiles.isEmpty)
-            _empty()
-          else
-            for (final p in _profiles) _profileRow(p),
+          else ...[
+            // Perfis de SISTEMA: fixos, sempre presentes — são a base.
+            _systemRow('Administrador', 'Tudo, inclusive plano, cobrança e este editor. A âncora da empresa.',
+                Icons.verified_user_outlined, AppTheme.seed),
+            _systemRow('Atendente', 'Atendimento, contatos e CRM (os leads dele + fila).',
+                Icons.support_agent_outlined, Colors.blueGrey),
+            _systemRow('Vendedor (CRM)', 'Funil do CRM e atendimento dos próprios leads.',
+                Icons.storefront_outlined, const Color(0xFFF79009)),
+            const SizedBox(height: 14),
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 8),
+              child: Text('SEUS PERFIS PERSONALIZADOS',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                      color: Colors.grey.shade500)),
+            ),
+            if (_profiles.isEmpty) _empty() else for (final p in _profiles) _profileRow(p),
+          ],
         ],
+      ),
+    );
+  }
+
+  /// Linha de perfil de SISTEMA: fixo, sem editar/excluir — só informa.
+  Widget _systemRow(String name, String desc, IconData icon, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: ListTile(
+        leading: Icon(icon, color: color),
+        title: Row(children: [
+          Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(99)),
+            child: Text('SISTEMA',
+                style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: .6)),
+          ),
+        ]),
+        subtitle: Text(desc, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+        trailing: Tooltip(
+          message: 'Perfil de sistema — fixo (garante que a empresa nunca fica sem administrador)',
+          child: Icon(Icons.lock_outline, size: 18, color: Colors.grey.shade400),
+        ),
       ),
     );
   }
