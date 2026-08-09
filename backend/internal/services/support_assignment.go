@@ -42,15 +42,31 @@ func (s *SupportService) ensureAssignee(accountID, userID string, t *models.Supp
 	}
 	exclusive, _, err := s.repo.AccountAssignmentPolicy(accountID)
 	if err != nil {
-		// Sem saber a política, deixa passar: uma consulta que falhou não pode
-		// derrubar o atendimento inteiro.
-		slog.Warn("exclusividade: não foi possível ler a política da conta", "erro", err, "conta", accountID)
-		return nil
+		// Falha FECHADO: sem saber a política, recusa. Deixar passar transformaria
+		// um blip do banco em "todo mundo responde a conversa de todo mundo" — e
+		// ninguém perceberia, porque o erro seria só uma linha de log.
+		slog.Error("exclusividade: não foi possível ler a política da conta", "erro", err, "conta", accountID)
+		return ErrNotAssignee
 	}
 	if !exclusive {
 		return nil
 	}
 	return ErrNotAssignee
+}
+
+// humanTookOver registra que um humano falou com o cliente nesta conversa e
+// pausa o Atendente IA (handoff).
+//
+// Precisa valer para TODO envio humano — antes só a resposta de TEXTO pausava, e
+// quem mandava só um anexo, um modelo ou a localização continuava com o bot
+// respondendo por cima dele na mensagem seguinte do cliente.
+//
+// Best-effort: falhar aqui não pode impedir a mensagem de sair.
+func (s *SupportService) humanTookOver(accountID, ticketID, userID string) {
+	if userID == "" || s.aiRepo == nil {
+		return
+	}
+	_ = s.aiRepo.SetTicketAIPaused(accountID, ticketID, true)
 }
 
 // ensureCanSend é o [ensureAssignee] para quem ainda não tem o ticket em mãos
@@ -100,9 +116,16 @@ func (s *SupportService) releaseStaleTickets() {
 		return
 	}
 	for _, t := range presas {
-		if err := s.repo.UpdateTicketRouting(t.AccountID, t.TicketID, nil, true, nil, false); err != nil {
+		// Condicional ao dono que o SELECT viu: entre a consulta e o UPDATE, o
+		// atendente pode ter voltado e assumido — e ele não pode perder a conversa
+		// por causa da janela do worker.
+		liberou, err := s.repo.ReleaseTicketIfStillOwned(t.AccountID, t.TicketID, t.AssignedUserID)
+		if err != nil {
 			slog.Error("liberação automática: falha ao devolver à fila", "erro", err, "ticket", t.TicketID)
 			continue
+		}
+		if !liberou {
+			continue // mudou de dono no meio do caminho: nada a fazer
 		}
 		// Sem registro no histórico, o atendente volta e não entende por que a
 		// conversa saiu das mãos dele.

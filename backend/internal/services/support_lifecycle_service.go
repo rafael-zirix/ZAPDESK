@@ -72,14 +72,28 @@ func (s *SupportService) ClaimTicket(accountID, ticketID, userID string, actorIs
 	// é de outro fica com o administrador — para o atendente, o caminho é pedir
 	// a transferência.
 	if !actorIsAdmin && t.AssignedUserID != nil && *t.AssignedUserID != "" && *t.AssignedUserID != userID {
+		// Falha fechado: sem conseguir ler a política, recusa em vez de liberar.
 		exclusive, _, pErr := s.repo.AccountAssignmentPolicy(accountID)
-		if pErr == nil && exclusive {
+		if pErr != nil || exclusive {
 			return nil, ErrNotAssigneeOrAdmin
 		}
 	}
 	if t.AssignedUserID == nil || *t.AssignedUserID != userID {
-		if err := s.repo.UpdateTicketRouting(accountID, ticketID, &userID, true, nil, false); err != nil {
-			return nil, err
+		if actorIsAdmin {
+			// O administrador toma mesmo que já tenha dono — é a válvula de escape.
+			if err := s.repo.UpdateTicketRouting(accountID, ticketID, &userID, true, nil, false); err != nil {
+				return nil, err
+			}
+		} else {
+			// Atendente comum só leva a conversa que continua livre. Quem arbitra a
+			// corrida (dois cliques no mesmo instante) é o banco.
+			ok, err := s.repo.ClaimTicketIfFree(accountID, ticketID, userID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrNotAssigneeOrAdmin
+			}
 		}
 		_ = s.repo.InsertTicketEvent(accountID, ticketID, &models.SupportTicketEvent{
 			Kind:        models.TicketEventAssigned,
@@ -87,6 +101,8 @@ func (s *SupportService) ClaimTicket(accountID, ticketID, userID string, actorIs
 			FromUserID:  t.AssignedUserID,
 			ToUserID:    &userID,
 		})
+		// Humano assumiu → o Atendente IA sai desta conversa.
+		s.humanTookOver(accountID, ticketID, userID)
 	}
 	return s.repo.TicketListItem(accountID, ticketID)
 }
@@ -104,8 +120,9 @@ func (s *SupportService) TransferTicket(accountID, ticketID, actorID string, act
 	// administrador — senão qualquer um tiraria o atendimento do colega sem ele
 	// saber. Conversa na fila (sem dono) continua livre para qualquer um rotear.
 	if !actorIsAdmin && t.AssignedUserID != nil && *t.AssignedUserID != "" && *t.AssignedUserID != actorID {
+		// Falha fechado: sem conseguir ler a política, recusa em vez de liberar.
 		exclusive, _, pErr := s.repo.AccountAssignmentPolicy(accountID)
-		if pErr == nil && exclusive {
+		if pErr != nil || exclusive {
 			return nil, ErrNotAssigneeOrAdmin
 		}
 	}
@@ -159,7 +176,7 @@ func (s *SupportService) TransferTicket(accountID, ticketID, actorID string, act
 }
 
 // SetTicketStatus muda o status da conversa (resolver, fechar, reabrir…).
-func (s *SupportService) SetTicketStatus(accountID, ticketID, actorID, status, note string) (*models.SupportTicketListItem, error) {
+func (s *SupportService) SetTicketStatus(accountID, ticketID, actorID string, actorIsAdmin bool, status, note string) (*models.SupportTicketListItem, error) {
 	if !models.ValidTicketStatus(status) {
 		return nil, ErrInvalidStatus
 	}
@@ -169,6 +186,16 @@ func (s *SupportService) SetTicketStatus(accountID, ticketID, actorID, status, n
 	}
 	if t == nil {
 		return nil, ErrTicketNotFound
+	}
+	// Mudar o status da conversa de outro é a porta dos fundos da exclusividade:
+	// FECHAR a conversa do colega faz a próxima mensagem do cliente criar um
+	// ticket novo SEM DONO — e aí qualquer um responde. Vale a mesma regra do
+	// transferir: responsável ou administrador.
+	if !actorIsAdmin && t.AssignedUserID != nil && *t.AssignedUserID != "" && *t.AssignedUserID != actorID {
+		exclusive, _, pErr := s.repo.AccountAssignmentPolicy(accountID)
+		if pErr != nil || exclusive {
+			return nil, ErrNotAssigneeOrAdmin
+		}
 	}
 	if t.Status != status {
 		if err := s.repo.SetTicketStatus(accountID, ticketID, status); err != nil {

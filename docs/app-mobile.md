@@ -45,7 +45,13 @@ ligar/pausar a IA na conversa · rascunho da IA · mensagens prontas (respostas
 rápidas + modelos aprovados) · anexo (documento, câmera, galeria) · localização ·
 cartão de contato · áudio "segurar para gravar" · resolver/reabrir/aguardando ·
 histórico · fila ("pegar próximo") · presença disponível/ausente · busca ·
-tema claro/escuro · contador da janela de 24h no cabeçalho.
+tema claro/escuro · contador da janela de 24h no cabeçalho ·
+**responder citando** (segure a mensagem → Responder) · **encaminhar** para outra
+conversa.
+
+A regra de quem pode responder está em
+[atendimento-exclusivo.md](atendimento-exclusivo.md) — com a conversa de outro
+atendente, o compositor aparece bloqueado (mas a nota interna continua).
 
 Canais: WhatsApp e Instagram Direct (o selo no avatar mostra de onde o cliente veio).
 

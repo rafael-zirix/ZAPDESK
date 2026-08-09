@@ -68,7 +68,15 @@ func (h *SupportHandler) SetTicketAI(c *gin.Context) {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
 		return
 	}
-	if err := h.support.SetTicketAIPaused(middleware.AccountID(c), c.Param("id"), req.Paused); err != nil {
+	if err := h.support.SetTicketAIPaused(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Paused); err != nil {
+		if errors.Is(err, services.ErrNotAssignee) {
+			RespondError(c, http.StatusForbidden, ErrForbidden, err.Error(), nil)
+			return
+		}
+		if errors.Is(err, services.ErrTicketNotFound) {
+			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
+			return
+		}
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao atualizar a IA da conversa", nil)
 		return
 	}

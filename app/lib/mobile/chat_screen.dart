@@ -52,6 +52,21 @@ class _ChatScreenState extends State<ChatScreen> {
     _clock = Timer.periodic(const Duration(seconds: 45), (_) {
       if (mounted) setState(() {});
     });
+    // A conversa pode trocar de dono enquanto está aberta (transferência,
+    // liberação automática, admin assumindo). Sem ouvir a lista, o compositor
+    // ficaria liberado — ou travado — até o atendente sair e voltar.
+    _inbox = context.read<InboxController>();
+    _inbox.addListener(_syncTicket);
+  }
+
+  late final InboxController _inbox;
+
+  void _syncTicket() {
+    final i = _inbox.tickets.indexWhere((t) => t.id == _conv.ticket.id);
+    if (i < 0 || !mounted) return;
+    final novo = _inbox.tickets[i];
+    if (novo.assignedUserId == _conv.ticket.assignedUserId && novo.status == _conv.ticket.status) return;
+    setState(() => _conv.ticket.applyFrom(novo));
   }
 
   void _onChange() {
@@ -75,6 +90,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _clock?.cancel();
+    _inbox.removeListener(_syncTicket);
     _conv.removeListener(_onChange);
     _conv.dispose();
     _scroll.dispose();
@@ -178,10 +194,17 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       actions: [
         // Liga/pausa a IA nesta conversa — só quando a empresa tem IA ligada.
+        // Bloqueado na conversa de outro: RETOMAR a IA faz o bot responder ao
+        // cliente, que é exatamente o que a exclusividade impede (o servidor
+        // também recusa).
         if (inbox.aiEnabled)
           IconButton(
-            tooltip: conv.aiPaused ? 'Ativar a IA nesta conversa' : 'Pausar a IA nesta conversa',
-            onPressed: conv.togglingAI ? null : conv.toggleAI,
+            tooltip: conv.lockedByOther
+                ? 'Conversa de outro atendente'
+                : conv.aiPaused
+                    ? 'Ativar a IA nesta conversa'
+                    : 'Pausar a IA nesta conversa',
+            onPressed: conv.togglingAI || conv.lockedByOther ? null : conv.toggleAI,
             icon: Icon(
               conv.aiPaused ? Icons.smart_toy_outlined : Icons.smart_toy,
               color: conv.aiPaused ? Colors.white.withValues(alpha: 0.55) : const Color(0xFF7CF5B0),
@@ -234,6 +257,9 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       },
       itemBuilder: (_) => [
+        // Com a conversa de outro, o servidor recusa transferir e mudar a
+        // situação (só responsável ou admin): esconder é melhor do que oferecer
+        // um botão que sempre devolve erro.
         if (t.assignedUserId == null)
           const PopupMenuItem(
             value: 'assumir',
@@ -243,14 +269,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 leading: Icon(Icons.person_add),
                 title: Text('Assumir conversa')),
         ),
-        const PopupMenuItem(
-          value: 'transferir',
-          child: ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.swap_horiz),
-              title: Text('Transferir')),
-        ),
+        if (!conv.lockedByOther || conv.iAmAdmin)
+          const PopupMenuItem(
+            value: 'transferir',
+            child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.swap_horiz),
+                title: Text('Transferir')),
+          ),
         const PopupMenuItem(
           value: 'etiquetas',
           child: ListTile(
@@ -269,23 +296,25 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'resolver',
-          child: ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(resolvida ? Icons.refresh : Icons.check_circle_outline),
-            title: Text(resolvida ? 'Reabrir conversa' : 'Marcar como resolvida'),
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'aguardando',
-          child: ListTile(
+        if (!conv.lockedByOther || conv.iAmAdmin) ...[
+          PopupMenuItem(
+            value: 'resolver',
+            child: ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.hourglass_empty),
-              title: Text('Aguardando cliente')),
-        ),
+              leading: Icon(resolvida ? Icons.refresh : Icons.check_circle_outline),
+              title: Text(resolvida ? 'Reabrir conversa' : 'Marcar como resolvida'),
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'aguardando',
+            child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.hourglass_empty),
+                title: Text('Aguardando cliente')),
+          ),
+        ],
         const PopupMenuItem(
           value: 'historico',
           child: ListTile(
@@ -319,7 +348,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final r = await conv.claim();
     if (!mounted) return;
     if (r == null) {
-      toast(context, 'Não foi possível assumir a conversa', isError: true);
+      toast(context, conv.lastError ?? 'Não foi possível assumir a conversa', isError: true);
       return;
     }
     inbox.applyTicketUpdate(r);
@@ -330,7 +359,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final r = await conv.setStatus(status);
     if (!mounted) return;
     if (r == null) {
-      toast(context, 'Não foi possível mudar a situação', isError: true);
+      toast(context, conv.lastError ?? 'Não foi possível mudar a situação', isError: true);
       return;
     }
     inbox.applyTicketUpdate(r);
@@ -549,7 +578,7 @@ class _FaixaAssumirState extends State<_FaixaAssumir> {
     if (!mounted) return;
     setState(() => _busy = false);
     if (r == null) {
-      toast(context, 'Não foi possível assumir a conversa', isError: true);
+      toast(context, widget.conv.lastError ?? 'Não foi possível assumir a conversa', isError: true);
       return;
     }
     widget.inbox.applyTicketUpdate(r);

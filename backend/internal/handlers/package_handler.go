@@ -146,6 +146,21 @@ func (h *PackageHandler) creditPackValues() []int {
 	return vals
 }
 
+// ---- Público (site): pacotes ativos, sem autenticação ----
+
+// PublicList é a fonte que a landing consome. Devolve só os pacotes PUBLICADOS
+// (active), para o super-admin poder deixar rascunhos sem eles vazarem para o
+// site. Como a tela "Meu plano" lê a MESMA lista, editar no super-admin atualiza
+// o site e o painel de uma vez — sem passo manual.
+func (h *PackageHandler) PublicList(c *gin.Context) {
+	items, err := h.repo.List(true)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao carregar os planos", nil)
+		return
+	}
+	RespondSuccess(c, http.StatusOK, "OK", items)
+}
+
 // ---- Super-admin: atribuir pacote a uma empresa ----
 
 func (h *PackageHandler) AdminAssign(c *gin.Context) {

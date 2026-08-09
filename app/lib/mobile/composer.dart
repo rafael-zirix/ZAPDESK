@@ -56,7 +56,11 @@ class _ComposerState extends State<Composer> {
                   tooltip: 'Anexar',
                   icon: const Icon(Icons.add_circle_outline),
                   color: MobileTheme.textFaint,
-                  onPressed: travado ? null : () => attachSheet(context, _conv, widget.inbox),
+                  // Repare no `lockedByOther` (e não no `travado`): o anexo manda
+                  // foto, localização e contato AO CLIENTE. Se usasse `travado`,
+                  // entrar em modo nota reabriria esse caminho numa conversa de
+                  // outro atendente — a nota é a exceção, o anexo não.
+                  onPressed: _conv.lockedByOther ? null : () => attachSheet(context, _conv, widget.inbox),
                 ),
                 Expanded(child: _campo(nota, travado)),
                 const SizedBox(width: 4),

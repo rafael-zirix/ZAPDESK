@@ -169,6 +169,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	supportSvc.WithModuleCheck(moduleSvc.Has)     // regras vendidas à parte só rodam p/ quem contratou
 	authSvc = authSvc.WithModuleTrial(moduleSvc, cfg.SignupTrialDays())
 
+	// Pacotes ativos (público, sem login): a landing e a tela do cliente leem a
+	// MESMA lista, então publicar/editar no super-admin atualiza os dois sozinho.
+	r.GET("/public/packages", packageH.PublicList)
+
 	// Health.
 	r.GET("/health", func(c *gin.Context) {
 		handlers.RespondSuccess(c, http.StatusOK, "ok", gin.H{"service": "hotzap", "env": cfg.Env})

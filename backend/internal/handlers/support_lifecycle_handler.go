@@ -151,11 +151,14 @@ func (h *SupportHandler) SetTicketStatus(c *gin.Context) {
 		RespondError(c, http.StatusBadRequest, ErrValidation, "Dados inválidos", err.Error())
 		return
 	}
-	item, err := h.support.SetTicketStatus(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), req.Status, req.Note)
+	item, err := h.support.SetTicketStatus(middleware.AccountID(c), c.Param("id"), middleware.UserID(c), middleware.IsAdmin(c), req.Status, req.Note)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrTicketNotFound):
 			RespondError(c, http.StatusNotFound, ErrNotFound, "Conversa não encontrada", nil)
+		case errors.Is(err, services.ErrNotAssigneeOrAdmin):
+			RespondError(c, http.StatusForbidden, ErrForbidden,
+				"Esta conversa está com outro atendente — só ele ou um administrador pode mudar a situação", nil)
 		case errors.Is(err, services.ErrInvalidStatus):
 			RespondError(c, http.StatusBadRequest, ErrValidation, "Status inválido", nil)
 		default:

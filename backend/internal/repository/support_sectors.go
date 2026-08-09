@@ -156,6 +156,41 @@ func (r *SupportRepository) UpdateTicketRouting(accountID, ticketID string, user
 	return nil
 }
 
+// ClaimTicketIfFree atribui a conversa ao atendente SÓ SE ela continuar sem dono
+// (ou já for dele). Devolve false quando outra pessoa assumiu no meio do caminho.
+//
+// O UpdateTicketRouting comum decide em Go e grava sem condição: dois atendentes
+// clicando "Assumir" no mesmo instante ficavam ambos convencidos de que a
+// conversa era sua, e o segundo vencia em silêncio. Aqui quem arbitra é o banco,
+// numa instrução só.
+func (r *SupportRepository) ClaimTicketIfFree(accountID, ticketID, userID string) (bool, error) {
+	res, err := r.db.Exec(`
+		UPDATE support_tickets SET assigned_user_id=$3::uuid, updated_at=$4
+		WHERE id=$1 AND account_id=$2
+		  AND (assigned_user_id IS NULL OR assigned_user_id=$3::uuid)`,
+		ticketID, accountID, userID, time.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ReleaseTicketIfStillOwned devolve a conversa à fila SÓ SE ela ainda estiver com
+// o atendente que o worker viu. Sem a condição, quem assumisse entre o SELECT e o
+// UPDATE perderia a conversa sem ter feito nada de errado.
+func (r *SupportRepository) ReleaseTicketIfStillOwned(accountID, ticketID, ownerID string) (bool, error) {
+	res, err := r.db.Exec(`
+		UPDATE support_tickets SET assigned_user_id=NULL, updated_at=$4
+		WHERE id=$1 AND account_id=$2 AND assigned_user_id=$3::uuid`,
+		ticketID, accountID, ownerID, time.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // SetTicketStatus grava o status do ticket.
 func (r *SupportRepository) SetTicketStatus(accountID, ticketID, status string) error {
 	_, err := r.db.Exec(`UPDATE support_tickets SET status=$3, updated_at=$4 WHERE id=$1 AND account_id=$2`,

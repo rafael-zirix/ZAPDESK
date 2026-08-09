@@ -226,6 +226,7 @@ class ConversationController extends ChangeNotifier {
     // mensagem volta pelo histórico, e deixar a prévia pendurada confundiria.
     final citada = replyTo;
     replyTo = null;
+    lastError = null; // erro da tentativa anterior não pode sobrar na tela
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/messages', {
@@ -241,13 +242,12 @@ class ConversationController extends ChangeNotifier {
       notifyListeners();
       return true;
     }
-    // 403 da exclusividade: a conversa foi assumida por outro enquanto este
-    // atendente digitava. Devolve o texto ao campo para ele não perder o que
-    // escreveu.
-    if (r.status == 403) {
-      composer.text = text;
-      lastError = r.message;
-    }
+    // Falhou: devolve ao atendente o que ele havia preparado (texto E citação),
+    // senão ele reescreve tudo — e, no 403, ainda perderia a citação sem aviso.
+    composer.text = text;
+    composer.selection = TextSelection.collapsed(offset: composer.text.length);
+    replyTo = citada;
+    lastError = r.message;
     notifyListeners();
     return false;
   }
@@ -257,6 +257,7 @@ class ConversationController extends ChangeNotifier {
 
   /// Envia um modelo (template) aprovado. Retorna false em falha.
   Future<bool> sendTemplate(String name, String language, String body) async {
+    replyTo = null; // envio que não leva citação não pode deixá-la pendurada
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/template',
@@ -273,6 +274,7 @@ class ConversationController extends ChangeNotifier {
 
   /// Envia um anexo (foto/documento). Retorna false em falha.
   Future<bool> sendMedia({required List<int> bytes, required String filename, String? mimeType, String caption = ''}) async {
+    replyTo = null; // envio que não leva citação não pode deixá-la pendurada
     sending = true;
     notifyListeners();
     final r = await _api.uploadFile(
@@ -334,6 +336,7 @@ class ConversationController extends ChangeNotifier {
 
   /// Envia uma localização (pino). Retorna false em falha.
   Future<bool> sendLocation({required double lat, required double lng, String name = '', String address = ''}) async {
+    replyTo = null; // envio que não leva citação não pode deixá-la pendurada
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/location', {
@@ -354,6 +357,7 @@ class ConversationController extends ChangeNotifier {
 
   /// Envia botões de resposta rápida (1 a 3). Retorna false em falha.
   Future<bool> sendButtons(String body, List<String> titles) async {
+    replyTo = null; // envio que não leva citação não pode deixá-la pendurada
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/interactive', {
@@ -378,6 +382,7 @@ class ConversationController extends ChangeNotifier {
     String sectionTitle,
     List<({String title, String description})> rows,
   ) async {
+    replyTo = null; // envio que não leva citação não pode deixá-la pendurada
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/interactive', {
@@ -401,6 +406,7 @@ class ConversationController extends ChangeNotifier {
 
   /// Envia um cartão de contato. Retorna false em falha.
   Future<bool> sendContact({required String name, required String phone}) async {
+    replyTo = null; // envio que não leva citação não pode deixá-la pendurada
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/contact', {'name': name, 'phone': phone});
@@ -447,14 +453,20 @@ class ConversationController extends ChangeNotifier {
   // --- Fase 1 de atendimento: assumir, transferir, status e histórico ---
 
   /// Assume a conversa (puxa para si). Devolve o item atualizado ou null.
+  /// Em falha, o motivo fica em [lastError] — com a exclusividade ligada o
+  /// servidor explica o que fazer ("peça a transferência"), e engolir isso
+  /// deixaria o atendente sem entender por que o botão não funcionou.
   Future<TicketListItem?> claim() async {
     final r = await _api.post('/support/tickets/${ticket.id}/claim');
     if (r.ok && r.data is Map) {
+      lastError = null;
       final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
       ticket.applyFrom(t);
       notifyListeners();
       return t;
     }
+    lastError = r.message;
+    notifyListeners();
     return null;
   }
 
@@ -478,6 +490,7 @@ class ConversationController extends ChangeNotifier {
   Future<TicketListItem?> setStatus(String status, {String note = ''}) async {
     final r = await _api.put('/support/tickets/${ticket.id}/status',
         {'status': status, if (note.isNotEmpty) 'note': note});
+    if (!r.ok) lastError = r.message;
     if (r.ok && r.data is Map) {
       final t = TicketListItem.fromJson(r.data as Map<String, dynamic>);
       ticket.applyFrom(t);
@@ -509,6 +522,9 @@ class ConversationController extends ChangeNotifier {
     final text = composer.text.trim();
     if (text.isEmpty) return false;
     composer.clear();
+    // A nota é interna: não vai citada ao cliente. Some com a prévia para ela
+    // não cair, sem aviso, na próxima mensagem que o atendente mandar de fato.
+    replyTo = null;
     sending = true;
     notifyListeners();
     final r = await _api.post('/support/tickets/${ticket.id}/notes', {'content': text});

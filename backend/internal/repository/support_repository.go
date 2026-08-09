@@ -118,6 +118,24 @@ func (r *SupportRepository) nextProtocol(tx *sql.Tx, accountID string, year int)
 // FindOrCreateOpenTicket devolve a conversa ativa (não-fechada) do contato,
 // criando (com protocolo) se não houver. Ticket em "pending"/"resolved" volta a
 // "open" — e a reabertura de um resolvido fica registrada no histórico.
+// OpenTicketByContact devolve a conversa não-fechada do contato SEM criar nem
+// reabrir nada (nil quando não existe). Serve para checar permissão antes de
+// mexer: o [FindOrCreateOpenTicket] já reabre a conversa como efeito colateral, e
+// uma recusa depois disso deixaria a conversa alheia reaberta à toa.
+func (r *SupportRepository) OpenTicketByContact(accountID, contactID string) (*models.SupportTicket, error) {
+	var t models.SupportTicket
+	err := r.db.QueryRow(`SELECT id, account_id, contact_id, protocol, status, assigned_user_id, sector_id, last_message_at, created_at, updated_at
+		FROM support_tickets WHERE account_id=$1 AND contact_id=$2 AND status<>'closed'`, accountID, contactID).
+		Scan(&t.ID, &t.AccountID, &t.ContactID, &t.Protocol, &t.Status, &t.AssignedUserID, &t.SectorID, &t.LastMessageAt, &t.CreatedAt, &t.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 func (r *SupportRepository) FindOrCreateOpenTicket(accountID, contactID string) (*models.SupportTicket, error) {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -627,7 +645,12 @@ func (r *SupportRepository) ListInbox(accountID string) ([]models.SupportTicketL
 			LIMIT 1
 		) lm ON TRUE
 		WHERE t.account_id=$1
-		ORDER BY (COALESCE(t.unread_count, 0) > 0) DESC, t.last_message_at DESC`, accountID)
+		ORDER BY (COALESCE(t.unread_count, 0) > 0) DESC, t.last_message_at DESC
+		-- Teto de segurança: o inbox faz polling a cada 10s e cada linha paga um
+		-- LATERAL (prévia) e uma subconsulta (etiquetas). Numa conta com milhares
+		-- de conversas isso viraria varredura completa a cada 10 segundos, para
+		-- exibir uma lista que ninguém rola até o fim.
+		LIMIT 500`, accountID)
 	if err != nil {
 		return nil, err
 	}

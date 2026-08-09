@@ -85,6 +85,11 @@ var (
 	ErrForwardNoPhone  = errors.New("este contato não tem telefone cadastrado")
 	// ErrForwardNotSent: a mensagem ficou gravada como pendente, mas NÃO saiu.
 	ErrForwardNotSent = errors.New("a mensagem não pôde ser enviada agora (número não conectado)")
+
+	// ErrDuplicateMessage: o InsertMessage é idempotente por (conta, wamid) e não
+	// gravou por já existir. Sem este sentinela o serviço devolveria ponteiro nulo
+	// e o handler quebraria ao montar a resposta.
+	ErrDuplicateMessage = errors.New("esta mensagem já foi registrada")
 )
 
 var nonDigits = regexp.MustCompile(`\D`)
@@ -583,6 +588,8 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang, b
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -622,9 +629,14 @@ func (s *SupportService) SendTemplate(accountID, ticketID, userID, name, lang, b
 		if err != nil {
 			return nil, err
 		}
+		if saved == nil {
+			// Duplicata (idempotência por wamid): nunca devolver nil ao handler, que
+			// chamaria ToResponse() em ponteiro nulo e derrubaria a API.
+			return nil, ErrDuplicateMessage
+		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // templateCategory descobre a categoria de um modelo pelo nome (consulta a Meta
@@ -706,10 +718,9 @@ func (s *SupportService) quotedFromClient(accountID, replyToWamid string) (*stri
 		slog.Warn("citação recebida: falha ao resolver a mensagem citada", "erro", err, "wamid", replyToWamid)
 		return nil, &replyToWamid
 	}
-	if id != nil {
-		return id, nil
-	}
-	return nil, &replyToWamid
+	// Guarda o wamid mesmo quando a citada é nossa: se a retenção apagá-la, o
+	// reply_to_id vira NULL e só este rastro sustenta a citação na bolha.
+	return id, &replyToWamid
 }
 
 // NotifyInbound avisa no celular que chegou mensagem do cliente.
@@ -1033,7 +1044,7 @@ func (s *SupportService) sendAIReply(accountID, ticketID, text string) (*models.
 		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // maybeAutoRecharge tenta a recompra automática quando o saldo cai abaixo do
@@ -1138,6 +1149,8 @@ func (s *SupportService) SendLocation(accountID, ticketID, userID string, lat, l
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1167,7 +1180,7 @@ func (s *SupportService) SendLocation(accountID, ticketID, userID string, lat, l
 		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // SendContact envia um cartão de contato (nome + telefone) na conversa.
@@ -1183,6 +1196,8 @@ func (s *SupportService) SendContact(accountID, ticketID, userID, name, phone st
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	toPhone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1209,7 +1224,7 @@ func (s *SupportService) SendContact(accountID, ticketID, userID, name, phone st
 		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // SendButtons envia botões de resposta rápida e grava a saída. Para a bolha do
@@ -1227,6 +1242,8 @@ func (s *SupportService) SendButtons(accountID, ticketID, userID, body string, b
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1256,7 +1273,7 @@ func (s *SupportService) SendButtons(accountID, ticketID, userID, body string, b
 		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // SendList envia um menu de lista e grava a saída (como texto, com as opções).
@@ -1272,6 +1289,8 @@ func (s *SupportService) SendList(accountID, ticketID, userID, body, buttonLabel
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1301,7 +1320,7 @@ func (s *SupportService) SendList(accountID, ticketID, userID, body, buttonLabel
 		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // MarkRead marca a última mensagem recebida da conversa como lida (✓✓ azul) e,
@@ -1333,6 +1352,11 @@ func (s *SupportService) RetryMessage(accountID, ticketID, msgID, userID string)
 	// Reenviar é enviar: vale a mesma exclusividade da resposta.
 	if err := s.ensureCanSend(accountID, ticketID, userID); err != nil {
 		return nil, err
+	}
+	// NOTA INTERNA nunca sai daqui. Ela é direction='out' e o filtro abaixo não
+	// a pegava: um "reenviar" numa nota mandaria o recado da equipe ao cliente.
+	if msg.Internal {
+		return msg, nil
 	}
 	if msg.Direction != models.DirectionOut {
 		return msg, nil
@@ -1403,6 +1427,21 @@ func (s *SupportService) RetryMessage(accountID, ticketID, msgID, userID string)
 	return msg, sendErr
 }
 
+// insertOutbound grava a mensagem de saída traduzindo a idempotência do
+// repositório: o InsertMessage devolve (nil, nil) quando o wamid já existe na
+// conta, e um ponteiro nulo chegando ao handler derruba a API na hora de montar
+// a resposta.
+func (s *SupportService) insertOutbound(msg *models.SupportMessage) (*models.SupportMessage, error) {
+	saved, err := s.repo.InsertMessage(msg)
+	if err != nil {
+		return nil, err
+	}
+	if saved == nil {
+		return nil, ErrDuplicateMessage
+	}
+	return saved, nil
+}
+
 // ForwardMessage encaminha uma mensagem existente para a conversa de outro
 // contato: reenvia o conteúdo (texto/mídia/áudio/localização) e grava uma nova
 // mensagem de saída na conversa de destino.
@@ -1448,13 +1487,19 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 		}
 	}
 
-	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, destContactID)
-	if err != nil {
-		return nil, err
-	}
 	// A conversa de destino também respeita a exclusividade: não dá para furar a
 	// regra encaminhando algo para o atendimento de outra pessoa.
-	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
+	//
+	// A checagem vem ANTES do FindOrCreateOpenTicket porque ele REABRE conversa
+	// resolvida: recusar depois deixaria a conversa do colega reaberta por um
+	// encaminhamento que nunca chegou a acontecer.
+	if atual, aErr := s.repo.OpenTicketByContact(accountID, destContactID); aErr == nil && atual != nil {
+		if err := s.ensureAssignee(accountID, userID, atual); err != nil {
+			return nil, err
+		}
+	}
+	ticket, err := s.repo.FindOrCreateOpenTicket(accountID, destContactID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1473,9 +1518,10 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 		if src.Content != nil {
 			body = *src.Content
 		}
-		if s.igSend == nil || body == "" {
-			// Sem canal ligado (ou anexo, que o Direct não reenvia por aqui): grava
-			// pendente e avisa, em vez de responder "encaminhada" sem nada ter saído.
+		// O Direct não reenvia anexo por este caminho: mandar só a legenda faria o
+		// cliente receber um texto solto no lugar do arquivo. Grava pendente e diz
+		// a verdade ao atendente.
+		if s.igSend == nil || body == "" || isMediaType(src.Type) {
 			saved, e := s.repo.InsertMessage(msg)
 			if e != nil {
 				return nil, e
@@ -1488,6 +1534,9 @@ func (s *SupportService) ForwardMessage(accountID, userID, sourceMsgID, destCont
 		saved, e := s.repo.InsertMessage(msg)
 		if e != nil {
 			return nil, e
+		}
+		if saved == nil {
+			return nil, ErrForwardNotSent // duplicata (idempotência) — não devolve nil ao handler
 		}
 		return saved, sendErr
 	}
@@ -1568,23 +1617,69 @@ func isMediaType(t string) bool {
 // Meta (envio que falhou, nota interna): nesse caso a citação é gravada só do
 // nosso lado e a mensagem sai SEM o bloco context — melhor perder o efeito
 // visual no celular do cliente do que ter a mensagem inteira recusada.
-func (s *SupportService) resolveQuoted(accountID, ticketID string, replyToID *string) (*string, string, error) {
+func (s *SupportService) resolveQuoted(accountID, ticketID string, replyToID *string) (*models.QuotedMessage, string, error) {
 	if replyToID == nil || *replyToID == "" {
 		return nil, "", nil
 	}
 	q, err := s.repo.GetMessage(accountID, *replyToID)
 	if err != nil {
-		return nil, "", err
+		// Id inválido (uuid malformado) ou falha de leitura: segue SEM citação em
+		// vez de abortar. Perder a citação é melhor do que o atendente perder o
+		// texto que acabou de escrever.
+		slog.Warn("citação: não foi possível resolver a mensagem citada", "erro", err, "id", *replyToID)
+		return nil, "", nil
 	}
 	// Citada inexistente ou de outra conversa: ignora a citação em vez de recusar
 	// a resposta — o atendente não perde o texto que escreveu.
 	if q == nil || q.TicketID != ticketID {
 		return nil, "", nil
 	}
+	preview := quotedPreviewOf(q)
+	// Nota interna e envio que falhou não têm wamid: cita só do nosso lado e a
+	// mensagem sai SEM o bloco context (context vazio faz a Meta recusar tudo).
 	if q.Internal || q.ExternalID == nil || *q.ExternalID == "" {
-		return &q.ID, "", nil
+		return preview, "", nil
 	}
-	return &q.ID, *q.ExternalID, nil
+	return preview, *q.ExternalID, nil
+}
+
+// quotedPreviewOf monta o resumo exibido na bolha a partir da mensagem citada.
+func quotedPreviewOf(q *models.SupportMessage) *models.QuotedMessage {
+	texto := ""
+	if q.Content != nil {
+		texto = *q.Content
+	}
+	if len([]rune(texto)) > 140 {
+		texto = string([]rune(texto)[:140])
+	}
+	out := &models.QuotedMessage{ID: q.ID, Direction: q.Direction, Type: q.Type, Preview: texto, SenderName: q.SenderName}
+	if out.Preview == "" {
+		out.Preview = map[string]string{
+			"image": "📷 Foto", "audio": "🎤 Áudio", "video": "🎬 Vídeo",
+			"document": "📄 Documento", "location": "📍 Localização", "contact": "👤 Contato",
+		}[q.Type]
+		if out.Preview == "" {
+			out.Preview = "Mensagem"
+		}
+	}
+	return out
+}
+
+// quotedRefs monta o par (id local, wamid) a gravar na mensagem. O wamid é
+// guardado SEMPRE que existir: quando a retenção apagar a citada, o ON DELETE
+// SET NULL zera o reply_to_id e só este rastro impede a citação de sumir sem
+// deixar vestígio.
+func quotedRefs(quoted *models.QuotedMessage, quotedWamid string) (*string, *string) {
+	var id *string
+	if quoted != nil && quoted.ID != "" {
+		v := quoted.ID
+		id = &v
+	}
+	if quotedWamid == "" {
+		return id, nil
+	}
+	w := quotedWamid
+	return id, &w
 }
 
 // Reply envia uma resposta de texto do atendente pela conversa e grava a saída.
@@ -1601,10 +1696,8 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string, replyTo
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
-	// Um humano assumiu esta conversa → pausa o Atendente IA nela (handoff).
-	if s.aiRepo != nil {
-		_ = s.aiRepo.SetTicketAIPaused(accountID, ticketID, true)
-	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	// Responder uma conversa sem dono equivale a assumi-la (auto-atribuição).
 	if ticket.AssignedUserID == nil {
 		if err := s.repo.UpdateTicketRouting(accountID, ticketID, &userID, true, nil, false); err == nil {
@@ -1629,15 +1722,18 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string, replyTo
 		Content:   &content,
 		Status:    "pending",
 		SenderID:  &sender,
-		ReplyToID: quotedID,
 	}
+	msg.ReplyToID, msg.ReplyToExternalID = quotedRefs(quotedID, quotedWamid)
+	// A prévia não é coluna (vem do LEFT JOIN da listagem): anexa aqui para a
+	// resposta 201 já trazer a citação e a bolha nascer citada na tela.
+	msg.ReplyTo = quotedID
 
 	// Conversa do Instagram: a resposta sai pelo Direct (não existe template lá —
 	// fora da janela de 24h a Meta recusa e a mensagem fica "failed").
 	if ch, _ := s.repo.TicketChannel(accountID, ticketID); ch == ChannelInstagram {
 		if s.igSend == nil {
 			msg.Status = "pending"
-			return s.repo.InsertMessage(msg)
+			return s.insertOutbound(msg)
 		}
 		igsid, _ := s.repo.ContactExternalID(ticketID)
 		mid, sendErr := s.igSend(accountID, ticketID, igsid, text)
@@ -1653,6 +1749,11 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string, replyTo
 		saved, err := s.repo.InsertMessage(msg)
 		if err != nil {
 			return nil, err
+		}
+		if saved == nil {
+			// Duplicata (idempotência por wamid): nunca devolver nil ao handler, que
+			// chamaria ToResponse() em ponteiro nulo e derrubaria a API.
+			return nil, ErrDuplicateMessage
 		}
 		return saved, sendErr
 	}
@@ -1691,7 +1792,7 @@ func (s *SupportService) Reply(accountID, ticketID, userID, text string, replyTo
 	// Sem envio configurado: NÃO finge que enviou. Fica "pending" (relógio na
 	// UI), deixando claro que a mensagem ainda não saiu de fato pela Meta.
 	msg.Status = "pending"
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // saveMedia grava os bytes na pasta de mídia e devolve o nome do arquivo.
@@ -1745,6 +1846,8 @@ func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []by
 	if err := s.ensureAssignee(accountID, userID, ticket); err != nil {
 		return nil, err
 	}
+	// Envio humano pausa o Atendente IA nesta conversa (handoff).
+	s.humanTookOver(accountID, ticketID, userID)
 	phone, err := s.repo.ContactPhone(ticketID)
 	if err != nil {
 		return nil, err
@@ -1802,7 +1905,7 @@ func (s *SupportService) SendMedia(accountID, ticketID, userID string, data []by
 		}
 		return saved, sendErr
 	}
-	return s.repo.InsertMessage(msg)
+	return s.insertOutbound(msg)
 }
 
 // ProcessInboundMedia baixa a mídia recebida da Meta, salva local e grava a msg.
@@ -1923,9 +2026,15 @@ func (s *SupportService) ListInbox(accountID string) ([]models.SupportTicketList
 // SetTicketAIPaused liga/pausa o Atendente IA nesta conversa (controle manual do
 // atendente na própria janela). Ao RETOMAR (paused=false), dispara uma resposta
 // se a última mensagem for do cliente — assim a IA "assume de volta" na hora.
-func (s *SupportService) SetTicketAIPaused(accountID, ticketID string, paused bool) error {
+func (s *SupportService) SetTicketAIPaused(accountID, ticketID, userID string, paused bool) error {
 	if s.aiRepo == nil {
 		return nil
+	}
+	// RETOMAR a IA dispara uma resposta ao cliente na hora. Sem esta trava, quem
+	// não é o responsável mandaria o bot falar na conversa dos outros — o mesmo
+	// efeito de responder por cima, só que por interposta pessoa.
+	if err := s.ensureCanSend(accountID, ticketID, userID); err != nil {
+		return err
 	}
 	if err := s.aiRepo.SetTicketAIPaused(accountID, ticketID, paused); err != nil {
 		return err

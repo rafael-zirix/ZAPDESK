@@ -623,7 +623,7 @@ class _TransferSheetState extends State<_TransferSheet> {
     if (!mounted) return;
     setState(() => _saving = false);
     if (r == null) {
-      toast(context, 'Não foi possível transferir', isError: true);
+      toast(context, widget.conv.lastError ?? 'Não foi possível transferir', isError: true);
       return;
     }
     widget.inbox.applyTicketUpdate(r);

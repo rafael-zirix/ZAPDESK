@@ -197,7 +197,18 @@ class InboxController extends ChangeNotifier {
   Future<void> _refreshTickets() async {
     final r = await _api.get('/support/tickets');
     if (r.ok && r.data is List) {
-      tickets = (r.data as List).map((e) => TicketListItem.fromJson(e as Map<String, dynamic>)).toList();
+      final fresh = (r.data as List).map((e) => TicketListItem.fromJson(e as Map<String, dynamic>)).toList();
+      // As conversas ABERTAS guardam uma referência ao objeto antigo da lista.
+      // Trocar a lista inteira deixava a tela de conversa com um retrato
+      // congelado do momento em que foi aberta: se outra pessoa assumisse, o
+      // compositor continuaria liberado até fechar e reabrir. Copiar os campos
+      // mutáveis para o objeto que a conversa já tem em mãos resolve — a trava
+      // aparece (e some) sozinha.
+      for (final c in open) {
+        final i = fresh.indexWhere((t) => t.id == c.ticket.id);
+        if (i >= 0) c.ticket.applyFrom(fresh[i]);
+      }
+      tickets = fresh;
       notifyListeners();
     }
   }
