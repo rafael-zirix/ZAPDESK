@@ -161,6 +161,10 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
         const SizedBox(width: 10),
         const Text('IA em uso', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
         const Spacer(),
+        if (_model(_aiCurrent)?['logo'] != null) ...[
+          aiLogo((_model(_aiCurrent)!['logo']).toString(), size: 26),
+          const SizedBox(width: 8),
+        ],
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(color: AppTheme.seed.withValues(alpha: .12), borderRadius: BorderRadius.circular(99)),
@@ -210,6 +214,7 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.surface,
+      isScrollControlled: true, // senão a folha fica presa em ~metade e corta a lista
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (_) => _SwitchSheet(
         offered: _offered,
@@ -358,6 +363,39 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
       );
 }
 
+/// Logo da IA: um badge com a cor da marca e um ícone. Ícones do Material (sempre
+/// renderizam) em vez de SVG externo — o projeto não tem flutter_svg, e a CSP
+/// bloqueia imagem de fora. Reconhecível pela cor; dá para trocar pelos SVGs
+/// exatos depois, se valer a dependência.
+Widget aiLogo(String slug, {double size = 34}) {
+  late final Color bg;
+  late final IconData ic;
+  switch (slug) {
+    case 'claude':
+      bg = const Color(0xFFD97757); // clay da Anthropic
+      ic = Icons.brightness_7; // sol/raios ≈ o mark da Anthropic
+      break;
+    case 'gpt':
+      bg = const Color(0xFF10A37F); // verde OpenAI
+      ic = Icons.hub;
+      break;
+    case 'deepseek':
+      bg = const Color(0xFF4D6BFE); // azul DeepSeek
+      ic = Icons.waves; // baleia/oceano
+      break;
+    case 'gemini':
+    default:
+      bg = const Color(0xFF4285F4); // azul Google
+      ic = Icons.auto_awesome; // a "faísca" do Gemini
+  }
+  return Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(size * .28)),
+    child: Icon(ic, color: Colors.white, size: size * .56),
+  );
+}
+
 // Sheet de escolha da IA — mostra os modelos ofertados com o comparativo.
 class _SwitchSheet extends StatelessWidget {
   const _SwitchSheet({required this.offered, required this.current, required this.onPick, required this.labelOf});
@@ -368,7 +406,11 @@ class _SwitchSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
+    return ConstrainedBox(
+      // Teto de 72% da tela: a folha cresce com a lista e rola dentro, em vez de
+      // ficar presa numa altura fixa que corta os modelos.
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.72),
+      child: SafeArea(
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 12),
         Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade400, borderRadius: BorderRadius.circular(2))),
@@ -384,30 +426,39 @@ class _SwitchSheet extends StatelessWidget {
               final id = (m['model'] ?? '').toString();
               final sel = id.toLowerCase() == current.toLowerCase();
               final best = (m['best_for'] ?? '').toString();
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                    border: Border.all(color: sel ? AppTheme.seed : AppTheme.border, width: sel ? 1.6 : 1),
-                    borderRadius: BorderRadius.circular(12),
-                    color: sel ? AppTheme.seed.withValues(alpha: .06) : null),
-                child: ListTile(
-                  onTap: () => onPick(id),
-                  title: Row(children: [
-                    Text(labelOf(id), style: const TextStyle(fontWeight: FontWeight.w700)),
-                    if (sel) ...[
-                      const SizedBox(width: 8),
-                      Text('em uso', style: TextStyle(color: AppTheme.seed, fontSize: 11.5, fontWeight: FontWeight.w700)),
-                    ],
-                  ]),
-                  subtitle: Text(best.isEmpty ? (m['provider'] ?? '').toString() : best,
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5)),
-                  trailing: sel ? null : Icon(Icons.chevron_right, color: Colors.grey.shade400),
+              final avail = m['available'] != false; // sem chave = "em breve"
+              return Opacity(
+                opacity: avail ? 1 : .55,
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(
+                      border: Border.all(color: sel ? AppTheme.seed : AppTheme.border, width: sel ? 1.6 : 1),
+                      borderRadius: BorderRadius.circular(12),
+                      color: sel ? AppTheme.seed.withValues(alpha: .06) : null),
+                  child: ListTile(
+                    onTap: avail ? () => onPick(id) : null,
+                    leading: aiLogo((m['logo'] ?? 'gemini').toString()),
+                    title: Row(children: [
+                      Flexible(child: Text(labelOf(id), style: const TextStyle(fontWeight: FontWeight.w700))),
+                      if (sel) ...[
+                        const SizedBox(width: 8),
+                        Text('em uso', style: TextStyle(color: AppTheme.seed, fontSize: 11.5, fontWeight: FontWeight.w700)),
+                      ] else if (!avail) ...[
+                        const SizedBox(width: 8),
+                        Text('em breve', style: TextStyle(color: Colors.grey.shade500, fontSize: 11.5, fontWeight: FontWeight.w700)),
+                      ],
+                    ]),
+                    subtitle: Text(best.isEmpty ? (m['provider'] ?? '').toString() : best,
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5)),
+                    trailing: (sel || !avail) ? null : Icon(Icons.chevron_right, color: Colors.grey.shade400),
+                  ),
                 ),
               );
             }).toList(),
           ),
         ),
       ]),
+      ),
     );
   }
 }

@@ -209,7 +209,7 @@ func (h *PackageHandler) Plan(c *gin.Context) {
 		"ai_current":   curModel,
 		"ai_pending":   pending,
 		"ai_balance":   balance,
-		"ai_offered":   h.support.OfferedModels(),
+		"ai_offered":   h.support.OfferedModelsAll(),
 	})
 }
 

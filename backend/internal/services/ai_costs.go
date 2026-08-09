@@ -38,6 +38,8 @@ type AIModelCost struct {
 	Intelligence int    `json:"intelligence,omitempty"` // 0-100 (nota comparativa)
 	Speed        int    `json:"speed,omitempty"`        // 0-100
 	BestFor      string `json:"best_for,omitempty"`     // no que ela é melhor
+	Logo         string `json:"logo,omitempty"`         // slug da marca p/ o logo (claude, gpt, deepseek, gemini)
+	Available    bool   `json:"available"`              // tem chave no ambiente (dá para escolher já)
 }
 
 // ChargeFactor é quanto o modelo consome do saldo do cliente por token real.
@@ -77,6 +79,31 @@ func (s *SupportService) AICosts(activeModel string) (AICostTable, error) {
 		t.Models[i].Active = strings.EqualFold(t.Models[i].Model, activeModel)
 	}
 	return t, nil
+}
+
+// modelAvailable diz se o modelo tem chave para rodar (key_env vazio = usa o
+// provedor padrão, sempre disponível).
+func (s *SupportService) modelAvailable(m AIModelCost) bool {
+	return m.KeyEnv == "" || os.Getenv(m.KeyEnv) != ""
+}
+
+// OfferedModelsAll devolve TODOS os modelos ofertados, cada um marcado com
+// Available. A vitrine mostra os quatro; os sem chave aparecem como "em breve" em
+// vez de sumirem — o cliente vê o que existe, e só escolhe o que roda.
+func (s *SupportService) OfferedModelsAll() []AIModelCost {
+	t, err := s.AICosts("")
+	if err != nil {
+		return nil
+	}
+	out := []AIModelCost{}
+	for _, m := range t.Models {
+		if !m.Offered {
+			continue
+		}
+		m.Available = s.modelAvailable(m)
+		out = append(out, m)
+	}
+	return out
 }
 
 // OfferedModels devolve os modelos que o cliente pode escolher (com chave
