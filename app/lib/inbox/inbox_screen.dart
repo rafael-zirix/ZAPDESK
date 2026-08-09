@@ -9,7 +9,6 @@ import '../core/config.dart';
 import '../core/file_pick.dart';
 import '../core/geolocation.dart';
 import '../core/theme.dart';
-import '../core/theme_controller.dart';
 import '../core/url_open.dart';
 import '../models/app_user.dart';
 import '../models/contact.dart';
