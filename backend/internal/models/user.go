@@ -23,6 +23,7 @@ type User struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt *time.Time
+	ProfileID *string // perfil de acesso (nil = comportamento do papel)
 }
 
 // IsAdmin indica se o usuário administra a conta.
@@ -37,6 +38,8 @@ type CreateUserRequest struct {
 	Email    *string `json:"email" binding:"omitempty,email"`
 	Phone    *string `json:"phone" binding:"omitempty"`
 	Role     string  `json:"role" binding:"required,oneof=admin agent vendedor"`
+	// Perfil de acesso: "" = sem perfil (comportamento do papel).
+	ProfileID *string `json:"profile_id"`
 }
 
 // UpdateUserRequest é o corpo para atualizar um usuário (campos opcionais).
@@ -46,6 +49,8 @@ type UpdateUserRequest struct {
 	Phone    *string `json:"phone" binding:"omitempty"`
 	Role     *string `json:"role" binding:"omitempty,oneof=admin agent vendedor"`
 	IsActive *bool   `json:"is_active"`
+	// Perfil de acesso: nil mantém; "" remove (volta ao papel); uuid troca.
+	ProfileID *string `json:"profile_id"`
 }
 
 // UserResponse é a representação pública de um usuário.
@@ -59,6 +64,9 @@ type UserResponse struct {
 	IsActive  bool      `json:"is_active"`
 	Presence  string    `json:"presence"`
 	CreatedAt time.Time `json:"created_at"`
+	// Perfil de acesso (quando o usuário tem um): o app monta menu/botões.
+	ProfileID *string         `json:"profile_id,omitempty"`
+	Perms     map[string]Perm `json:"perms,omitempty"`
 }
 
 // ToResponse converte o modelo para a resposta pública.
@@ -73,5 +81,6 @@ func (u *User) ToResponse() UserResponse {
 		IsActive:  u.IsActive,
 		Presence:  u.Presence,
 		CreatedAt: u.CreatedAt,
+		ProfileID: u.ProfileID,
 	}
 }

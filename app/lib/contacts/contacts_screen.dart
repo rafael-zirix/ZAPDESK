@@ -168,8 +168,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Ficha rica do cadastro único (empresa, CPF/CNPJ, endereço) — é do
-          // módulo CRM; sem ele, o botão não aparece.
-          if (context.read<AuthController>().has('crm'))
+          // módulo CRM e da permissão 'contatos_ficha' do perfil.
+          if (context.read<AuthController>().has('crm') &&
+              (context.read<AuthController>().me?.canView('contatos_ficha') ?? false))
             IconButton(
                 icon: const Icon(Icons.badge_outlined),
                 tooltip: 'Ficha do contato (CRM)',

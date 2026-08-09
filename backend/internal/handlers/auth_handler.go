@@ -10,9 +10,20 @@ import (
 	"zapdesk/internal/services"
 )
 
-type AuthHandler struct{ auth *services.AuthService }
+type AuthHandler struct {
+	auth *services.AuthService
+	// Perfis de acesso (opcional): o /auth/me devolve as permissões para o
+	// app montar menu e botões. Nil = feature desligada.
+	perms *services.AccessProfileService
+}
 
 func NewAuthHandler(auth *services.AuthService) *AuthHandler { return &AuthHandler{auth: auth} }
+
+// WithPerms liga a resolução de permissões do perfil no /auth/me.
+func (h *AuthHandler) WithPerms(p *services.AccessProfileService) *AuthHandler {
+	h.perms = p
+	return h
+}
 
 // Login envia um código OTP para o identificador.
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -74,6 +85,13 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 		return
 	}
 	res, err := h.auth.VerifyOTP(req.Identifier, req.Code)
+	if err == nil && h.perms != nil {
+		// Mesmo enriquecimento do /auth/me: o menu nasce certo já no login.
+		if pid, perms, perr := h.perms.UserPerms(res.User.ID); perr == nil && pid != nil {
+			res.User.ProfileID = pid
+			res.User.Perms = perms
+		}
+	}
 	if err != nil {
 		if errors.Is(err, services.ErrAuthTooManyRequests) {
 			c.Header("Retry-After", "900")
@@ -100,6 +118,13 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	if err != nil {
 		RespondError(c, http.StatusUnauthorized, ErrUnauthorized, "Sessão inválida", nil)
 		return
+	}
+	// Permissões do perfil (quando houver): o app esconde menu/botões por elas.
+	if h.perms != nil {
+		if pid, perms, err := h.perms.UserPerms(me.ID); err == nil && pid != nil {
+			me.ProfileID = pid
+			me.Perms = perms
+		}
 	}
 	RespondSuccess(c, http.StatusOK, "OK", me)
 }

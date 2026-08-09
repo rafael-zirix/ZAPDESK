@@ -8,6 +8,8 @@ class AppUser {
     required this.role,
     this.phone,
     this.presence = 'available',
+    this.profileId,
+    this.perms,
   });
 
   bool get isAway => presence == 'away';
@@ -20,8 +22,39 @@ class AppUser {
   final String? phone; // celular (WhatsApp) — usado no login por OTP
   final String presence; // available | away (informativo)
 
+  /// Perfil de acesso (Configurações → Perfis). Nulo = sem perfil: vale o
+  /// comportamento do papel (legado).
+  final String? profileId;
+  final Map<String, Map<String, bool>>? perms; // chave -> {view, write}
+
   bool get isSuperAdmin => role == 'superadmin';
   bool get isAdmin => role == 'admin';
+
+  /// O usuário pode VER esta função? Admin sempre; sem perfil, vale o papel
+  /// (true — o perfil só RESTRINGE, nunca abre o que o papel fecha).
+  bool canView(String key) {
+    if (isAdmin || isSuperAdmin) return true;
+    final p = perms;
+    if (p == null) return true;
+    return p[key]?['view'] ?? false;
+  }
+
+  /// O usuário pode GRAVAR nesta função?
+  bool canWrite(String key) {
+    if (isAdmin || isSuperAdmin) return true;
+    final p = perms;
+    if (p == null) return true;
+    return p[key]?['write'] ?? false;
+  }
+
+  /// O perfil concede uma função de ADMIN a este usuário? (delegação — sem
+  /// perfil, não-admin não ganha nada)
+  bool delegated(String key) {
+    if (isAdmin || isSuperAdmin) return true;
+    final p = perms;
+    if (p == null) return false;
+    return p[key]?['view'] ?? false;
+  }
 
   /// Cópia com a presença trocada (o app alterna disponível/ausente sem
   /// recarregar o /auth/me inteiro).
@@ -33,6 +66,8 @@ class AppUser {
         role: role,
         phone: phone,
         presence: presence ?? this.presence,
+        profileId: profileId,
+        perms: perms,
       );
 
   /// Iniciais para o avatar.
@@ -51,5 +86,15 @@ class AppUser {
         role: j['role'] ?? 'agent',
         phone: (j['phone'] == null || j['phone'] == '') ? null : j['phone'] as String,
         presence: j['presence'] ?? 'available',
+        profileId: j['profile_id'] as String?,
+        perms: j['perms'] == null
+            ? null
+            : {
+                for (final e in (j['perms'] as Map).entries)
+                  e.key as String: {
+                    'view': (e.value['view'] ?? false) as bool,
+                    'write': (e.value['write'] ?? false) as bool,
+                  },
+              },
       );
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
 import '../models/app_user.dart';
@@ -86,6 +87,15 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   Future<void> _openForm(UsersController c, {AppUser? edit}) async {
+    // Perfis de acesso da empresa (Configurações → Perfis) para o dropdown.
+    final pr = await ApiClient.instance.get('/settings/profiles');
+    final profiles = <(String, String)>[('', 'Padrão do papel')];
+    if (pr.ok && pr.data is List) {
+      for (final p in pr.data as List) {
+        profiles.add(((p['id'] ?? '') as String, (p['name'] ?? '') as String));
+      }
+    }
+    if (!mounted) return;
     await showEntityForm(
       context,
       title: edit == null ? 'Novo usuário' : 'Editar usuário',
@@ -102,7 +112,7 @@ class _UsersScreenState extends State<UsersScreen> {
         ),
         FieldSpec(
           key: 'role',
-          label: 'Perfil',
+          label: 'Papel',
           initial: edit?.role ?? 'agent',
           options: const [
             ('agent', 'Atendente'),
@@ -110,8 +120,22 @@ class _UsersScreenState extends State<UsersScreen> {
             ('admin', 'Administrador'),
           ],
         ),
+        if (profiles.length > 1)
+          FieldSpec(
+            key: 'profile_id',
+            label: 'Perfil de acesso (o que vê e grava)',
+            initial: edit?.profileId ?? '',
+            required: false,
+            options: profiles,
+          ),
       ],
-      onSubmit: (v) => c.save(id: edit?.id, fullName: v['full_name']!, email: v['email']!, phone: v['phone'], role: v['role']!),
+      onSubmit: (v) => c.save(
+          id: edit?.id,
+          fullName: v['full_name']!,
+          email: v['email']!,
+          phone: v['phone'],
+          role: v['role']!,
+          profileId: v['profile_id']),
     );
   }
 

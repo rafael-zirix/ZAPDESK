@@ -21,6 +21,7 @@ import '../models/app_user.dart';
 import '../modules/module_teaser.dart';
 import '../onboarding/onboarding_screen.dart';
 import '../plans/plans_screen.dart';
+import '../profiles/profiles_screen.dart';
 import '../sectors/sectors_screen.dart';
 import '../settings/settings_screen.dart';
 import '../tags/tags_screen.dart';
@@ -151,23 +152,45 @@ class _AppShellState extends State<AppShell> {
       items.add(_NavDest(Icons.rocket_launch_outlined, Icons.rocket_launch, 'Início',
           OnboardingScreen(onGo: _goToLabel, onDone: _finishOnboarding)));
     }
+    // O menu segue o PERFIL de acesso: sem "ver" o item some. Usuário sem
+    // perfil mantém o comportamento do papel; função de admin só aparece a
+    // não-admin quando o perfil a delega.
     // Ícone sem "caixa" (o balão do forum destoava dos demais, todos em traço).
-    items.add(const _NavDest(Icons.support_agent_outlined, Icons.support_agent, 'Atendimento', InboxScreen()));
-    items.add(const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()));
-    // CRM: admin e atendente (o vendedor vê o próprio funil; o recorte é do backend).
-    items.add(_gated('crm',
-        const _NavDest(Icons.view_kanban_outlined, Icons.view_kanban, 'CRM', CrmScreen())));
-    if (me.isAdmin) {
+    if (me.canView('atendimento')) {
+      items.add(const _NavDest(Icons.support_agent_outlined, Icons.support_agent, 'Atendimento', InboxScreen()));
+    }
+    if (me.canView('contatos')) {
+      items.add(const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()));
+    }
+    if (me.canView('crm')) {
+      items.add(_gated('crm',
+          const _NavDest(Icons.view_kanban_outlined, Icons.view_kanban, 'CRM', CrmScreen())));
+    }
+    if (me.delegated('usuarios')) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
+    }
+    if (me.delegated('setores')) {
       items.add(const _NavDest(Icons.workspaces_outline, Icons.workspaces, 'Setores', SectorsScreen()));
+    }
+    if (me.delegated('etiquetas')) {
       items.add(const _NavDest(Icons.local_offer_outlined, Icons.local_offer, 'Etiquetas', TagsScreen()));
+    }
+    if (me.delegated('telefones')) {
       items.add(const _NavDest(Icons.smartphone_outlined, Icons.smartphone, 'Telefones', WhatsAppScreen()));
+    }
+    if (me.delegated('instagram')) {
       items.add(_gated('instagram',
           const _NavDest(Icons.camera_alt_outlined, Icons.camera_alt, 'Instagram', InstagramScreen())));
+    }
+    if (me.delegated('campanhas')) {
       items.add(_gated('campanhas',
           const _NavDest(Icons.campaign_outlined, Icons.campaign, 'Campanhas', CampaignsScreen())));
+    }
+    if (me.delegated('metricas')) {
       items.add(_gated('metricas',
           const _NavDest(Icons.query_stats_outlined, Icons.query_stats, 'Métricas', MetricsScreen())));
+    }
+    if (me.delegated('modelos')) {
       // Os dois vivem no flyout "Modelos" — o nome curto basta sob o cabeçalho.
       items.add(const _NavDest(Icons.article_outlined, Icons.article, 'Conversa',
           TemplatesScreen(usage: 'chat')));
@@ -175,12 +198,19 @@ class _AppShellState extends State<AppShell> {
           'campanhas',
           const _NavDest(Icons.mark_email_read_outlined, Icons.mark_email_read, 'Campanha',
               TemplatesScreen(usage: 'campaign'))));
+    }
+    if (me.delegated('ia')) {
       items.add(_gated('ia',
           const _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'Atendente IA', AIScreen())));
+    }
+    if (me.isAdmin) {
+      // Indelegáveis: plano/cobrança, consumo, login e o editor de perfis.
       items.add(const _NavDest(Icons.inventory_2_outlined, Icons.inventory_2, 'Meu plano', MeuPlanoScreen()));
       items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
       items.add(const _NavDest(Icons.key_outlined, Icons.key, 'Tipo de login', SettingsScreen()));
+      items.add(const _NavDest(Icons.admin_panel_settings_outlined, Icons.admin_panel_settings,
+          'Perfis', ProfilesScreen()));
     }
     return items;
   }
@@ -191,6 +221,23 @@ class _AppShellState extends State<AppShell> {
     if (me == null) return const SizedBox.shrink();
 
     final dests = _destinations(me);
+    // Perfil sem NENHUMA função de menu: placeholder em vez de RangeError.
+    if (dests.isEmpty) {
+      return Scaffold(
+        body: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.lock_outline, size: 40, color: Colors.grey.shade400),
+            const SizedBox(height: 12),
+            const Text('Seu perfil não libera nenhuma função do painel.\nFale com o administrador da sua empresa.',
+                textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            TextButton(
+                onPressed: () => context.read<AuthController>().logout(),
+                child: const Text('Sair')),
+          ]),
+        ),
+      );
+    }
     // Restaura a aba salva UMA vez, depois de saber os destinos do papel.
     if (!_restored && _savedLabel != null) {
       final idx = dests.indexWhere((d) => d.label == _savedLabel);
@@ -289,7 +336,7 @@ class _AppShellState extends State<AppShell> {
       label: 'Configurações',
       icon: Icons.settings_outlined,
       activeIcon: Icons.settings,
-      members: {'Telefones', 'Instagram', 'Planos', 'Consumo', 'Tipo de login'},
+      members: {'Telefones', 'Instagram', 'Planos', 'Consumo', 'Tipo de login', 'Perfis'},
     ),
   ];
 
@@ -373,8 +420,12 @@ class _AppShellState extends State<AppShell> {
         if (v == 'logout') context.read<AuthController>().logout();
         if (v == 'presence') {
           final target = away ? 'available' : 'away';
+          final before = presence;
           setState(() => _presence = target);
-          _api.put('/support/presence', {'presence': target});
+          // Otimista com reversão: se o servidor recusar, a bolinha volta.
+          _api.put('/support/presence', {'presence': target}).then((r) {
+            if (!r.ok && mounted) setState(() => _presence = before);
+          });
         }
       },
       itemBuilder: (_) => [

@@ -189,6 +189,15 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	moduleSvc := services.NewModuleService(repository.NewModuleRepository(db)).WithAccounts(accountRepo).WithSettings(supportRepo)
 	moduleH := handlers.NewModuleHandler(moduleSvc)
 
+	// Perfis de acesso por empresa: o admin cria perfis (Configurações →
+	// Perfis) e cada função do sistema vira ver/gravar. Usuário sem perfil
+	// segue o papel (legado); plano/cobrança e o editor não são delegáveis.
+	apRepo := repository.NewAccessProfileRepository(db)
+	apSvc := services.NewAccessProfileService(apRepo)
+	apH := handlers.NewAccessProfileHandler(apSvc)
+	authH = authH.WithPerms(apSvc)   // /auth/me devolve as permissões do perfil
+	userH = userH.WithProfiles(apRepo) // atribuição de perfil no cadastro
+
 	// CRM — funil de vendas ligado às conversas (módulo 'crm'). O contato do
 	// card é o MESMO do atendimento (cadastro único em support_contacts).
 	crmRepo := repository.NewCrmRepository(db)
@@ -304,15 +313,54 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 		users := api.Group("/users")
 		{
-			users.GET("", userH.List)
+			users.GET("", userH.List) // aberto: alimenta transferência/atribuição
 			users.GET("/:id", userH.Get)
-			users.POST("", middleware.RequireAdmin(), userH.Create)
-			users.PUT("/:id", middleware.RequireAdmin(), userH.Update)
-			users.DELETE("/:id", middleware.RequireAdmin(), userH.Delete)
+			// Gestão de usuários é delegável por perfil (chave 'usuarios').
+			users.POST("", middleware.RequireAdminOrPerm(apSvc, "usuarios"), userH.Create)
+			users.PUT("/:id", middleware.RequireAdminOrPerm(apSvc, "usuarios"), userH.Update)
+			users.DELETE("/:id", middleware.RequireAdminOrPerm(apSvc, "usuarios"), userH.Delete)
 		}
 
-		// Inbox de atendimento.
-		support := api.Group("/support")
+		// Editor de perfis (Configurações → Perfis): SÓ admin, indelegável.
+		profiles := api.Group("/settings/profiles", middleware.RequireAdmin())
+		{
+			profiles.GET("", apH.List)
+			profiles.GET("/catalog", apH.Catalog)
+			profiles.POST("", apH.Create)
+			profiles.PUT("/:id", apH.Update)
+			profiles.DELETE("/:id", apH.Delete)
+		}
+
+		// Configuração do atendimento (setores, etiquetas, modelos, métricas):
+		// grupo SEM o gate de 'atendimento' — um perfil pode delegar só estas
+		// funções (ex.: Gerente com métricas) sem abrir as conversas.
+		supportCfg := api.Group("/support")
+		{
+			supportCfg.GET("/templates", supportH.ListTemplates) // modelos da conta (todos os status)
+			// Escritas de modelo: perfil sem 'modelos' não cria/liga/troca uso
+			// (RequirePerm preserva o legado de quem não tem perfil).
+			supportCfg.POST("/templates", middleware.RequirePerm(apSvc, "modelos"), supportH.CreateTemplate)
+			supportCfg.POST("/templates/full", middleware.RequireAdminOrPerm(apSvc, "modelos"), supportH.CreateTemplateFull)   // modelo completo (cabeçalho/variáveis/botões)
+			supportCfg.POST("/templates/image", middleware.RequireAdminOrPerm(apSvc, "modelos"), supportH.UploadTemplateImage) // imagem de exemplo do cabeçalho
+			supportCfg.PUT("/templates/:name/enabled", middleware.RequirePerm(apSvc, "modelos"), supportH.SetTemplateEnabled)
+			supportCfg.PUT("/templates/:name/usage", middleware.RequirePerm(apSvc, "modelos"), supportH.SetTemplateUsage)
+			supportCfg.GET("/sectors", supportH.ListSectors)                                             // setores (todos veem, p/ transferir)
+			supportCfg.POST("/sectors", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.CreateSector)
+			supportCfg.PUT("/sectors/:id", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.UpdateSector)
+			supportCfg.DELETE("/sectors/:id", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.DeleteSector)
+			supportCfg.PUT("/sectors/:id/ad", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.SetAdSector) // recebe os leads de anúncio
+			supportCfg.GET("/tags", supportH.ListTags) // etiquetas da empresa
+			supportCfg.POST("/tags", middleware.RequirePerm(apSvc, "etiquetas"), supportH.CreateTag)
+			// Presença é estado do PRÓPRIO usuário — vale para qualquer perfil.
+			supportCfg.PUT("/presence", supportH.SetMyPresence)
+			supportCfg.PUT("/tags/:id", middleware.RequireAdminOrPerm(apSvc, "etiquetas"), supportH.UpdateTag)
+			supportCfg.DELETE("/tags/:id", middleware.RequireAdminOrPerm(apSvc, "etiquetas"), supportH.DeleteTag)
+			// Fase 4: dashboard de métricas de atendimento.
+			supportCfg.GET("/metrics", middleware.RequireAdminOrPerm(apSvc, "metricas"), middleware.RequireModule(moduleSvc, services.ModuleMetricas), supportH.SupportMetrics)
+		}
+
+		// Inbox de atendimento. Perfil sem 'atendimento' não entra aqui.
+		support := api.Group("/support", middleware.RequirePerm(apSvc, "atendimento"))
 		{
 			support.GET("/tickets", supportH.ListTickets)
 			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
@@ -325,13 +373,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets/:id/location", supportH.SendLocation)                              // envia localização
 			support.POST("/tickets/:id/contact", supportH.SendContact)                                // envia cartão de contato
 			support.POST("/tickets/:id/messages/:msgId/retry", supportH.RetryMessage)                 // reenvia mensagem que falhou
-			support.POST("/forward", supportH.ForwardMessage)                                         // encaminha uma mensagem a outro contato
-			support.GET("/templates", supportH.ListTemplates)                                         // modelos da conta (todos os status)
-			support.POST("/templates", supportH.CreateTemplate)                                       // cria um modelo (vai p/ aprovação da Meta)
-			support.POST("/templates/full", middleware.RequireAdmin(), supportH.CreateTemplateFull)   // modelo completo (cabeçalho/variáveis/botões)
-			support.POST("/templates/image", middleware.RequireAdmin(), supportH.UploadTemplateImage) // imagem de exemplo do cabeçalho
-			support.PUT("/templates/:name/enabled", supportH.SetTemplateEnabled)                      // liga/desliga na barra de mensagens prontas
-			support.PUT("/templates/:name/usage", supportH.SetTemplateUsage)                          // conversa × campanha
+			support.POST("/forward", supportH.ForwardMessage) // encaminha uma mensagem a outro contato
 			support.GET("/ai-state", supportH.AIState)                                                // Atendente IA ligado na empresa? (exibe o toggle na conversa)
 			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)                        // consumo/valores da própria empresa (admin)
 			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                                     // liga/pausa a IA nesta conversa
@@ -341,12 +383,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets/:id/claim", supportH.ClaimTicket)       // assumir a conversa (puxar p/ si)
 			support.POST("/tickets/:id/transfer", supportH.TransferTicket) // transferir p/ atendente e/ou setor
 			support.PUT("/tickets/:id/status", supportH.SetTicketStatus)   // resolver / fechar / reabrir…
-			support.GET("/tickets/:id/events", supportH.ListTicketEvents)  // timeline (transferências, status, notas)
-			support.GET("/sectors", supportH.ListSectors)                  // setores (todos veem, p/ transferir)
-			support.POST("/sectors", middleware.RequireAdmin(), supportH.CreateSector)
-			support.PUT("/sectors/:id", middleware.RequireAdmin(), supportH.UpdateSector)
-			support.DELETE("/sectors/:id", middleware.RequireAdmin(), supportH.DeleteSector)
-			support.PUT("/sectors/:id/ad", middleware.RequireAdmin(), supportH.SetAdSector) // recebe os leads de anúncio
+			support.GET("/tickets/:id/events", supportH.ListTicketEvents) // timeline (transferências, status, notas)
 			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
 			support.POST("/tickets/:id/notes", supportH.AddNote)  // nota interna (só a equipe vê)
 			support.PUT("/tickets/:id/phone", supportH.LinkPhone) // cadastra o WhatsApp de um contato do Instagram
@@ -361,17 +398,10 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/quick-replies", supportH.CreateQuickReply)
 			support.PUT("/quick-replies/:id", supportH.UpdateQuickReply)
 			support.DELETE("/quick-replies/:id", supportH.DeleteQuickReply)
-			support.GET("/tags", supportH.ListTags) // etiquetas da empresa
-			support.POST("/tags", supportH.CreateTag)
-			support.PUT("/tags/:id", middleware.RequireAdmin(), supportH.UpdateTag)
-			support.DELETE("/tags/:id", middleware.RequireAdmin(), supportH.DeleteTag)
-			support.PUT("/presence", supportH.SetMyPresence) // disponível / ausente
-			// Fase 4: dashboard de métricas de atendimento (admin).
-			support.GET("/metrics", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleMetricas), supportH.SupportMetrics)
 		}
 
 		// Contatos (clientes finais da empresa).
-		contacts := api.Group("/contacts")
+		contacts := api.Group("/contacts", middleware.RequirePerm(apSvc, "contatos"))
 		{
 			contacts.GET("", supportH.ListContacts)
 			contacts.POST("", supportH.CreateContact)
@@ -383,15 +413,26 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 		// CRM (módulo 'crm'): Kanban de negócios ligado às conversas. Atendente
 		// vê os seus + os sem dono; admin vê tudo e filtra por vendedor.
+		// Grupo /crm: módulo+conta valem para tudo; as chaves de permissão são
+		// POR ÁREA — relatórios ('crm_relatorios') e ficha ('contatos_ficha')
+		// são autossuficientes, para o perfil "só relatórios" funcionar sem a
+		// chave do quadro.
 		crm := api.Group("/crm", middleware.RequireModule(moduleSvc, services.ModuleCRM),
 			middleware.RequireAccount()) // superadmin não tem conta — sem isto, 500 de uuid vazio
 		{
-			crm.GET("/board", crmH.Board)    // etapas + negócios abertos/ganhos (o Kanban numa chamada)
-			crm.GET("/reports", crmH.Report) // funil + resumo + perdas + perdidos
+			crm.GET("/reports", middleware.RequirePerm(apSvc, "crm_relatorios"), crmH.Report) // funil + resumo + perdas + perdidos
+			// Ficha rica do cadastro único (PII: CPF/CNPJ, endereço) — chave própria.
+			crm.GET("/contacts/:id/ficha", middleware.RequirePerm(apSvc, "contatos_ficha"), crmH.GetContactFicha)
+			crm.PUT("/contacts/:id/ficha", middleware.RequirePerm(apSvc, "contatos_ficha"), crmH.UpdateContactFicha)
+		}
+		crmBoard := crm.Group("", middleware.RequirePerm(apSvc, "crm"))
+		{
+			crm := crmBoard // as rotas abaixo exigem a chave 'crm'
+			crm.GET("/board", crmH.Board) // etapas + negócios abertos/ganhos (o Kanban numa chamada)
 			crm.GET("/stages", crmH.ListStages)
-			crm.POST("/stages", middleware.RequireAdmin(), crmH.CreateStage)
-			crm.PUT("/stages/:id", middleware.RequireAdmin(), crmH.UpdateStage)
-			crm.DELETE("/stages/:id", middleware.RequireAdmin(), crmH.DeleteStage)
+			crm.POST("/stages", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.CreateStage)
+			crm.PUT("/stages/:id", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.UpdateStage)
+			crm.DELETE("/stages/:id", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.DeleteStage)
 			crm.GET("/deals", crmH.ListDeals)
 			crm.POST("/deals", crmH.CreateDeal)
 			crm.PUT("/deals/:id", crmH.UpdateDeal)
@@ -399,17 +440,14 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			crm.PATCH("/deals/:id/move", crmH.MoveDeal) // drag & drop entre etapas
 			crm.POST("/deals/:id/lose", crmH.LoseDeal)  // perde com motivo
 			crm.GET("/loss-reasons", crmH.ListLossReasons)
-			crm.POST("/loss-reasons", middleware.RequireAdmin(), crmH.CreateLossReason)
-			crm.PUT("/loss-reasons/:id", middleware.RequireAdmin(), crmH.UpdateLossReason)
-			crm.DELETE("/loss-reasons/:id", middleware.RequireAdmin(), crmH.DeleteLossReason)
+			crm.POST("/loss-reasons", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.CreateLossReason)
+			crm.PUT("/loss-reasons/:id", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.UpdateLossReason)
+			crm.DELETE("/loss-reasons/:id", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.DeleteLossReason)
 			crm.GET("/sellers", crmH.ListSellers) // dropdown do filtro por vendedor
-			// Ficha rica do cadastro único (empresa, CPF/CNPJ, endereço).
-			crm.GET("/contacts/:id/ficha", crmH.GetContactFicha)
-			crm.PUT("/contacts/:id/ficha", crmH.UpdateContactFicha)
 		}
 
 		// Grupos de contatos (listas de marketing — audiência das campanhas).
-		groups := api.Group("/contact-groups")
+		groups := api.Group("/contact-groups", middleware.RequirePerm(apSvc, "contatos"))
 		{
 			groups.GET("", supportH.ListContactGroups)
 			groups.POST("", supportH.CreateContactGroup)
@@ -420,7 +458,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 		// Área do CLIENTE: a própria empresa (admin) conecta os seus números.
 		// A conta vem do token — ninguém da plataforma toca no token.
-		settings := api.Group("/settings/whatsapp", middleware.RequireAdmin())
+		settings := api.Group("/settings/whatsapp", middleware.RequireAdminOrPerm(apSvc, "telefones"))
 		{
 			settings.GET("", waH.List)
 			settings.POST("", waH.Connect)
@@ -438,7 +476,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		}
 
 		// Instagram da própria empresa (admin): conectar/desconectar a conta.
-		insta := api.Group("/settings/instagram", middleware.RequireAdmin(),
+		insta := api.Group("/settings/instagram", middleware.RequireAdminOrPerm(apSvc, "instagram"),
 			middleware.RequireModule(moduleSvc, services.ModuleInstagram))
 		{
 			insta.GET("", igH.List)
@@ -469,15 +507,18 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 		// Atendente IA da própria empresa (admin): config, base de conhecimento,
 		// saldo/extrato de tokens.
-		ai := api.Group("/ai", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleIA))
+		// Config da IA é delegável (chave 'ia'); TUDO que é dinheiro dentro do
+		// grupo (tokens, recarga, assinatura) ganha RequireAdmin explícito —
+		// mudança de plano/cobrança é SÓ do admin, perfil nenhum destrava.
+		ai := api.Group("/ai", middleware.RequireAdminOrPerm(apSvc, "ia"), middleware.RequireModule(moduleSvc, services.ModuleIA))
 		{
 			ai.GET("/config", aiH.GetConfig)
 			ai.GET("/models", aiH.Models)   // modelos que a empresa pode escolher
 			ai.PUT("/models", aiH.SetModel) // escolha do modelo (consumo por fator)
 			ai.PUT("/config", aiH.SetConfig)
-			ai.POST("/autorecharge/setup", billingH.StripeSetup)     // cadastra cartão (Stripe) p/ recarga a 10%
-			ai.GET("/autorecharge", billingH.AutoRecharge)           // estado da recarga automática
-			ai.DELETE("/autorecharge", billingH.DisableAutoRecharge) // desliga
+			ai.POST("/autorecharge/setup", middleware.RequireAdmin(), billingH.StripeSetup)     // cadastra cartão (Stripe) p/ recarga a 10%
+			ai.GET("/autorecharge", middleware.RequireAdmin(), billingH.AutoRecharge)           // estado da recarga automática
+			ai.DELETE("/autorecharge", middleware.RequireAdmin(), billingH.DisableAutoRecharge) // desliga
 			ai.GET("/context", aiH.ListContext)
 			ai.POST("/context", aiH.AddContext)
 			ai.PUT("/context/:id", aiH.UpdateContext)
@@ -489,18 +530,18 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.PUT("/actions/:id", aiH.UpdateAction)
 			ai.PUT("/actions/:id/enabled", aiH.ToggleAction)
 			ai.DELETE("/actions/:id", aiH.DeleteAction)
-			ai.GET("/ledger", aiH.Ledger)
-			ai.GET("/plans", billingH.Plans)                       // planos/pacotes + preço p/ o cliente
-			ai.POST("/recharge/checkout", billingH.Checkout)       // gera o PIX (Mercado Pago)
-			ai.POST("/recharge/preference", billingH.CardCheckout) // Checkout Pro (PIX + cartão hospedado)
-			ai.GET("/recharge/order/:ref", billingH.OrderStatus)   // polling do pedido até creditar
-			ai.POST("/subscription", billingH.Subscribe)           // recarga automática (assinatura MP)
-			ai.GET("/subscription", billingH.Subscription)         // estado da assinatura
-			ai.DELETE("/subscription", billingH.Unsubscribe)       // cancela a recarga automática
+			ai.GET("/ledger", middleware.RequireAdmin(), aiH.Ledger) // extrato de tokens = dinheiro, indelegável
+			ai.GET("/plans", middleware.RequireAdmin(), billingH.Plans)                       // planos/pacotes + preço p/ o cliente
+			ai.POST("/recharge/checkout", middleware.RequireAdmin(), billingH.Checkout)       // gera o PIX (Mercado Pago)
+			ai.POST("/recharge/preference", middleware.RequireAdmin(), billingH.CardCheckout) // Checkout Pro (PIX + cartão hospedado)
+			ai.GET("/recharge/order/:ref", middleware.RequireAdmin(), billingH.OrderStatus)   // polling do pedido até creditar
+			ai.POST("/subscription", middleware.RequireAdmin(), billingH.Subscribe)           // recarga automática (assinatura MP)
+			ai.GET("/subscription", middleware.RequireAdmin(), billingH.Subscription)         // estado da assinatura
+			ai.DELETE("/subscription", middleware.RequireAdmin(), billingH.Unsubscribe)       // cancela a recarga automática
 		}
 
 		// Campanhas de WhatsApp (admin): disparo de template com ritmo controlado.
-		campaigns := api.Group("/campaigns", middleware.RequireAdmin(), middleware.RequireModule(moduleSvc, services.ModuleCampanhas))
+		campaigns := api.Group("/campaigns", middleware.RequireAdminOrPerm(apSvc, "campanhas"), middleware.RequireModule(moduleSvc, services.ModuleCampanhas))
 		{
 			campaigns.GET("", supportH.ListCampaigns)
 			campaigns.POST("", supportH.CreateCampaign)
