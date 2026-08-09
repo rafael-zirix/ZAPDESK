@@ -214,6 +214,13 @@ func (s *ModuleService) RegisterInterest(accountID, key, userID string) error {
 	return s.repo.AddInterest(accountID, key, userID)
 }
 
+// RegisterPackageInterest registra o "quero COMPRAR" de um PACOTE (botão
+// Comprar do Meu plano). Vai para a mesma fila dos módulos, com a chave
+// prefixada para a plataforma distinguir.
+func (s *ModuleService) RegisterPackageInterest(accountID, packageName, userID string) error {
+	return s.repo.AddInterest(accountID, "pacote: "+packageName, userID)
+}
+
 func knownModule(key string) bool {
 	key = strings.TrimSpace(key)
 	for _, m := range ModuleCatalog() {

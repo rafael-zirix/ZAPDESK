@@ -20,11 +20,57 @@ type PackageHandler struct {
 	settings *repository.SupportRepository // guarda os valores de crédito (platform_settings)
 	svc      *services.PackageService      // atribuição (aplica módulos/limites)
 	support  *services.SupportService      // estado e troca de IA
+	modules  *services.ModuleService       // fila de interesses (botão Comprar do Meu plano)
 }
 
 func NewPackageHandler(repo *repository.PackageRepository, settings *repository.SupportRepository,
 	svc *services.PackageService, support *services.SupportService) *PackageHandler {
 	return &PackageHandler{repo: repo, settings: settings, svc: svc, support: support}
+}
+
+// WithModules liga a fila de interesses (pedido de compra/upgrade de pacote).
+func (h *PackageHandler) WithModules(m *services.ModuleService) *PackageHandler {
+	h.modules = m
+	return h
+}
+
+// RequestUpgrade registra o pedido de COMPRA/upgrade de pacote (botão Comprar
+// da tela Meu plano). A ativação e o ajuste da cobrança são feitos pela
+// plataforma; o pedido fica na mesma fila dos módulos.
+func (h *PackageHandler) RequestUpgrade(c *gin.Context) {
+	var req struct {
+		PackageID string `json:"package_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, ErrValidation, "Escolha o pacote", err.Error())
+		return
+	}
+	pkgs, err := h.repo.List(true)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao carregar os pacotes", nil)
+		return
+	}
+	var target *models.Package
+	for i := range pkgs {
+		if pkgs[i].ID == req.PackageID {
+			target = &pkgs[i]
+			break
+		}
+	}
+	if target == nil {
+		RespondError(c, http.StatusNotFound, ErrNotFound, "Pacote não encontrado", nil)
+		return
+	}
+	if h.modules != nil {
+		if err := h.modules.RegisterPackageInterest(middleware.AccountID(c), target.Name,
+			c.GetString(middleware.CtxUserID)); err != nil {
+			RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao registrar o pedido", nil)
+			return
+		}
+	}
+	RespondSuccess(c, http.StatusCreated,
+		"Pedido enviado! Nossa equipe ativa o pacote "+target.Name+" e entra em contato para acertar a cobrança.",
+		gin.H{"package_id": target.ID, "package": target.Name})
 }
 
 // creditPacksKey guarda os VALORES em reais dos pacotes de crédito. São só valores;

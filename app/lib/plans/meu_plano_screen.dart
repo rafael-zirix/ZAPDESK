@@ -79,11 +79,12 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(20),
                     children: [
+                      // Plano atual no ALTO; upgrades com Comprar logo abaixo.
                       _packageCard(),
                       const SizedBox(height: 18),
-                      _aiCard(),
-                      const SizedBox(height: 18),
                       _vitrine(),
+                      const SizedBox(height: 18),
+                      _aiCard(),
                     ],
                   ),
                 ),
@@ -307,21 +308,27 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
     if (r.ok) await _load();
   }
 
-  // ---- vitrine de pacotes ----
+  // ---- vitrine de upgrade (com o botão Comprar) ----
+
+  /// Pacotes já pedidos nesta sessão (o botão vira "Pedido enviado ✓").
+  final Set<String> _requested = {};
+
   Widget _vitrine() {
-    if (_packages.isEmpty) return const SizedBox.shrink();
+    final others = _packages.where((p) => p.id != _current?.id).toList()
+      ..sort((a, b) => a.priceMonthCents.compareTo(b.priceMonthCents));
+    if (others.isEmpty) return const SizedBox.shrink();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
-        padding: const EdgeInsets.only(left: 4, bottom: 10),
-        child: Text('Outros pacotes',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppTheme.textOnSurface)),
+        padding: const EdgeInsets.only(left: 4, bottom: 2),
+        child: Text('Faça upgrade',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppTheme.textOnSurface)),
       ),
-      ..._packages.where((p) => p.id != _current?.id).map(_vitrineCard),
-      const SizedBox(height: 8),
-      Center(
-        child: Text('Para trocar de pacote, fale com a gente.',
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 12),
+        child: Text('Compre no clique: nossa equipe ativa o pacote e acerta a cobrança com você.',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5)),
       ),
+      ...others.map(_vitrineCard),
     ]);
   }
 
@@ -331,15 +338,39 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
     if (p.incInstagram) bits.add('Instagram');
     if (p.incCampanhas) bits.add('Campanhas');
     if (p.incMetricas) bits.add('Métricas');
+    final upgrade = (_current?.priceMonthCents ?? 0) < p.priceMonthCents;
+    final requested = _requested.contains(p.id);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-          color: AppTheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppTheme.border)),
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: upgrade ? AppTheme.seed.withValues(alpha: .55) : AppTheme.border,
+              width: upgrade ? 1.4 : 1)),
       child: Row(children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(p.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            Row(children: [
+              Flexible(
+                  child: Text(p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
+              if (upgrade) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: AppTheme.seed.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(99)),
+                  child: Text('UPGRADE',
+                      style: TextStyle(
+                          color: AppTheme.seed, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: .6)),
+                ),
+              ],
+            ]),
             const SizedBox(height: 3),
             Text('${p.incLines} linha${p.incLines > 1 ? 's' : ''} · ${p.incAgents} atendentes'
                 '${bits.isEmpty ? '' : ' · ${bits.join(' · ')}'}',
@@ -351,9 +382,58 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
           Text('R\$ ${reaisFromCents(p.priceMonthCents)}',
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppTheme.seed)),
           Text('/mês', style: TextStyle(color: Colors.grey.shade600, fontSize: 11.5)),
+          const SizedBox(height: 8),
+          requested
+              ? OutlinedButton.icon(
+                  onPressed: null,
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text('Pedido enviado'),
+                )
+              : FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.seed,
+                      minimumSize: const Size(0, 38),
+                      padding: const EdgeInsets.symmetric(horizontal: 14)),
+                  onPressed: () => _comprar(p),
+                  icon: const Icon(Icons.shopping_cart_outlined, size: 16),
+                  label: const Text('Comprar'),
+                ),
         ]),
       ]),
     );
+  }
+
+  Future<void> _comprar(AppPackage p) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Comprar o pacote ${p.name}'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('R\$ ${reaisFromCents(p.priceMonthCents)}',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 24, color: AppTheme.seed)),
+            const Padding(padding: EdgeInsets.only(bottom: 3, left: 4), child: Text('/mês')),
+          ]),
+          const SizedBox(height: 12),
+          const Text('Seu pedido vai direto para a nossa equipe: ativamos o pacote e acertamos a '
+              'cobrança com você, sem interromper o uso.'),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Confirmar compra'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final r = await _api.post('/plan/upgrade', {'package_id': p.id});
+    if (!mounted) return;
+    if (r.ok) setState(() => _requested.add(p.id ?? ''));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.message ?? (r.ok ? 'Pedido enviado!' : 'Não foi possível enviar o pedido'))));
   }
 
   Widget _card(List<Widget> children) => Container(

@@ -212,7 +212,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	})
 	// Pacotes: o CRUD + a atribuição (que aplica módulos/limites) + o "Meu plano".
 	packageSvc := services.NewPackageService(packageRepo, moduleSvc)
-	packageH := handlers.NewPackageHandler(packageRepo, supportRepo, packageSvc, supportSvc)
+	packageH := handlers.NewPackageHandler(packageRepo, supportRepo, packageSvc, supportSvc).
+		WithModules(moduleSvc) // botão Comprar do Meu plano → fila de interesses
 	// Mensalidade dos módulos (Mercado Pago): assinatura por empresa + corte por
 	// inadimplência depois da carência.
 	modSubSvc := services.NewModuleSubscriptionService(
@@ -497,6 +498,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		{
 			plan.GET("", packageH.Plan)
 			plan.PUT("/ai-model", packageH.SwitchAI)
+			plan.POST("/upgrade", packageH.RequestUpgrade) // botão Comprar do Meu plano
 		}
 
 		es := api.Group("/settings/embedded", middleware.RequireAdmin())
