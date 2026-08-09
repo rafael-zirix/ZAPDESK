@@ -365,7 +365,10 @@ class _AppShellState extends State<AppShell> {
       final entries = [
         for (var j = 0; j < dests.length; j++)
           if (owner[dests[j].label] == g) (j, dests[j]),
-      ];
+      ]
+        // Ordem alfabética dentro do flyout (o índice original segue valendo
+        // para a seleção — só a exibição muda).
+        ..sort((a, b) => a.$2.label.toLowerCase().compareTo(b.$2.label.toLowerCase()));
       if (entries.isEmpty) continue;
       final spec = _railGroups[g];
       out.add(_RailGroup(
