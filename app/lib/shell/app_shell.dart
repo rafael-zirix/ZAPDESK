@@ -324,7 +324,7 @@ class _AppShellState extends State<AppShell> {
       label: 'Cadastros',
       icon: Icons.app_registration_outlined,
       activeIcon: Icons.app_registration,
-      members: {'Contatos', 'Usuários', 'Setores', 'Etiquetas'},
+      members: {'Contatos', 'Setores', 'Etiquetas'},
     ),
     (
       label: 'Modelos',
@@ -336,7 +336,7 @@ class _AppShellState extends State<AppShell> {
       label: 'Configurações',
       icon: Icons.settings_outlined,
       activeIcon: Icons.settings,
-      members: {'Telefones', 'Instagram', 'Planos', 'Consumo', 'Tipo de login', 'Perfis'},
+      members: {'Usuários', 'Telefones', 'Instagram', 'Planos', 'Consumo', 'Tipo de login', 'Perfis'},
     ),
   ];
 
