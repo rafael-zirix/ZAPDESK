@@ -41,8 +41,12 @@ func SecurityHeaders(isDev bool) gin.HandlerFunc {
 				// default-src 'self', blob: seria barrado e o app não pintaria
 				// nada em parte dos navegadores.
 				"worker-src 'self' blob:; "+
-				"font-src 'self' data:; "+
-				"connect-src 'self' https://graph.facebook.com https://www.facebook.com https://www.gstatic.com; "+
+				// fonts.gstatic.com: o CanvasKit do Flutter BUSCA as fontes (Roboto,
+				// Noto) de lá em tempo de execução — o --no-web-resources-cdn embarca
+				// só o binário do CanvasKit, não as fontes. Sem liberar, o fetch é
+				// bloqueado e o texto some (login sem rótulos, botão vazio).
+				"font-src 'self' data: https://fonts.gstatic.com; "+
+				"connect-src 'self' https://graph.facebook.com https://www.facebook.com https://www.gstatic.com https://fonts.gstatic.com; "+
 				"frame-src https://www.facebook.com https://web.facebook.com; "+
 				"form-action 'self' https://www.facebook.com; "+
 				"frame-ancestors 'none'; "+

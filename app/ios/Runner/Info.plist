@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Zapdesk App</string>
+	<string>HotZap</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,6 +26,29 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Permissões do atendimento. O iOS DERRUBA o app na hora se o recurso for
+	     usado sem a descrição abaixo — não é aviso, é encerramento imediato.
+	     O texto é o que o cliente lê no pedido de permissão. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Para tirar foto e enviar ao cliente na conversa.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Para gravar mensagens de voz e enviar ao cliente.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Para enviar fotos e documentos ao cliente na conversa.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Para enviar sua localização ao cliente quando ele pedir onde você está.</string>
+	<!-- Em DESENVOLVIMENTO o app fala com a API por http://IP-da-máquina:porta, e
+	     o iOS bloqueia HTTP sem TLS por padrão. NSAllowsLocalNetworking libera só
+	     a rede local — a produção (hotzap.com.br) continua exigindo HTTPS. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Descoberta na rede local, exigida do iOS 14 em diante para alcançar a API
+	     de desenvolvimento rodando no Mac. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Para conectar ao servidor de testes na sua rede local.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

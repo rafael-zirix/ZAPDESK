@@ -226,9 +226,11 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
   // escolha: usar saldo e trocar depois OU trocar agora perdendo o saldo
   void _chooseHow(String targetId) {
     final temSaldo = _aiBalance > 0;
+    // dialogCtx é o contexto do PRÓPRIO diálogo: fechá-lo por aqui evita mexer no
+    // navigator da tela (era o que apagava o "Meu plano" ao confirmar a troca).
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: Text('Trocar para ${_label(targetId)}'),
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (!temSaldo)
@@ -236,19 +238,27 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
           else ...[
             _howOpt(Icons.check_circle_outline, AppTheme.seed, 'Usar o saldo e trocar depois',
                 'A troca fica agendada. Quando os ${milhar(_aiBalance)} tokens zerarem, a IA passa para ${_label(targetId)}. Nada se perde.',
-                () => _confirmSwitch(targetId, false)),
+                () {
+              Navigator.pop(dialogCtx);
+              _confirmSwitch(targetId, false);
+            }),
             const SizedBox(height: 10),
             _howOpt(Icons.warning_amber_rounded, const Color(0xFFB45309), 'Trocar agora',
-                'A IA muda na hora. O saldo atual é encerrado: você perde ${milhar(_aiBalance)} tokens.',
-                () => _confirmSwitch(targetId, true)),
+                'A IA muda na hora. O saldo atual é encerrado: você perde ${milhar(_aiBalance)} tokens.', () {
+              Navigator.pop(dialogCtx);
+              _confirmSwitch(targetId, true);
+            }),
           ],
         ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Voltar')),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Voltar')),
           if (!temSaldo)
             FilledButton(
                 style: FilledButton.styleFrom(backgroundColor: AppTheme.seed),
-                onPressed: () => _confirmSwitch(targetId, false),
+                onPressed: () {
+                  Navigator.pop(dialogCtx);
+                  _confirmSwitch(targetId, false);
+                },
                 child: const Text('Trocar')),
         ],
       ),
@@ -274,10 +284,10 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
         ),
       );
 
+  // Faz a troca. NÃO mexe em navegação — quem abriu um diálogo o fecha antes de
+  // chamar aqui. O caminho do "Cancelar" (banner de troca agendada) não tem
+  // diálogo aberto, então também não há nada a fechar.
   Future<void> _confirmSwitch(String model, bool forfeit, {bool cancelPending = false}) async {
-    Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst || r.settings.name == null);
-    // fecha diálogos abertos
-    if (Navigator.canPop(context)) Navigator.pop(context);
     final r = await _api.put('/plan/ai-model', {'model': cancelPending ? _aiCurrent : model, 'forfeit': forfeit});
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
