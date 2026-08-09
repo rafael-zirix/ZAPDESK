@@ -164,29 +164,42 @@ class _CrmBoardViewState extends State<CrmBoardView> {
           ),
           child: Column(children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              padding: const EdgeInsets.fromLTRB(10, 12, 8, 8),
               child: Row(children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(color: hexColor(stage.color), shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 148,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Flexible(
-                      child: Text(stage.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                // Admin: clica no nome e edita a etapa ali mesmo.
+                Tooltip(
+                  message: crm.isAdmin ? 'Clique para editar a etapa' : '',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: crm.isAdmin ? () => _editStageDialog(stage) : null,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(color: hexColor(stage.color), shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 146,
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Flexible(
+                              child: Text(stage.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                            ),
+                            if (stage.isWon)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 4),
+                                child: Text('🏆', style: TextStyle(fontSize: 13)),
+                              ),
+                          ]),
+                        ),
+                      ]),
                     ),
-                    if (stage.isWon)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Text('🏆', style: TextStyle(fontSize: 13)),
-                      ),
-                  ]),
+                  ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
@@ -352,6 +365,120 @@ class _CrmBoardViewState extends State<CrmBoardView> {
         Text(followUpLabel(deal.nextFollowUpAt!),
             style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
       ]),
+    );
+  }
+
+  /// Edição rápida da etapa direto do quadro (admin): nome, cor e exclusão.
+  Future<void> _editStageDialog(CrmStage stage) async {
+    final name = TextEditingController(text: stage.name);
+    var color = stage.color;
+    String? error;
+    var busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Editar etapa'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: name,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Nome da etapa'),
+                ),
+                const SizedBox(height: 14),
+                Text('Cor',
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade600)),
+                const SizedBox(height: 6),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final c in kStagePalette)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(99),
+                      onTap: () => setState(() => color = c),
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          color: hexColor(c),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: color == c ? Colors.black87 : AppTheme.border,
+                              width: color == c ? 2.5 : 1),
+                        ),
+                      ),
+                    ),
+                ]),
+                if (stage.isSystem) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    stage.isWon
+                        ? 'Etapa de ganho: pode renomear e mudar a cor; não pode ser excluída.'
+                        : 'Etapa de entrada (os leads caem aqui): pode renomear e mudar a cor; não pode ser excluída.',
+                    style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
+                  ),
+                ],
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  Text(error!,
+                      style: const TextStyle(color: Color(0xFFEF4444), fontSize: 13)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            if (!stage.isSystem)
+              TextButton(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        setState(() => busy = true);
+                        final err = await crm.deleteStage(stage.id);
+                        if (!ctx.mounted) return;
+                        if (err != null) {
+                          setState(() {
+                            busy = false;
+                            error = err;
+                          });
+                          return;
+                        }
+                        Navigator.of(ctx).pop();
+                      },
+                child: const Text('Excluir',
+                    style: TextStyle(color: Color(0xFFEF4444))),
+              ),
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      setState(() => busy = true);
+                      final err = await crm.updateStage(stage.id,
+                          {'name': name.text.trim(), 'color': color});
+                      if (!ctx.mounted) return;
+                      if (err != null) {
+                        setState(() {
+                          busy = false;
+                          error = err;
+                        });
+                        return;
+                      }
+                      Navigator.of(ctx).pop();
+                    },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

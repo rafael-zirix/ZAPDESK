@@ -5,12 +5,6 @@ import '../models/crm.dart';
 import 'crm_controller.dart';
 import 'crm_format.dart';
 
-/// Paleta das etapas (a primeira é o teal da marca).
-const _palette = [
-  '#0E9384', '#64748B', '#7C3AED', '#F59E0B', '#F97316',
-  '#EF4444', '#2563EB', '#16A34A', '#DB2777', '#0891B2',
-];
-
 /// Gestão das etapas do Kanban (admin): criar, renomear, cor, ordem, excluir.
 Future<void> showStageEditor(BuildContext context, CrmController crm) async {
   await showDialog<void>(
@@ -29,7 +23,7 @@ class _StageEditorDialog extends StatefulWidget {
 
 class _StageEditorDialogState extends State<_StageEditorDialog> {
   final _newName = TextEditingController();
-  String _newColor = _palette.first;
+  String _newColor = kStagePalette.first;
   String? _error;
   bool _busy = false;
 
@@ -185,7 +179,7 @@ class _StageEditorDialogState extends State<_StageEditorDialog> {
       tooltip: 'Cor',
       onSelected: onPick,
       itemBuilder: (_) => [
-        for (final c in _palette)
+        for (final c in kStagePalette)
           PopupMenuItem(
             value: c,
             height: 34,

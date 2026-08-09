@@ -40,6 +40,12 @@ bool followUpOverdue(DateTime utc) {
   return d.isBefore(today) || d.isAtSameMomentAs(today);
 }
 
+/// Paleta das etapas do funil (a primeira é o teal da marca).
+const kStagePalette = [
+  '#0E9384', '#64748B', '#7C3AED', '#F59E0B', '#F97316',
+  '#EF4444', '#2563EB', '#16A34A', '#DB2777', '#0891B2',
+];
+
 /// Rótulo curto da origem do negócio.
 String sourceLabel(String? source) => switch (source) {
       'instagram' => 'Instagram',
