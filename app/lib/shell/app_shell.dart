@@ -13,6 +13,7 @@ import '../campaigns/campaigns_screen.dart';
 import '../core/api_client.dart';
 import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
+import '../core/theme_controller.dart';
 import '../crm/crm_screen.dart';
 import '../inbox/inbox_screen.dart';
 import '../instagram/instagram_screen.dart';
@@ -274,6 +275,7 @@ class _AppShellState extends State<AppShell> {
           ..._railItems(dests),
           const Spacer(),
           if (_tokens != null && (_aiOn || _tokens! > 0)) _tokenChip(dests),
+          _themeButton(),
           _userMenu(me),
           const SizedBox(height: 12),
         ],
@@ -405,6 +407,20 @@ class _AppShellState extends State<AppShell> {
             child: Icon(sel ? dest.activeIcon : dest.icon, color: sel ? Colors.white : Colors.white70, size: 24),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Tema dia/noite no rail: vale para o painel inteiro, sempre à mão.
+  Widget _themeButton() {
+    final tc = context.watch<ThemeController>();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: IconButton(
+        tooltip: tc.isDark ? 'Tema claro (dia)' : 'Tema escuro (noite)',
+        onPressed: tc.toggle,
+        icon: Icon(tc.isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+            color: Colors.white70, size: 22),
       ),
     );
   }

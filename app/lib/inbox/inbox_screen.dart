@@ -123,15 +123,8 @@ class _InboxScreenState extends State<InboxScreen> {
             count: inbox.paneCount,
             onPick: inbox.setPaneCount,
           ),
-          const SizedBox(width: 6),
-          // Alterna tema dia/noite — depois do seletor de janelas.
-          Consumer<ThemeController>(
-            builder: (context, tc, _) => IconButton(
-              tooltip: tc.isDark ? 'Tema claro (dia)' : 'Tema escuro (noite)',
-              onPressed: tc.toggle,
-              icon: Icon(tc.isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: Colors.grey.shade600),
-            ),
-          ),
+          // O alternador de tema mora no rail (menu lateral) — vale para o
+          // painel inteiro, não só para o atendimento.
         ],
       ),
     );
