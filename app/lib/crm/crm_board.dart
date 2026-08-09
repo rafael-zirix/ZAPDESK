@@ -103,10 +103,106 @@ class _CrmBoardViewState extends State<CrmBoardView> {
         onPressed: crm.load,
         icon: const Icon(Icons.refresh, size: 20),
       ),
-      const SizedBox(width: 16),
+      const SizedBox(width: 4),
+      _alertBell(),
+      const SizedBox(width: 12),
       Text('${open.length} em aberto · ${moneyFromCents(total)}',
           style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
     ]);
+  }
+
+  /// Campainha com balão: retornos de HOJE e ATRASADOS. Clicou num alerta,
+  /// abre o lead na hora.
+  Widget _alertBell() {
+    final alerts = crm.deals
+        .where((d) =>
+            d.status == 'open' &&
+            d.nextFollowUpAt != null &&
+            followUpState(d.nextFollowUpAt!) > 0)
+        .toList()
+      // Atrasados primeiro, depois os de hoje.
+      ..sort((a, b) => followUpState(b.nextFollowUpAt!)
+          .compareTo(followUpState(a.nextFollowUpAt!)));
+    final hasLate = alerts.any((d) => followUpState(d.nextFollowUpAt!) == 2);
+    final color = alerts.isEmpty
+        ? Colors.grey.shade500
+        : (hasLate ? const Color(0xFFEF4444) : const Color(0xFFF79009));
+    final bell = Stack(clipBehavior: Clip.none, children: [
+      Icon(alerts.isEmpty ? Icons.notifications_none : Icons.notifications_active,
+          size: 22, color: color),
+      if (alerts.isNotEmpty)
+        Positioned(
+          right: -7,
+          top: -6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4.5, vertical: 1.5),
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(999)),
+            child: Text('${alerts.length}',
+                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+          ),
+        ),
+    ]);
+    if (alerts.isEmpty) {
+      return Tooltip(
+          message: 'Nenhum retorno pendente 🎉',
+          child: Padding(padding: const EdgeInsets.all(8), child: bell));
+    }
+    const maxShow = 12;
+    return PopupMenuButton<String>(
+      tooltip: 'Retornos de hoje e atrasados',
+      onSelected: (id) {
+        final deal = crm.deals.where((d) => d.id == id).firstOrNull;
+        if (deal != null) showDealEditor(context, crm, deal: deal);
+      },
+      itemBuilder: (_) => [
+        for (final d in alerts.take(maxShow))
+          PopupMenuItem(
+            value: d.id,
+            height: 42,
+            child: Row(children: [
+              Icon(
+                  followUpState(d.nextFollowUpAt!) == 2
+                      ? Icons.notifications_active
+                      : Icons.notifications_active_outlined,
+                  size: 16,
+                  color: followUpState(d.nextFollowUpAt!) == 2
+                      ? const Color(0xFFEF4444)
+                      : const Color(0xFFF79009)),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 190,
+                child: Text(d.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 60,
+                child: Text(
+                    followUpState(d.nextFollowUpAt!) == 1
+                        ? 'hoje'
+                        : followUpLabel(d.nextFollowUpAt!),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: followUpState(d.nextFollowUpAt!) == 2
+                            ? const Color(0xFFEF4444)
+                            : const Color(0xFFF79009))),
+              ),
+            ]),
+          ),
+        if (alerts.length > maxShow)
+          PopupMenuItem(
+            enabled: false,
+            height: 34,
+            child: Text('… e mais ${alerts.length - maxShow}',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          ),
+      ],
+      child: Padding(padding: const EdgeInsets.all(8), child: bell),
+    );
   }
 
   Widget _sellerFilter() {
@@ -368,7 +464,7 @@ class _CrmBoardViewState extends State<CrmBoardView> {
           'hoje',
         ),
       _ => (
-          Colors.grey.shade600 as Color,
+          Color(0xFF757575),
           AppTheme.bg,
           Icons.notifications_none,
           followUpLabel(deal.nextFollowUpAt!),

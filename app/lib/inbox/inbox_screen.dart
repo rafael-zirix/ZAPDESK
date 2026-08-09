@@ -240,6 +240,7 @@ class _InboxScreenState extends State<InboxScreen> {
               children: [
                 const Text('Conversas', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                 const Spacer(),
+                _unreadBell(inbox),
                 IconButton(
                   onPressed: () async {
                     final err = await inbox.claimNext();
@@ -263,6 +264,81 @@ class _InboxScreenState extends State<InboxScreen> {
           const Divider(height: 1),
           Expanded(child: _listBody(inbox)),
         ],
+      ),
+    );
+  }
+
+  /// Campainha com balão: conversas com mensagens NÃO LIDAS. Clicou no
+  /// alerta, a conversa abre na hora (mesmo caminho do clique na lista).
+  Widget _unreadBell(InboxController inbox) {
+    final unread = inbox.tickets.where((t) => t.unreadCount > 0).toList()
+      ..sort((a, b) => b.unreadCount.compareTo(a.unreadCount));
+    if (unread.isEmpty) {
+      return Tooltip(
+        message: 'Tudo lido 🎉',
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(Icons.notifications_none, size: 22, color: Colors.grey.shade500),
+        ),
+      );
+    }
+    final total = unread.fold(0, (s, t) => s + t.unreadCount);
+    const maxShow = 12;
+    return PopupMenuButton<String>(
+      tooltip: '$total mensagem${total == 1 ? '' : 's'} não lida${total == 1 ? '' : 's'}',
+      onSelected: (id) {
+        final t = inbox.tickets.where((x) => x.id == id).toList();
+        if (t.isNotEmpty) inbox.openTicket(t.first);
+      },
+      itemBuilder: (_) => [
+        for (final t in unread.take(maxShow))
+          PopupMenuItem(
+            value: t.id,
+            height: 42,
+            child: Row(children: [
+              SizedBox(
+                width: 190,
+                child: Text(t.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                    color: AppTheme.seed, borderRadius: BorderRadius.circular(999)),
+                child: Text('${t.unreadCount}',
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+              ),
+            ]),
+          ),
+        if (unread.length > maxShow)
+          PopupMenuItem(
+            enabled: false,
+            height: 34,
+            child: Text('… e mais ${unread.length - maxShow} conversas',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Stack(clipBehavior: Clip.none, children: [
+          const Icon(Icons.notifications_active, size: 22, color: AppTheme.seed),
+          Positioned(
+            right: -7,
+            top: -6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4.5, vertical: 1.5),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFEF4444), borderRadius: BorderRadius.circular(999)),
+              child: Text(total > 99 ? '99+' : '$total',
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+            ),
+          ),
+        ]),
       ),
     );
   }
