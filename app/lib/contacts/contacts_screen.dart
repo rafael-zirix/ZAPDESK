@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/auth_controller.dart';
 import '../core/contacts_import.dart';
 import '../core/entity_form.dart';
 import '../core/file_pick.dart';
 import '../core/theme.dart';
+import '../crm/contact_ficha_editor.dart';
 import '../models/contact.dart';
 import '../models/support.dart';
 import 'contacts_controller.dart';
@@ -165,6 +167,13 @@ class _ContactsScreenState extends State<ContactsScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Ficha rica do cadastro único (empresa, CPF/CNPJ, endereço) — é do
+          // módulo CRM; sem ele, o botão não aparece.
+          if (context.read<AuthController>().has('crm'))
+            IconButton(
+                icon: const Icon(Icons.badge_outlined),
+                tooltip: 'Ficha do contato (CRM)',
+                onPressed: () => showContactFicha(context, ct.id)),
           IconButton(
               icon: Icon(Icons.local_offer_outlined, color: ct.tags.isEmpty ? null : AppTheme.seed),
               tooltip: 'Etiquetas do contato (filtro de campanha)',

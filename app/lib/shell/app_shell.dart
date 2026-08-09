@@ -13,6 +13,7 @@ import '../campaigns/campaigns_screen.dart';
 import '../core/api_client.dart';
 import '../contacts/contacts_screen.dart';
 import '../core/theme.dart';
+import '../crm/crm_screen.dart';
 import '../inbox/inbox_screen.dart';
 import '../instagram/instagram_screen.dart';
 import '../metrics/metrics_screen.dart';
@@ -153,6 +154,9 @@ class _AppShellState extends State<AppShell> {
     // Ícone sem "caixa" (o balão do forum destoava dos demais, todos em traço).
     items.add(const _NavDest(Icons.support_agent_outlined, Icons.support_agent, 'Atendimento', InboxScreen()));
     items.add(const _NavDest(Icons.people_outline, Icons.people, 'Contatos', ContactsScreen()));
+    // CRM: admin e atendente (o vendedor vê o próprio funil; o recorte é do backend).
+    items.add(_gated('crm',
+        const _NavDest(Icons.view_kanban_outlined, Icons.view_kanban, 'CRM', CrmScreen())));
     if (me.isAdmin) {
       items.add(const _NavDest(Icons.badge_outlined, Icons.badge, 'Usuários', UsersScreen()));
       items.add(const _NavDest(Icons.workspaces_outline, Icons.workspaces, 'Setores', SectorsScreen()));
@@ -425,6 +429,7 @@ class _AppShellState extends State<AppShell> {
   String _roleLabel(String role) => switch (role) {
         'superadmin' => 'Super-admin',
         'admin' => 'Administrador',
+        'vendedor' => 'Vendedor',
         _ => 'Atendente',
       };
 }
