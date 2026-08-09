@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,37 @@ import (
 	"zapdesk/internal/repository"
 	"zapdesk/internal/services"
 )
+
+// telefoneUA reconhece CELULAR — de propósito não pega tablet: o iPad tem tela
+// suficiente para o painel, e mandá-lo para a versão de celular seria piorar.
+// A ordem importa: "iPad" e "Tablet" entram na lista de exclusão.
+var telefoneUA = regexp.MustCompile(`(?i)iphone|ipod|android.*mobile|windows phone|blackberry|opera mini|iemobile`)
+var tabletUA = regexp.MustCompile(`(?i)ipad|tablet|kindle|silk|playbook`)
+
+// isPhoneUA diz se o pedido veio de um telefone.
+func isPhoneUA(ua string) bool {
+	if ua == "" || tabletUA.MatchString(ua) {
+		return false
+	}
+	return telefoneUA.MatchString(ua)
+}
+
+// prefereDesktop respeita a escolha de quem quer o painel completo mesmo no
+// celular: `?desktop=1` na URL (que também grava o cookie) ou o cookie já gravado.
+// Sem esta saída, o atendente que precisa de uma tela só do painel ficaria preso
+// no redirecionamento.
+func prefereDesktop(c *gin.Context) bool {
+	if c.Query("desktop") == "1" {
+		// 30 dias: o suficiente para não reaparecer no meio do trabalho, e não
+		// tanto que fique esquecido para sempre.
+		c.SetCookie("hotzap_layout", "desktop", 60*60*24*30, "/", "", false, false)
+		return true
+	}
+	if v, err := c.Cookie("hotzap_layout"); err == nil && v == "desktop" {
+		return true
+	}
+	return false
+}
 
 // New monta o roteador Gin com as rotas da aplicação.
 func New(cfg *config.Config, db *sql.DB) *gin.Engine {
@@ -500,13 +532,20 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 
 	// Front servido na mesma origem, quando WEB_DIR aponta para o build.
 	//   /            -> landing do cliente (index.html na raiz do WEB_DIR)
-	//   /app, /app/* -> app Flutter (build com --base-href /app/, em web/app)
+	//   /app, /app/* -> painel Flutter (build com --base-href /app/, em web/app)
+	//   /m, /m/*     -> app de celular pelo navegador (build de lib/main_mobile.dart)
 	// Serve o arquivo físico pedido; se não existir, faz o fallback de SPA para
 	// o índice certo conforme o prefixo do caminho.
+	//
+	// Servir o app de celular AQUI, e não de outro host, é o que faz o CORS
+	// desaparecer: a página e a API passam a ter a mesma origem. Hospedado fora,
+	// o navegador bloqueia a chamada antes de sair e o atendente vê "erro ao
+	// enviar o código" sem nenhuma pista do motivo.
 	if cfg.WebDir != "" {
 		root := filepath.Clean(cfg.WebDir)
 		landing := filepath.Join(root, "index.html")
 		appIndex := filepath.Join(root, "app", "index.html")
+		mobileIndex := filepath.Join(root, "m", "index.html")
 		r.NoRoute(func(c *gin.Context) {
 			if c.Request.Method != http.MethodGet {
 				c.Status(http.StatusNotFound)
@@ -524,8 +563,24 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			// Rotas internas do app (SPA Flutter) caem no índice do app; todo o
 			// resto — inclusive "/" — cai na landing.
 			if c.Request.URL.Path == "/app" || strings.HasPrefix(c.Request.URL.Path, "/app/") {
+				// Celular pedindo o painel: manda para a versão de celular. O painel
+				// é feito para tela grande (quatro conversas lado a lado) e no
+				// telefone fica ilegível. Existe escape: ?desktop=1 grava a
+				// preferência e não redireciona mais — ninguém fica preso.
+				if _, err := os.Stat(mobileIndex); err == nil && isPhoneUA(c.GetHeader("User-Agent")) && !prefereDesktop(c) {
+					c.Redirect(http.StatusFound, "/m/")
+					return
+				}
 				c.File(appIndex)
 				return
+			}
+			// App de celular. Só entra se a build existir: sem ela, /m cai na
+			// landing em vez de devolver 404 de arquivo faltando.
+			if c.Request.URL.Path == "/m" || strings.HasPrefix(c.Request.URL.Path, "/m/") {
+				if _, err := os.Stat(mobileIndex); err == nil {
+					c.File(mobileIndex)
+					return
+				}
 			}
 			c.File(landing)
 		})

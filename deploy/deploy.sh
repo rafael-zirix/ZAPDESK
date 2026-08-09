@@ -16,6 +16,12 @@ echo "==> build web (Flutter)"
 # App servido em /app/ (a raiz "/" é a landing do cliente).
 ( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --base-href /app/ --no-web-resources-cdn --dart-define=API_BASE_URL="$URL" >/dev/null )
 
+echo "==> build do app de celular pelo navegador (/m)"
+# Mesmo código do app nativo (lib/main_mobile.dart), servido como página em /m/.
+# Serve na MESMA ORIGEM da API de propósito: hospedado em outro host, o navegador
+# barra as chamadas por CORS e o atendente só vê "erro ao enviar o código".
+( cd "$ROOT/app" && flutter build web --release --no-tree-shake-icons --pwa-strategy=none --base-href /m/ --no-web-resources-cdn -t lib/main_mobile.dart --dart-define=API_BASE_URL="$URL" --output build/web-mobile >/dev/null )
+
 echo "==> empacota"
 rm -rf "$ROOT/deploy/migrations" "$ROOT/deploy/web"
 cp -r "$ROOT/backend/migrations" "$ROOT/deploy/migrations"
@@ -30,6 +36,34 @@ for f in privacidade.html termos.html exclusao-de-dados.html legal.css; do
 done
 # favicon acessível na raiz (a landing referencia /favicon.png).
 cp "$ROOT/app/build/web/favicon.png" "$ROOT/deploy/web/favicon.png" 2>/dev/null || true
+
+# App de celular em web/m (URL: /m). As metas abaixo são o que faz o
+# "Adicionar à Tela de Início" abrir em tela cheia, com ícone e nome próprios —
+# sem elas o atendente ganha só um atalho do Safari, com barra de endereço.
+mkdir -p "$ROOT/deploy/web/m"
+cp -r "$ROOT/app/build/web-mobile/." "$ROOT/deploy/web/m/"
+python3 - "$ROOT/deploy/web/m/index.html" <<'PY'
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+t = p.read_text()
+metas = '''
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HotZap">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0E9384">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+'''
+t = re.sub(r'<meta name="viewport"[^>]*>\s*', '', t, count=1)
+if 'apple-mobile-web-app-capable' not in t:
+    t = t.replace('</head>', metas + '</head>')
+t = t.replace('<title>zapdesk_app</title>', '<title>HotZap</title>')
+p.write_text(t)
+PY
+# As páginas legais e a landing são da RAIZ: não precisam ir dentro de /m.
+for f in privacidade.html termos.html exclusao-de-dados.html legal.css start.html; do
+  rm -f "$ROOT/deploy/web/m/$f"
+done
 # SW de "auto-destruição" na RAIZ: navegadores que já abriram o app na raiz têm um
 # service worker registrado no escopo "/", que continuaria servindo o app velho em
 # cache no lugar da nova landing. Este arquivo substitui o /flutter_service_worker.js

@@ -4,6 +4,7 @@ import 'module_prices_card.dart';
 import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
+import '../core/ai_logo.dart';
 import '../models/usage.dart';
 import 'usage_controller.dart';
 
@@ -377,8 +378,9 @@ class _AICostRowState extends State<_AICostRow> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(children: [
+                Padding(padding: const EdgeInsets.only(right: 10), child: aiLogo(m.logo, size: 26)),
                 SizedBox(
-                    width: 230,
+                    width: 204,
                     child: Text(m.model,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -472,6 +474,7 @@ class _AICostRowState extends State<_AICostRow> {
     final baseUrl = TextEditingController(text: editar?.baseUrl ?? '');
     final keyEnv = TextEditingController(text: editar?.keyEnv ?? '');
     var ofertado = editar?.offered ?? false;
+    var logoSel = editar?.logo ?? '';
 
     final ok = await showDialog<bool>(
       context: context,
@@ -560,6 +563,19 @@ class _AICostRowState extends State<_AICostRow> {
                     decoration: const InputDecoration(labelText: 'Velocidade (0-100)', border: OutlineInputBorder()),
                   )),
                 ]),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: logoSel,
+                  decoration: const InputDecoration(labelText: 'Logo da marca', border: OutlineInputBorder()),
+                  items: const [
+                    DropdownMenuItem(value: '', child: Text('Sem logo')),
+                    DropdownMenuItem(value: 'gemini', child: Text('Gemini (Google)')),
+                    DropdownMenuItem(value: 'claude', child: Text('Claude (Anthropic)')),
+                    DropdownMenuItem(value: 'gpt', child: Text('GPT (OpenAI)')),
+                    DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
+                  ],
+                  onChanged: (v) => setLocal(() => logoSel = v ?? ''),
+                ),
                 const SizedBox(height: 6),
                 CheckboxListTile(
                   value: ofertado,
@@ -599,6 +615,7 @@ class _AICostRowState extends State<_AICostRow> {
       intelligence: int.tryParse(inteligencia.text.trim()) ?? 0,
       speed: int.tryParse(velocidade.text.trim()) ?? 0,
       bestFor: bestFor.text.trim(),
+      logo: logoSel,
     );
     final lista = [...widget.c.aiCosts.models.where((m) => m.model != novo.model), novo];
     final err = await widget.c.saveAICosts(lista);

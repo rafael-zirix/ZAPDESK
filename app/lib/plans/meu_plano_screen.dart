@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
+import '../core/ai_logo.dart';
 import '../models/package.dart';
 
 /// "Meu plano" (admin da empresa): o pacote contratado, a IA em uso com o saldo,
@@ -361,39 +362,6 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
       );
-}
-
-/// Logo da IA: um badge com a cor da marca e um ícone. Ícones do Material (sempre
-/// renderizam) em vez de SVG externo — o projeto não tem flutter_svg, e a CSP
-/// bloqueia imagem de fora. Reconhecível pela cor; dá para trocar pelos SVGs
-/// exatos depois, se valer a dependência.
-Widget aiLogo(String slug, {double size = 34}) {
-  late final Color bg;
-  late final IconData ic;
-  switch (slug) {
-    case 'claude':
-      bg = const Color(0xFFD97757); // clay da Anthropic
-      ic = Icons.brightness_7; // sol/raios ≈ o mark da Anthropic
-      break;
-    case 'gpt':
-      bg = const Color(0xFF10A37F); // verde OpenAI
-      ic = Icons.hub;
-      break;
-    case 'deepseek':
-      bg = const Color(0xFF4D6BFE); // azul DeepSeek
-      ic = Icons.waves; // baleia/oceano
-      break;
-    case 'gemini':
-    default:
-      bg = const Color(0xFF4285F4); // azul Google
-      ic = Icons.auto_awesome; // a "faísca" do Gemini
-  }
-  return Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(size * .28)),
-    child: Icon(ic, color: Colors.white, size: size * .56),
-  );
 }
 
 // Sheet de escolha da IA — mostra os modelos ofertados com o comparativo.

@@ -196,6 +196,7 @@ class AIModelCost {
     this.intelligence = 0,
     this.speed = 0,
     this.bestFor = '',
+    this.logo = '',
   });
 
   final String model;
@@ -214,6 +215,7 @@ class AIModelCost {
   final int intelligence; // 0-100
   final int speed; // 0-100
   final String bestFor; // no que ela é melhor
+  final String logo; // slug da marca p/ o logo (gemini, claude, gpt, deepseek)
 
   Map<String, dynamic> toJson() => {
         'model': model,
@@ -229,6 +231,7 @@ class AIModelCost {
         'intelligence': intelligence,
         'speed': speed,
         'best_for': bestFor,
+        'logo': logo,
       };
 
   factory AIModelCost.fromJson(Map<String, dynamic> j) => AIModelCost(
@@ -246,6 +249,7 @@ class AIModelCost {
         intelligence: (j['intelligence'] as num?)?.toInt() ?? 0,
         speed: (j['speed'] as num?)?.toInt() ?? 0,
         bestFor: j['best_for'] ?? '',
+        logo: j['logo'] ?? '',
       );
 }
 
