@@ -16,7 +16,7 @@ class AppUser {
   final String accountId; // vazio para super-admin
   final String fullName;
   final String email;
-  final String role; // superadmin | admin | agent
+  final String role; // superadmin | admin | agent | vendedor
   final String? phone; // celular (WhatsApp) — usado no login por OTP
   final String presence; // available | away (informativo)
 

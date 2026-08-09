@@ -7,6 +7,7 @@ const (
 	RoleSuperadmin = "superadmin" // dono da plataforma (SaaS), sem conta
 	RoleAdmin      = "admin"      // administra uma empresa
 	RoleAgent      = "agent"      // atendente de uma empresa
+	RoleVendedor   = "vendedor"   // trabalha o funil do CRM; NÃO mexe em plano/cobrança (só o admin)
 )
 
 // User é um atendente ou administrador de uma conta (empresa cliente do SaaS).
@@ -35,7 +36,7 @@ type CreateUserRequest struct {
 	FullName string  `json:"full_name" binding:"required,min=2"`
 	Email    *string `json:"email" binding:"omitempty,email"`
 	Phone    *string `json:"phone" binding:"omitempty"`
-	Role     string  `json:"role" binding:"required,oneof=admin agent"`
+	Role     string  `json:"role" binding:"required,oneof=admin agent vendedor"`
 }
 
 // UpdateUserRequest é o corpo para atualizar um usuário (campos opcionais).
@@ -43,7 +44,7 @@ type UpdateUserRequest struct {
 	FullName *string `json:"full_name" binding:"omitempty,min=2"`
 	Email    *string `json:"email" binding:"omitempty,email"`
 	Phone    *string `json:"phone" binding:"omitempty"`
-	Role     *string `json:"role" binding:"omitempty,oneof=admin agent"`
+	Role     *string `json:"role" binding:"omitempty,oneof=admin agent vendedor"`
 	IsActive *bool   `json:"is_active"`
 }
 

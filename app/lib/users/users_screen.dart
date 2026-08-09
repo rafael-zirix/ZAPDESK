@@ -71,13 +71,16 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   Widget _roleChip(String role) {
-    final admin = role == 'admin';
-    final color = admin ? AppTheme.seed : Colors.blueGrey;
+    final (color, label) = switch (role) {
+      'admin' => (AppTheme.seed, 'Administrador'),
+      'vendedor' => (const Color(0xFFF79009), 'Vendedor'),
+      _ => (Colors.blueGrey as Color, 'Atendente'),
+    };
     return Container(
       margin: const EdgeInsets.only(right: 4),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
-      child: Text(admin ? 'Administrador' : 'Atendente',
+      child: Text(label,
           style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
@@ -101,7 +104,11 @@ class _UsersScreenState extends State<UsersScreen> {
           key: 'role',
           label: 'Perfil',
           initial: edit?.role ?? 'agent',
-          options: const [('agent', 'Atendente'), ('admin', 'Administrador')],
+          options: const [
+            ('agent', 'Atendente'),
+            ('vendedor', 'Vendedor (CRM)'),
+            ('admin', 'Administrador'),
+          ],
         ),
       ],
       onSubmit: (v) => c.save(id: edit?.id, fullName: v['full_name']!, email: v['email']!, phone: v['phone'], role: v['role']!),
