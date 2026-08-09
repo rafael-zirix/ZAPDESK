@@ -351,18 +351,39 @@ class _CrmBoardViewState extends State<CrmBoardView> {
   }
 
   Widget _followUpChip(CrmDeal deal) {
-    final overdue = followUpOverdue(deal.nextFollowUpAt!);
-    final color = overdue ? const Color(0xFFEF4444) : Colors.grey.shade600;
+    // 3 estados: agendado (cinza) · é HOJE (laranja, "hoje") · atrasado
+    // (vermelho, ícone ativo) — o vendedor bate o olho e sabe quem cobrar.
+    final state = followUpState(deal.nextFollowUpAt!);
+    final (color, bg, icon, label) = switch (state) {
+      2 => (
+          const Color(0xFFEF4444),
+          const Color(0xFFEF4444).withValues(alpha: 0.10),
+          Icons.notifications_active,
+          followUpLabel(deal.nextFollowUpAt!),
+        ),
+      1 => (
+          const Color(0xFFF79009),
+          const Color(0xFFF79009).withValues(alpha: 0.12),
+          Icons.notifications_active_outlined,
+          'hoje',
+        ),
+      _ => (
+          Colors.grey.shade600 as Color,
+          AppTheme.bg,
+          Icons.notifications_none,
+          followUpLabel(deal.nextFollowUpAt!),
+        ),
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: overdue ? const Color(0xFFEF4444).withValues(alpha: 0.08) : AppTheme.bg,
+        color: bg,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.notifications_none, size: 12, color: color),
+        Icon(icon, size: 12, color: color),
         const SizedBox(width: 3),
-        Text(followUpLabel(deal.nextFollowUpAt!),
+        Text(label,
             style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
       ]),
     );

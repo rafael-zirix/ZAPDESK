@@ -51,13 +51,16 @@ Color hexColor(String hex) {
 String followUpLabel(DateTime utc) =>
     DateFormat('dd/MM').format(utc.add(const Duration(hours: -3)));
 
-/// O retorno já passou? (compara o DIA em UTC-3)
-bool followUpOverdue(DateTime utc) {
+/// Estado do retorno (compara o DIA em UTC-3):
+/// 0 = agendado (futuro) · 1 = é HOJE · 2 = ATRASADO.
+int followUpState(DateTime utc) {
   final local = utc.add(const Duration(hours: -3));
   final nowLocal = DateTime.now().toUtc().add(const Duration(hours: -3));
   final d = DateTime(local.year, local.month, local.day);
   final today = DateTime(nowLocal.year, nowLocal.month, nowLocal.day);
-  return d.isBefore(today) || d.isAtSameMomentAs(today);
+  if (d.isBefore(today)) return 2;
+  if (d.isAtSameMomentAs(today)) return 1;
+  return 0;
 }
 
 /// Paleta das etapas do funil (a primeira é o teal da marca).
