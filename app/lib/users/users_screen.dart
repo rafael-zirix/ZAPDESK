@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/auth_controller.dart';
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
@@ -15,10 +16,27 @@ class UsersScreen extends StatefulWidget {
 }
 
 class _UsersScreenState extends State<UsersScreen> {
+  /// Perfis personalizados da empresa (id → nome), para o seletor e os chips.
+  Map<String, String> _profileNames = {};
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => context.read<UsersController>().load());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<UsersController>().load();
+      _loadProfiles();
+    });
+  }
+
+  Future<void> _loadProfiles() async {
+    // Só admin lista os perfis (o editor é indelegável); delegado segue sem.
+    if (!(context.read<AuthController>().me?.isAdmin ?? false)) return;
+    final r = await ApiClient.instance.get('/settings/profiles');
+    if (!mounted || !r.ok || r.data is! List) return;
+    setState(() => _profileNames = {
+          for (final p in r.data as List)
+            (p['id'] ?? '') as String: (p['name'] ?? '') as String,
+        });
   }
 
   @override
@@ -63,7 +81,7 @@ class _UsersScreenState extends State<UsersScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _roleChip(u.role),
+          _accessChip(u),
           IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Editar', onPressed: () => _openForm(c, edit: u)),
           IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Excluir', onPressed: () => _confirmDelete(c, u)),
         ],
@@ -71,12 +89,15 @@ class _UsersScreenState extends State<UsersScreen> {
     );
   }
 
-  Widget _roleChip(String role) {
-    final (color, label) = switch (role) {
-      'admin' => (AppTheme.seed, 'Administrador'),
-      'vendedor' => (const Color(0xFFF79009), 'Vendedor'),
-      _ => (Colors.blueGrey as Color, 'Atendente'),
-    };
+  /// Chip do acesso: o PERFIL personalizado quando houver; senão, o papel.
+  Widget _accessChip(AppUser u) {
+    final (color, label) = u.profileId != null
+        ? (const Color(0xFF7C3AED), _profileNames[u.profileId] ?? 'Perfil personalizado')
+        : switch (u.role) {
+            'admin' => (AppTheme.seed, 'Administrador'),
+            'vendedor' => (const Color(0xFFF79009), 'Vendedor'),
+            _ => (Colors.blueGrey as Color, 'Atendente'),
+          };
     return Container(
       margin: const EdgeInsets.only(right: 4),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -87,15 +108,24 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   Future<void> _openForm(UsersController c, {AppUser? edit}) async {
-    // Perfis de acesso da empresa (Configurações → Perfis) para o dropdown.
-    final pr = await ApiClient.instance.get('/settings/profiles');
-    final profiles = <(String, String)>[('', 'Padrão do papel')];
-    if (pr.ok && pr.data is List) {
-      for (final p in pr.data as List) {
-        profiles.add(((p['id'] ?? '') as String, (p['name'] ?? '') as String));
-      }
+    final isAdmin = context.read<AuthController>().me?.isAdmin ?? false;
+    // Delegado não mexe no acesso de um ADMIN (rebaixaria sem querer).
+    final lockAccess = !isAdmin && edit?.role == 'admin';
+    // UM seletor só: os perfis de SISTEMA (papéis de sempre) + os
+    // personalizados (Configurações → Perfis). O papel vira detalhe interno.
+    final access = <(String, String)>[
+      ('sys:agent', 'Atendente'),
+      ('sys:vendedor', 'Vendedor (CRM)'),
+      if (isAdmin || lockAccess) ('sys:admin', 'Administrador (tudo, plano e cobrança)'),
+      if (isAdmin)
+        for (final e in _profileNames.entries) (e.key, e.value),
+    ];
+    // Valor inicial: o perfil personalizado do usuário, senão o papel dele.
+    var initial = edit == null ? 'sys:agent' : 'sys:${edit.role}';
+    if (isAdmin && edit?.profileId != null && _profileNames.containsKey(edit!.profileId)) {
+      initial = edit.profileId!;
     }
-    if (!mounted) return;
+    if (!access.any((o) => o.$1 == initial)) initial = 'sys:agent';
     await showEntityForm(
       context,
       title: edit == null ? 'Novo usuário' : 'Editar usuário',
@@ -111,31 +141,38 @@ class _UsersScreenState extends State<UsersScreen> {
           keyboard: TextInputType.phone,
         ),
         FieldSpec(
-          key: 'role',
-          label: 'Papel',
-          initial: edit?.role ?? 'agent',
-          options: const [
-            ('agent', 'Atendente'),
-            ('vendedor', 'Vendedor (CRM)'),
-            ('admin', 'Administrador'),
-          ],
+          key: 'access',
+          label: 'Perfil de acesso (o que vê e grava)',
+          initial: initial,
+          options: access,
+          enabled: !lockAccess,
         ),
-        if (profiles.length > 1)
-          FieldSpec(
-            key: 'profile_id',
-            label: 'Perfil de acesso (o que vê e grava)',
-            initial: edit?.profileId ?? '',
-            required: false,
-            options: profiles,
-          ),
       ],
-      onSubmit: (v) => c.save(
-          id: edit?.id,
-          fullName: v['full_name']!,
-          email: v['email']!,
-          phone: v['phone'],
-          role: v['role']!,
-          profileId: v['profile_id']),
+      onSubmit: (v) {
+        final sel = v['access'] ?? 'sys:agent';
+        String role;
+        String? profileId; // null = não mexe no perfil
+        if (lockAccess) {
+          // Acesso travado: papel/perfil não vão no corpo — só nome/contato.
+          role = '';
+          profileId = null;
+        } else if (sel.startsWith('sys:')) {
+          role = sel.substring(4);
+          profileId = isAdmin ? '' : null; // sistema: limpa o personalizado
+        } else {
+          // Perfil personalizado vale sobre a base de atendente — em cima de
+          // admin ele seria ignorado (admin enxerga tudo).
+          role = 'agent';
+          profileId = sel;
+        }
+        return c.save(
+            id: edit?.id,
+            fullName: v['full_name']!,
+            email: v['email']!,
+            phone: v['phone'],
+            role: role,
+            profileId: profileId);
+      },
     );
   }
 

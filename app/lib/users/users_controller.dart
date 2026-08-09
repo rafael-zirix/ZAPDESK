@@ -35,7 +35,8 @@ class UsersController extends ChangeNotifier {
     final body = <String, dynamic>{
       'full_name': fullName,
       'email': email,
-      'role': role,
+      // Papel vazio = não mexe (edição com o acesso travado).
+      if (role.isNotEmpty) 'role': role,
       'phone': phone ?? '',
       // "" remove o perfil (volta ao papel); uuid atribui; ausente mantém.
       'profile_id': ?profileId,
