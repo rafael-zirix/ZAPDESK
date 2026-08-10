@@ -5,6 +5,7 @@ import '../core/theme.dart';
 import '../models/crm.dart';
 import 'crm_controller.dart';
 import 'crm_format.dart';
+import 'crm_funnel_chart.dart';
 
 /// Abas de relatório do CRM: Funil, Métricas e Perdidos. Toolbar comum
 /// (período + vendedor); larguras fixas em Row (gotcha do CanvasKit).
@@ -46,7 +47,7 @@ class _CrmReportViewState extends State<CrmReportView> {
             _error()
           else if (rep != null) ...[
             switch (widget.mode) {
-              'funil' => _funnel(rep),
+              'funil' => _funnel3d(rep),
               'metricas' => _metrics(rep),
               _ => _lost(rep),
             },
@@ -135,7 +136,18 @@ class _CrmReportViewState extends State<CrmReportView> {
     );
   }
 
-  // --- Funil ---
+  // --- Funil estilizado (aba Funil): o cone 3D nas cores das etapas ---
+  Widget _funnel3d(CrmReport rep) {
+    return _card(
+      title: 'Funil de conversão',
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal, // janela estreita rola, não corta
+        child: SizedBox(width: 720, child: CrmFunnelChart(rows: rep.funnel)),
+      ),
+    );
+  }
+
+  // --- Funil compacto em barras (usado na aba Métricas) ---
 
   Widget _funnel(CrmReport rep) {
     final rows = rep.funnel;
