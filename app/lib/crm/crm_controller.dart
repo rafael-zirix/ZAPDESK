@@ -103,12 +103,25 @@ class CrmController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Negócios de uma coluna, na ordem do quadro.
+  /// Negócios de uma coluna, ORDEM CRONOLÓGICA pelo retorno: quem tem retorno
+  /// agendado vem primeiro, do mais atrasado/próximo (topo) ao mais distante;
+  /// quem não tem retorno cai no fim, na ordem manual do quadro.
   List<CrmDeal> dealsOf(String stageId) {
-    final list = deals.where((d) => d.stageId == stageId).toList()
-      ..sort((a, b) => a.sortOrder != b.sortOrder
-          ? a.sortOrder.compareTo(b.sortOrder)
-          : a.id.compareTo(b.id));
+    final list = deals.where((d) => d.stageId == stageId).toList();
+    list.sort((a, b) {
+      final af = a.nextFollowUpAt;
+      final bf = b.nextFollowUpAt;
+      if (af != null && bf != null) {
+        final c = af.compareTo(bf); // cronológico: atrasado/hoje no topo
+        if (c != 0) return c;
+      } else if (af != null) {
+        return -1; // com retorno vem antes de sem retorno
+      } else if (bf != null) {
+        return 1;
+      }
+      if (a.sortOrder != b.sortOrder) return a.sortOrder.compareTo(b.sortOrder);
+      return a.id.compareTo(b.id);
+    });
     return list;
   }
 
