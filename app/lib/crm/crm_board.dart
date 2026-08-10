@@ -70,10 +70,13 @@ class _CrmBoardViewState extends State<CrmBoardView> {
         const SizedBox(height: 10),
         Text(crm.error!, style: TextStyle(color: Colors.grey.shade600)),
         const SizedBox(height: 12),
-        OutlinedButton.icon(
+        OutlinedButton(
           onPressed: crm.load,
-          icon: const Icon(Icons.refresh, size: 18),
-          label: const Text('Tentar de novo'),
+          child: Row(mainAxisSize: MainAxisSize.min, children: const [
+            Icon(Icons.refresh, size: 18),
+            SizedBox(width: 8),
+            Text('Tentar de novo'),
+          ]),
         ),
       ]),
     );
@@ -83,17 +86,20 @@ class _CrmBoardViewState extends State<CrmBoardView> {
     final open = crm.deals.where((d) => d.status == 'open').toList();
     final total = open.fold(0, (s, d) => s + d.valueCents);
     return Row(children: [
-      FilledButton.icon(
-        onPressed: () => showDealEditor(context, crm),
-        icon: const Icon(Icons.add, size: 18),
-        label: const Text('Novo lead'),
+      // GOTCHA CanvasKit: FilledButton não pinta neste contexto (sonda A/B) —
+      // botão custom via crmButton (InkWell+Container, sempre pinta).
+      crmButton(
+        onTap: () => showDealEditor(context, crm),
+        icon: Icons.add,
+        label: 'Novo lead',
       ),
       const SizedBox(width: 8),
       if (crm.isAdmin)
-        OutlinedButton.icon(
-          onPressed: () => showStageEditor(context, crm),
-          icon: const Icon(Icons.view_week_outlined, size: 18),
-          label: const Text('Etapas'),
+        crmButton(
+          onTap: () => showStageEditor(context, crm),
+          icon: Icons.view_week_outlined,
+          label: 'Etapas',
+          filled: false,
         ),
       const SizedBox(width: 8),
       if (crm.isAdmin && crm.sellers.isNotEmpty) _sellerFilter(),
@@ -249,13 +255,18 @@ class _CrmBoardViewState extends State<CrmBoardView> {
       },
       builder: (context, candidates, _) {
         final hover = candidates.isNotEmpty;
+        // No tema CLARO a coluna precisa se destacar do fundo da página (que é
+        // quase igual): preenchimento um tom abaixo + borda mais firme. No
+        // escuro o contraste natural já resolve.
+        final colFill = AppTheme.isDark ? AppTheme.bg : const Color(0xFFE7EAEF);
+        final colBorder = AppTheme.isDark ? AppTheme.border : const Color(0xFFCBD2DA);
         return Container(
           width: _colWidth,
           decoration: BoxDecoration(
-            color: hover ? AppTheme.seed.withValues(alpha: 0.06) : AppTheme.bg,
+            color: hover ? AppTheme.seed.withValues(alpha: 0.06) : colFill,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-                color: hover ? AppTheme.seed : AppTheme.border,
+                color: hover ? AppTheme.seed : colBorder,
                 width: hover ? 1.6 : 1),
           ),
           child: Column(children: [
@@ -325,13 +336,16 @@ class _CrmBoardViewState extends State<CrmBoardView> {
                       child: hover
                           ? Text('Solte aqui',
                               style: TextStyle(color: Colors.grey.shade400, fontSize: 13))
-                          : TextButton.icon(
+                          : TextButton(
                               onPressed: () =>
                                   showDealEditor(context, crm, stageId: stage.id),
-                              icon: const Icon(Icons.add, size: 16),
-                              label: const Text('Abrir lead'),
                               style: TextButton.styleFrom(
                                   foregroundColor: Colors.grey.shade500),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                                Icon(Icons.add, size: 16),
+                                SizedBox(width: 6),
+                                Text('Abrir lead'),
+                              ]),
                             ))
                   : ListView(
                       padding: const EdgeInsets.all(10),

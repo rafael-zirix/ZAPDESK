@@ -69,6 +69,38 @@ const kStagePalette = [
   '#EF4444', '#2563EB', '#16A34A', '#DB2777', '#0891B2',
 ];
 
+/// Botão à prova de CanvasKit: o FilledButton do tema NÃO PINTA em certos
+/// contextos do renderizador web (comprovado por sonda: qualquer FilledButton
+/// direto num Row do corpo some; InkWell+Container pinta sempre). Use este
+/// nos toolbars/linhas; em diálogos o FilledButton nativo funciona.
+Widget crmButton({
+  required VoidCallback onTap,
+  required IconData icon,
+  required String label,
+  bool filled = true,
+}) {
+  final fg = filled ? Colors.white : const Color(0xFF0E9384);
+  return InkWell(
+    borderRadius: BorderRadius.circular(10),
+    onTap: onTap,
+    child: Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: filled ? const Color(0xFF0E9384) : null,
+        border: filled ? null : Border.all(color: const Color(0xFF0E9384)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 18, color: fg),
+        const SizedBox(width: 8),
+        Text(label,
+            style: TextStyle(color: fg, fontSize: 14, fontWeight: FontWeight.w700)),
+      ]),
+    ),
+  );
+}
+
 /// Rótulo curto da origem do negócio.
 String sourceLabel(String? source) => switch (source) {
       'instagram' => 'Instagram',

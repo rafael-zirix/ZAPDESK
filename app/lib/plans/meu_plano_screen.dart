@@ -4,6 +4,7 @@ import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
 import '../core/ai_logo.dart';
+import '../crm/crm_format.dart' show crmButton;
 import '../models/package.dart';
 
 /// "Meu plano" (admin da empresa): o pacote contratado, a IA em uso com o saldo,
@@ -383,20 +384,20 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppTheme.seed)),
           Text('/mês', style: TextStyle(color: Colors.grey.shade600, fontSize: 11.5)),
           const SizedBox(height: 8),
+          // GOTCHA CanvasKit: FilledButton não pinta fora de diálogo — crmButton.
           requested
-              ? OutlinedButton.icon(
+              ? OutlinedButton(
                   onPressed: null,
-                  icon: const Icon(Icons.check, size: 16),
-                  label: const Text('Pedido enviado'),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                    Icon(Icons.check, size: 16),
+                    SizedBox(width: 6),
+                    Text('Pedido enviado'),
+                  ]),
                 )
-              : FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: AppTheme.seed,
-                      minimumSize: const Size(0, 38),
-                      padding: const EdgeInsets.symmetric(horizontal: 14)),
-                  onPressed: () => _comprar(p),
-                  icon: const Icon(Icons.shopping_cart_outlined, size: 16),
-                  label: const Text('Comprar'),
+              : crmButton(
+                  onTap: () => _comprar(p),
+                  icon: Icons.shopping_cart_outlined,
+                  label: 'Comprar',
                 ),
         ]),
       ]),

@@ -75,10 +75,11 @@ class _StageEditorDialogState extends State<_StageEditorDialog> {
                 ),
               ),
               const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: _busy ? null : _create,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Criar'),
+              // FilledButton some no CanvasKit em Row (sonda) — botão custom.
+              crmButton(
+                onTap: () { if (!_busy) _create(); },
+                icon: Icons.add,
+                label: 'Criar',
               ),
             ]),
             if (_error != null) ...[
