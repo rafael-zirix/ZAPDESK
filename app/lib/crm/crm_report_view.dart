@@ -140,9 +140,15 @@ class _CrmReportViewState extends State<CrmReportView> {
   Widget _funnel3d(CrmReport rep) {
     return _card(
       title: 'Funil de conversão',
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal, // janela estreita rola, não corta
-        child: SizedBox(width: 720, child: CrmFunnelChart(rows: rep.funnel)),
+      // Largura cheia + alinhamento central: dentro da Column do card um
+      // Center puro encolheria e o funil ficaria à esquerda.
+      child: Container(
+        width: double.infinity,
+        alignment: Alignment.center,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal, // janela estreita rola, não corta
+          child: SizedBox(width: 720, child: CrmFunnelChart(rows: rep.funnel)),
+        ),
       ),
     );
   }
