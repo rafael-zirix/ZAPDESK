@@ -262,7 +262,7 @@ func (s *SupportService) SetContactTags(accountID, userID, contactID string, tag
 	if err := s.repo.SetContactTags(accountID, contactID, tagIDs); err != nil {
 		return nil, err
 	}
-	list, err := s.repo.ListContactsWithGroups(accountID, userID)
+	list, err := s.repo.ListContactsWithGroups(accountID, userID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func (s *SupportService) SetContactGroups(accountID, userID, contactID string, g
 	if err := s.repo.SetContactGroups(accountID, contactID, groupIDs); err != nil {
 		return nil, err
 	}
-	list, err := s.repo.ListContactsWithGroups(accountID, userID)
+	list, err := s.repo.ListContactsWithGroups(accountID, userID, true)
 	if err != nil {
 		return nil, err
 	}

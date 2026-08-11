@@ -96,10 +96,11 @@ func (h *AIHandler) ImportURL(c *gin.Context) {
 			}
 		}
 	}
-	remaining := maxKBChars - h.kbUsed(accountID, existing)
+	kbMax := h.kbLimit(accountID)
+	remaining := kbMax - h.kbUsed(accountID, existing)
 	if remaining <= 0 {
 		RespondError(c, http.StatusBadRequest, ErrValidation,
-			fmt.Sprintf("A base já está no limite de %d caracteres. Remova algo antes de importar.", maxKBChars), nil)
+			fmt.Sprintf("A base já está no limite de %d caracteres. Remova algo antes de importar.", kbMax), nil)
 		return
 	}
 	truncated := false

@@ -275,44 +275,63 @@ class _InboxScreenState extends State<InboxScreen> {
       );
     }
     final total = unread.fold(0, (s, t) => s + t.unreadCount);
-    const maxShow = 12;
+    // Painel de altura fixa com rolagem: antes o menu crescia com o número de
+    // conversas não lidas e estourava a tela (mesmo bug da campainha do CRM).
     return PopupMenuButton<String>(
       tooltip: '$total mensagem${total == 1 ? '' : 's'} não lida${total == 1 ? '' : 's'}',
-      onSelected: (id) {
-        final t = inbox.tickets.where((x) => x.id == id).toList();
-        if (t.isNotEmpty) inbox.openTicket(t.first);
-      },
+      constraints: const BoxConstraints(minWidth: 280, maxWidth: 300),
       itemBuilder: (_) => [
-        for (final t in unread.take(maxShow))
-          PopupMenuItem(
-            value: t.id,
-            height: 42,
-            child: Row(children: [
-              SizedBox(
-                width: 190,
-                child: Text(t.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        PopupMenuItem<String>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 360),
+            child: Scrollbar(
+              thumbVisibility: unread.length > 8,
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                itemCount: unread.length,
+                itemBuilder: (itemCtx, i) {
+                  final t = unread[i];
+                  return InkWell(
+                    onTap: () {
+                      Navigator.pop(itemCtx);
+                      inbox.openTicket(t);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      child: Row(children: [
+                        SizedBox(
+                          width: 190,
+                          child: Text(t.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w600)),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                              color: AppTheme.seed,
+                              borderRadius: BorderRadius.circular(999)),
+                          child: Text('${t.unreadCount}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800)),
+                        ),
+                      ]),
+                    ),
+                  );
+                },
               ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                    color: AppTheme.seed, borderRadius: BorderRadius.circular(999)),
-                child: Text('${t.unreadCount}',
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
-              ),
-            ]),
+            ),
           ),
-        if (unread.length > maxShow)
-          PopupMenuItem(
-            enabled: false,
-            height: 34,
-            child: Text('… e mais ${unread.length - maxShow} conversas',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          ),
+        ),
       ],
       child: Padding(
         padding: const EdgeInsets.all(8),

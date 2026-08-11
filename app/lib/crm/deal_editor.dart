@@ -76,6 +76,9 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
         final l = d.nextFollowUpAt!.add(const Duration(hours: -3));
         _followUp = DateTime(l.year, l.month, l.day);
       }
+      // Editar: pré-carrega o contato ligado ao card (nome + telefone).
+      _contactName.text = d.contactName ?? '';
+      _contactPhone.text = d.contactPhone ?? '';
     } else {
       _loadContacts();
     }
@@ -121,6 +124,22 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
     String? err;
     if (isEdit) {
       err = await widget.crm.updateDeal(widget.deal!.id, body);
+      // Salva também o contato (nome/telefone) se algo mudou.
+      if (err == null) {
+        final newName = _contactName.text.trim();
+        final newPhone = _contactPhone.text.replaceAll(RegExp(r'\D'), '');
+        final oldName = widget.deal!.contactName ?? '';
+        final oldPhone = (widget.deal!.contactPhone ?? '')
+            .replaceAll(RegExp(r'\D'), '');
+        if (widget.deal!.contactId.isNotEmpty &&
+            (newName != oldName || newPhone != oldPhone)) {
+          err = await widget.crm.updateContact(
+            widget.deal!.contactId,
+            name: newName != oldName ? newName : null,
+            phone: newPhone != oldPhone ? newPhone : null,
+          );
+        }
+      }
     } else {
       if (widget.stageId != null) body['stage_id'] = widget.stageId;
       if (_newContact) {
@@ -173,6 +192,7 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (!isEdit) ..._contactSection(),
+              if (isEdit) ..._contactEditSection(),
               _label('Título (opcional — vazio usa o nome do contato)'),
               TextField(controller: _title, decoration: const InputDecoration(hintText: 'Ex.: Rastreamento frota')),
               const SizedBox(height: 12),
@@ -260,6 +280,27 @@ class _DealEditorDialogState extends State<_DealEditorDialog> {
         ),
       ],
     );
+  }
+
+  // Modo edição: contato do card com nome + telefone editáveis.
+  List<Widget> _contactEditSection() {
+    return [
+      _label('Contato'),
+      TextField(
+        controller: _contactName,
+        decoration: const InputDecoration(hintText: 'Nome do contato'),
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _contactPhone,
+        keyboardType: TextInputType.phone,
+        decoration: const InputDecoration(
+          hintText: 'Telefone (55 21 99999-9999)',
+          prefixIcon: Icon(Icons.phone_outlined, size: 20),
+        ),
+      ),
+      const SizedBox(height: 12),
+    ];
   }
 
   List<Widget> _contactSection() {

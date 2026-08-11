@@ -162,6 +162,18 @@ class CrmController extends ChangeNotifier {
     return null;
   }
 
+  // Atualiza SÓ nome/telefone do contato ligado ao card (parcial: os demais
+  // campos da ficha são preservados pelo COALESCE no backend).
+  Future<String?> updateContact(String contactId,
+      {String? name, String? phone}) async {
+    final r = await _api.put('/crm/contacts/$contactId/ficha', {
+      if (name != null) 'name': name,
+      if (phone != null) 'phone': phone,
+    });
+    if (!r.ok) return r.message ?? 'Erro ao salvar o contato';
+    return null;
+  }
+
   Future<String?> loseDeal(String id, String? reasonId, String? notes) async {
     final r = await _api.post('/crm/deals/$id/lose', {
       if (reasonId != null && reasonId.isNotEmpty) 'lost_reason_id': reasonId,

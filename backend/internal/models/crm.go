@@ -206,6 +206,7 @@ type ContactFicha struct {
 // ContactFichaRequest edita a ficha (parcial; string vazia limpa o campo).
 type ContactFichaRequest struct {
 	Name        *string `json:"name"`
+	Phone       *string `json:"phone"`
 	Email       *string `json:"email"`
 	PersonType  *string `json:"person_type" binding:"omitempty,oneof=pf pj"`
 	Document    *string `json:"document"`

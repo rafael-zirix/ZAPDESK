@@ -21,10 +21,29 @@ type BillingService struct {
 	ai        *repository.AIRepository
 	support   *repository.SupportRepository // preço por 1k tokens (platform_settings)
 	publicURL string
+	// usesCredit (opcional): true quando a conta cobra pela CARTEIRA em R$ (trilha
+	// nova) — aí a recarga credita R$ em vez de tokens. Nil = sempre tokens.
+	usesCredit func(accountID string) bool
 }
 
 func NewBillingService(mp *MercadoPagoClient, stripe *StripeClient, orders *repository.TokenOrderRepository, subs *repository.TokenSubscriptionRepository, auto *repository.TokenAutoRechargeRepository, ai *repository.AIRepository, support *repository.SupportRepository, publicURL string) *BillingService {
 	return &BillingService{mp: mp, stripe: stripe, orders: orders, subs: subs, auto: auto, ai: ai, support: support, publicURL: publicURL}
+}
+
+// WithCreditCheck liga a trilha dupla na recarga: para contas na carteira R$, o
+// crédito vira R$ (não tokens).
+func (s *BillingService) WithCreditCheck(fn func(accountID string) bool) *BillingService {
+	s.usesCredit = fn
+	return s
+}
+
+// creditPurchase credita a recarga na trilha certa: R$ na carteira (trilha nova)
+// ou tokens (antiga). Devolve o novo saldo (centavos ou tokens, conforme a trilha).
+func (s *BillingService) creditPurchase(accountID string, tokens int64, amountBRL float64, kind, note string) (int64, error) {
+	if s.usesCredit != nil && s.usesCredit(accountID) {
+		return s.ai.CreditBalanceCents(accountID, int64(amountBRL*100+0.5))
+	}
+	return s.ai.AddTokens(accountID, tokens, kind, note)
 }
 
 // Configured indica se a cobrança está habilitada (credencial do Mercado Pago).
@@ -38,9 +57,9 @@ type RechargeResult struct {
 	ReferenceID string  `json:"reference_id"`
 	Tokens      int64   `json:"tokens"`
 	AmountBRL   float64 `json:"amount_brl"`
-	PixQR       string  `json:"pix_qr"`         // copia e cola
-	PixQRBase64 string  `json:"pix_qr_base64"`  // imagem PNG (base64)
-	TicketURL   string  `json:"ticket_url"`     // página do MP (fallback)
+	PixQR       string  `json:"pix_qr"`        // copia e cola
+	PixQRBase64 string  `json:"pix_qr_base64"` // imagem PNG (base64)
+	TicketURL   string  `json:"ticket_url"`    // página do MP (fallback)
 }
 
 // CreateRecharge abre uma cobrança PIX de `amountBRL` reais e devolve o QR para o
@@ -117,7 +136,7 @@ func (s *BillingService) HandleWebhook(paymentID string) error {
 	if order == nil {
 		return nil // já creditado (webhook repetido) ou pedido desconhecido
 	}
-	if _, err := s.ai.AddTokens(order.AccountID, order.Tokens, "purchase", "Recarga Mercado Pago "+paymentID); err != nil {
+	if _, err := s.creditPurchase(order.AccountID, order.Tokens, order.AmountBRL, "purchase", "Recarga Mercado Pago "+paymentID); err != nil {
 		slog.Error("mercadopago: pago mas falhou ao creditar tokens", "conta", order.AccountID, "tokens", order.Tokens, "payment", paymentID, "erro", err)
 		return err
 	}
@@ -269,7 +288,7 @@ func (s *BillingService) MaybeCharge(accountID string, balance int64) {
 		_ = s.auto.ClearCharge(accountID)
 		return
 	}
-	if _, err := s.ai.AddTokens(accountID, claim.Tokens, "autorecharge", "Recarga automática (cartão)"); err != nil {
+	if _, err := s.creditPurchase(accountID, claim.Tokens, claim.AmountBRL, "autorecharge", "Recarga automática (cartão)"); err != nil {
 		// COBROU no cartão mas NÃO creditou: NÃO libera a trava (evita cobrar de novo
 		// já na próxima mensagem). Fica travado + logado para crédito manual.
 		slog.Error("stripe: cobrou mas falhou ao creditar — trava mantida p/ crédito manual", "conta", accountID, "tokens", claim.Tokens, "erro", err)
@@ -314,7 +333,7 @@ func (s *BillingService) OrderStatus(accountID, referenceID string) (status stri
 	if ce != nil || order == nil {
 		return pay.Status, true, nil // outro caminho (webhook) já creditou
 	}
-	if _, ae := s.ai.AddTokens(order.AccountID, order.Tokens, "purchase", "Recarga Mercado Pago "+o.PspReferenceID); ae != nil {
+	if _, ae := s.creditPurchase(order.AccountID, order.Tokens, order.AmountBRL, "purchase", "Recarga Mercado Pago "+o.PspReferenceID); ae != nil {
 		slog.Error("mercadopago: pago mas falhou ao creditar (polling)", "conta", order.AccountID, "tokens", order.Tokens, "payment", o.PspReferenceID, "erro", ae)
 		return pay.Status, false, nil
 	}
@@ -425,7 +444,7 @@ func (s *BillingService) HandleAuthorizedPayment(authPaymentID string) error {
 	if !created {
 		return nil // já creditada (retry)
 	}
-	if _, err := s.ai.AddTokens(sub.AccountID, sub.Tokens, "autorecharge", "Assinatura Mercado Pago "+authPaymentID); err != nil {
+	if _, err := s.creditPurchase(sub.AccountID, sub.Tokens, sub.AmountBRL, "autorecharge", "Assinatura Mercado Pago "+authPaymentID); err != nil {
 		slog.Error("mercadopago: cobrança paga mas falhou ao creditar", "conta", sub.AccountID, "tokens", sub.Tokens, "auth_payment", authPaymentID, "erro", err)
 		return err
 	}

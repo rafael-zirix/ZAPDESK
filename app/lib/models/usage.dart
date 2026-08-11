@@ -179,7 +179,9 @@ class MetaPricingTable {
 }
 
 
-/// Custo de um modelo de IA por 1.000 tokens (o que NÓS pagamos ao provedor).
+/// Custo de um modelo de IA por 1 MILHÃO de tokens (o que NÓS pagamos ao
+/// provedor). O campo se chama `per1k`/`per_1k` por compatibilidade, mas o
+/// VALOR é por 1M — padrão de cotação de Google/OpenAI/Anthropic.
 class AIModelCost {
   AIModelCost({
     required this.model,
@@ -201,7 +203,7 @@ class AIModelCost {
 
   final String model;
   final String provider;
-  final double per1k; // custo NOSSO por 1k (nunca vai ao cliente)
+  final double per1k; // custo NOSSO por 1 MILHÃO de tokens (nunca vai ao cliente)
   final bool active; // é o modelo em uso na plataforma
   final String note;
 
@@ -260,7 +262,7 @@ class AICostTable {
   final String activeModel;
   final List<AIModelCost> models;
 
-  /// Custo por 1.000 tokens do modelo em uso (0 se não cadastrado).
+  /// Custo por 1 MILHÃO de tokens do modelo em uso (0 se não cadastrado).
   double get activePer1k {
     for (final m in models) {
       if (m.model.toLowerCase() == activeModel.toLowerCase()) return m.per1k;

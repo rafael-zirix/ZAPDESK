@@ -77,7 +77,7 @@ class _PlansScreenState extends State<PlansScreen> {
           color: AppTheme.surface,
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 14),
           child: Row(children: [
-            const Text('Planos e créditos', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+            const Text('Créditos de IA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
             const Spacer(),
             IconButton(onPressed: _loading ? null : _load, tooltip: 'Atualizar', icon: const Icon(Icons.refresh)),
           ]),
@@ -137,7 +137,7 @@ class _PlansScreenState extends State<PlansScreen> {
   Widget _plansSection() {
     final pkgs = _packages.isNotEmpty ? _packages : <double>[];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('Escolha um plano', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+      const Text('Comprar créditos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
       const SizedBox(height: 4),
       Text(_per1k > 0
           ? 'Créditos pré-pagos de IA. Pague por PIX (na hora) ou cartão. R\$ ${_num(_per1k)} por 1.000 tokens.'

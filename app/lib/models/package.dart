@@ -13,7 +13,15 @@ class AppPackage {
     this.incIA = true,
     this.incCampanhas = false,
     this.incMetricas = false,
+    this.incCRM = false,
+    this.incLeads = false,
     this.franchiseCents = 0,
+    this.msgMarketingCents = 0,
+    this.msgUtilityCents = 0,
+    this.msgAuthCents = 0,
+    this.aiPrices = const {},
+    this.rechargeSizes = const [],
+    this.kbChars = 4000,
     this.sort = 0,
   });
 
@@ -28,7 +36,15 @@ class AppPackage {
   bool incIA;
   bool incCampanhas;
   bool incMetricas;
+  bool incCRM;
+  bool incLeads;
   int franchiseCents;
+  int msgMarketingCents;
+  int msgUtilityCents;
+  int msgAuthCents;
+  Map<String, double> aiPrices; // modelo -> R$ por 1M tokens (venda), por pacote
+  List<int> rechargeSizes; // tamanhos de recarga avulsa, em tokens
+  int kbChars; // teto da base de conhecimento (caracteres) neste pacote
   int sort;
 
   AppPackage copy() => AppPackage(
@@ -43,7 +59,15 @@ class AppPackage {
         incIA: incIA,
         incCampanhas: incCampanhas,
         incMetricas: incMetricas,
+        incCRM: incCRM,
+        incLeads: incLeads,
         franchiseCents: franchiseCents,
+        msgMarketingCents: msgMarketingCents,
+        msgUtilityCents: msgUtilityCents,
+        msgAuthCents: msgAuthCents,
+        aiPrices: Map<String, double>.from(aiPrices),
+        rechargeSizes: List<int>.from(rechargeSizes),
+        kbChars: kbChars,
         sort: sort,
       );
 
@@ -59,7 +83,18 @@ class AppPackage {
         incIA: j['inc_ia'] == true,
         incCampanhas: j['inc_campanhas'] == true,
         incMetricas: j['inc_metricas'] == true,
+        incCRM: j['inc_crm'] == true,
+        incLeads: j['inc_leads'] == true,
         franchiseCents: (j['franchise_cents'] ?? 0) as int,
+        msgMarketingCents: (j['msg_marketing_cents'] ?? 0) as int,
+        msgUtilityCents: (j['msg_utility_cents'] ?? 0) as int,
+        msgAuthCents: (j['msg_auth_cents'] ?? 0) as int,
+        aiPrices: ((j['ai_prices'] as Map?) ?? const {})
+            .map((k, v) => MapEntry(k.toString(), (v as num).toDouble())),
+        rechargeSizes: ((j['recharge_sizes'] as List?) ?? const [])
+            .map((e) => (e as num).toInt())
+            .toList(),
+        kbChars: (j['kb_chars'] ?? 4000) as int,
         sort: (j['sort'] ?? 0) as int,
       );
 
@@ -74,7 +109,15 @@ class AppPackage {
         'inc_ia': incIA,
         'inc_campanhas': incCampanhas,
         'inc_metricas': incMetricas,
+        'inc_crm': incCRM,
+        'inc_leads': incLeads,
         'franchise_cents': franchiseCents,
+        'msg_marketing_cents': msgMarketingCents,
+        'msg_utility_cents': msgUtilityCents,
+        'msg_auth_cents': msgAuthCents,
+        'ai_prices': aiPrices,
+        'recharge_sizes': rechargeSizes,
+        'kb_chars': kbChars,
         'sort': sort,
       };
 }

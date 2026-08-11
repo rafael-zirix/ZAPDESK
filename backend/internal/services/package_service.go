@@ -42,6 +42,8 @@ func (s *PackageService) Assign(accountID, packageID string) (*models.Package, e
 		ModuleInstagram: p.IncInstagram,
 		ModuleCampanhas: p.IncCampanhas,
 		ModuleMetricas:  p.IncMetricas,
+		ModuleCRM:       p.IncCRM,
+		ModuleLeads:     p.IncLeads,
 	}
 	for key, on := range inc {
 		if err := s.modules.Set(accountID, key, on, nil, nil); err != nil {

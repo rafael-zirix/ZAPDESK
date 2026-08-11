@@ -124,6 +124,69 @@ func (r *AIRepository) ConsumeTokens(accountID string, n int64, ticketID string)
 	return r.moveTokens(accountID, -n, "consumption", "", ticketID)
 }
 
+// --- Carteira em R$ (B2, trilha nova) -------------------------------------
+// Nesta trilha o saldo é R$ em centavos (ai_credit_cents), com franquia mensal
+// que ACUMULA. Independe do ledger de tokens.
+
+// CreditCents lê a carteira em R$ (centavos) da conta.
+func (r *AIRepository) CreditCents(accountID string) (int64, error) {
+	var c int64
+	err := r.db.QueryRow(`SELECT COALESCE(ai_credit_cents,0) FROM accounts WHERE id=$1 AND deleted_at IS NULL`, accountID).Scan(&c)
+	return c, err
+}
+
+// EnsureFranchise credita a franquia do mês na carteira UMA vez por período
+// (acumula o que sobrou). Idempotente pelo marcador ai_franchise_period.
+func (r *AIRepository) EnsureFranchise(accountID string, franchiseCents int64, period string) error {
+	if period == "" {
+		return nil
+	}
+	_, err := r.db.Exec(`UPDATE accounts
+		SET ai_credit_cents = ai_credit_cents + $2,
+		    ai_franchise_period = $3,
+		    updated_at = now()
+		WHERE id=$1 AND deleted_at IS NULL AND COALESCE(ai_franchise_period,'') <> $3`,
+		accountID, franchiseCents, period)
+	return err
+}
+
+// DebitCreditCents desconta R$ (centavos) da carteira e devolve o novo saldo.
+// GREATEST evita saldo negativo (o último consumo pode custar mais que o saldo).
+func (r *AIRepository) DebitCreditCents(accountID string, cents int64) (int64, error) {
+	var bal int64
+	err := r.db.QueryRow(`UPDATE accounts
+		SET ai_credit_cents = GREATEST(ai_credit_cents - $2, 0), updated_at=now()
+		WHERE id=$1 AND deleted_at IS NULL RETURNING ai_credit_cents`,
+		accountID, cents).Scan(&bal)
+	return bal, err
+}
+
+// CreditBalanceCents credita R$ (centavos) na carteira (recarga na trilha nova).
+func (r *AIRepository) CreditBalanceCents(accountID string, cents int64) (int64, error) {
+	var bal int64
+	err := r.db.QueryRow(`UPDATE accounts
+		SET ai_credit_cents = ai_credit_cents + $2, updated_at=now()
+		WHERE id=$1 AND deleted_at IS NULL RETURNING ai_credit_cents`,
+		accountID, cents).Scan(&bal)
+	return bal, err
+}
+
+// LogConsumption registra o consumo de tokens no extrato SEM mexer no saldo de
+// tokens (trilha nova: a cobrança é R$ na carteira). Serve para o relatório de
+// consumo por conta do super-admin contar os tokens dessas contas.
+func (r *AIRepository) LogConsumption(accountID string, tokens int64, ticketID string) error {
+	if tokens <= 0 {
+		return nil
+	}
+	var tid *string
+	if ticketID != "" {
+		tid = &ticketID
+	}
+	_, err := r.db.Exec(`INSERT INTO ai_token_ledger (account_id, delta, balance_after, kind, note, ticket_id, created_at)
+		VALUES ($1,$2,0,'consumption',NULL,$3,$4)`, accountID, -tokens, tid, time.Now().UTC())
+	return err
+}
+
 // TokensConsumedByAccount soma os tokens consumidos por conta no período (para o
 // relatório de consumo/cobrança). Só linhas de consumo (delta negativo).
 func (r *AIRepository) TokensConsumedByAccount(from, to time.Time) (map[string]int64, error) {

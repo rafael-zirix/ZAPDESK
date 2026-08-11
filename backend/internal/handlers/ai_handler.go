@@ -22,11 +22,42 @@ const maxKBChars = 12000
 // (empresa) e recarga de tokens (super-admin).
 type AIHandler struct {
 	support       *services.SupportService
-	providerReady bool // motor de IA (provedor) plugado no .env
+	pkgs          *services.PackageService // pacote da conta: preço de IA por modelo + teto de base
+	providerReady bool                     // motor de IA (provedor) plugado no .env
 }
 
 func NewAIHandler(support *services.SupportService, providerReady bool) *AIHandler {
 	return &AIHandler{support: support, providerReady: providerReady}
+}
+
+// WithPackages injeta o serviço de pacotes para a vitrine: o preço da IA por
+// modelo e o teto da base de conhecimento passam a vir do pacote contratado.
+func (h *AIHandler) WithPackages(p *services.PackageService) *AIHandler {
+	h.pkgs = p
+	return h
+}
+
+// pkgAIPrices devolve o mapa modelo->preço de venda por 1M do pacote da conta
+// (vazio se não houver pacote ou serviço).
+func (h *AIHandler) pkgAIPrices(accountID string) map[string]float64 {
+	if h.pkgs == nil {
+		return map[string]float64{}
+	}
+	p, err := h.pkgs.Current(accountID)
+	if err != nil || p == nil || p.AIPrices == nil {
+		return map[string]float64{}
+	}
+	return p.AIPrices
+}
+
+// kbLimit é o teto da base de conhecimento: do pacote contratado, senão o padrão.
+func (h *AIHandler) kbLimit(accountID string) int {
+	if h.pkgs != nil {
+		if p, err := h.pkgs.Current(accountID); err == nil && p != nil && p.KBChars > 0 {
+			return p.KBChars
+		}
+	}
+	return maxKBChars
 }
 
 // kbUsed soma quantos caracteres a base de conhecimento da empresa já ocupa.
@@ -47,24 +78,42 @@ func (h *AIHandler) kbUsed(accountID, excludeID string) int {
 // kbFits verifica se `content` cabe no teto da base. Devolve "" se cabe, ou a
 // mensagem de erro pronta para o usuário se estoura (sem cortar em silêncio).
 func (h *AIHandler) kbFits(accountID, excludeID, content string) string {
+	limit := h.kbLimit(accountID)
 	used := h.kbUsed(accountID, excludeID)
 	adding := utf8.RuneCountInString(strings.TrimSpace(content))
-	if used+adding <= maxKBChars {
+	if used+adding <= limit {
 		return ""
 	}
-	free := maxKBChars - used
+	free := limit - used
 	if free < 0 {
 		free = 0
 	}
-	return fmt.Sprintf("A base de conhecimento comporta %d caracteres e você já usou %d. Este conteúdo tem %d — sobram apenas %d. Encurte o texto ou remova algum item da base.", maxKBChars, used, adding, free)
+	return fmt.Sprintf("A base de conhecimento comporta %d caracteres e você já usou %d. Este conteúdo tem %d — sobram apenas %d. Encurte o texto ou remova algum item da base.", limit, used, adding, free)
 }
 
 // GetConfig devolve a config de IA da empresa + se o motor está plugado.
 // Models lista os modelos que a empresa pode escolher (o que oferecemos), com
 // o quanto cada um consome do saldo.
 func (h *AIHandler) Models(c *gin.Context) {
+	acc := middleware.AccountID(c)
 	oferta := h.support.OfferedModels()
-	atual, _ := h.support.AccountAIModel(middleware.AccountID(c))
+	atual, _ := h.support.AccountAIModel(acc)
+	// Preço por modelo + franquia e tamanhos de recarga do pacote da conta — o
+	// painel converte tudo em TOKENS por IA (o cliente nunca vê R$ de saldo).
+	prices := map[string]float64{}
+	franchiseCents := 0
+	rechargeSizes := []int{}
+	if h.pkgs != nil {
+		if p, err := h.pkgs.Current(acc); err == nil && p != nil {
+			if p.AIPrices != nil {
+				prices = p.AIPrices
+			}
+			franchiseCents = p.FranchiseCents
+			if p.RechargeSizes != nil {
+				rechargeSizes = p.RechargeSizes
+			}
+		}
+	}
 	itens := make([]gin.H, 0, len(oferta))
 	for _, m := range oferta {
 		nome := m.Label
@@ -74,9 +123,13 @@ func (h *AIHandler) Models(c *gin.Context) {
 		itens = append(itens, gin.H{
 			"model": m.Model, "label": nome, "provider": m.Provider, "factor": m.ChargeFactor(),
 			"context": m.Context, "intelligence": m.Intelligence, "speed": m.Speed, "best_for": m.BestFor,
+			"logo": m.Logo, "sell_per_1m": prices[m.Model],
 		})
 	}
-	RespondSuccess(c, http.StatusOK, "OK", gin.H{"models": itens, "current": atual})
+	RespondSuccess(c, http.StatusOK, "OK", gin.H{
+		"models": itens, "current": atual,
+		"franchise_cents": franchiseCents, "recharge_sizes": rechargeSizes,
+	})
 }
 
 // SetModel grava o modelo escolhido pela empresa (vazio volta ao padrão).
@@ -113,13 +166,13 @@ func (h *AIHandler) GetConfig(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "Config", gin.H{
 		"enabled":                cfg.Enabled,
 		"instructions":           cfg.Instructions,
-		"token_balance":          cfg.TokenBalance,
+		"token_balance":          h.support.AIBalanceTokens(middleware.AccountID(c)),
 		"autorecharge_enabled":   cfg.AutoEnabled,
 		"autorecharge_threshold": cfg.AutoThreshold,
 		"autorecharge_amount":    cfg.AutoAmount,
 		"has_payment":            cfg.HasPayment,
 		"provider_ready":         h.providerReady,
-		"kb_limit":               maxKBChars,
+		"kb_limit":               h.kbLimit(middleware.AccountID(c)),
 		"kb_used":                h.kbUsed(middleware.AccountID(c), ""),
 	})
 }

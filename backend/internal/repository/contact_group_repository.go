@@ -126,13 +126,15 @@ const contactGroupsJSON = `COALESCE((
 	WHERE gm.contact_id = sc.id), '[]')`
 
 // ListContactsWithGroups devolve os contatos visíveis ao usuário com os grupos.
-func (r *SupportRepository) ListContactsWithGroups(accountID, userID string) ([]models.SupportContact, error) {
+// all=true (admin) enxerga TODOS os contatos da conta — inclusive os que têm
+// dono (leads de outro vendedor); do contrário só os próprios + sem dono.
+func (r *SupportRepository) ListContactsWithGroups(accountID, userID string, all bool) ([]models.SupportContact, error) {
 	rows, err := r.db.Query(`
 		SELECT sc.id, sc.account_id, sc.phone, sc.name, sc.created_at, sc.updated_at,
 		       `+contactGroupsJSON+`, `+contactTagsJSON+`
 		FROM support_contacts sc
-		WHERE sc.account_id=$1 AND (sc.owner_user_id = $2::uuid OR sc.owner_user_id IS NULL)
-		ORDER BY COALESCE(sc.name,'~'), sc.phone`, accountID, userID)
+		WHERE sc.account_id=$1 AND ($3 OR sc.owner_user_id = $2::uuid OR sc.owner_user_id IS NULL)
+		ORDER BY COALESCE(sc.name,'~'), sc.phone`, accountID, userID, all)
 	if err != nil {
 		return nil, err
 	}

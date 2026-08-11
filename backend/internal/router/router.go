@@ -134,7 +134,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	mpClient := services.NewMercadoPagoClient(cfg.MercadoPagoBaseURL, cfg.MercadoPagoAccessToken)
 	stripeClient := services.NewStripeClient(cfg.StripeSecretKey, cfg.StripeWebhookSecret)
 	billingSvc := services.NewBillingService(mpClient, stripeClient, tokenOrderRepo, tokenSubRepo, tokenAutoRepo, aiRepo, supportRepo, cfg.PublicURL)
-	supportSvc.WithBilling(billingSvc) // liga o gatilho da recarga automática a 10%
+	supportSvc.WithBilling(billingSvc)                  // liga o gatilho da recarga automática a 10%
+	billingSvc.WithCreditCheck(supportSvc.AIUsesCredit) // recarga credita R$ na carteira (trilha nova)
 	if cfg.MercadoPagoConfigured() {
 		log.Println("[info] Compra de tokens via Mercado Pago (PIX) ativa")
 	}
@@ -195,7 +196,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	apRepo := repository.NewAccessProfileRepository(db)
 	apSvc := services.NewAccessProfileService(apRepo)
 	apH := handlers.NewAccessProfileHandler(apSvc)
-	authH = authH.WithPerms(apSvc)   // /auth/me devolve as permissões do perfil
+	authH = authH.WithPerms(apSvc)     // /auth/me devolve as permissões do perfil
 	userH = userH.WithProfiles(apRepo) // atribuição de perfil no cadastro
 
 	// CRM — funil de vendas ligado às conversas (módulo 'crm'). O contato do
@@ -212,6 +213,8 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 	})
 	// Pacotes: o CRUD + a atribuição (que aplica módulos/limites) + o "Meu plano".
 	packageSvc := services.NewPackageService(packageRepo, moduleSvc)
+	aiH.WithPackages(packageSvc)        // vitrine da IA (preço por modelo) + teto de base por pacote
+	supportSvc.WithPackages(packageSvc) // cobrança da IA por pacote (carteira R$ + franquia)
 	packageH := handlers.NewPackageHandler(packageRepo, supportRepo, packageSvc, supportSvc).
 		WithModules(moduleSvc) // botão Comprar do Meu plano → fila de interesses
 	// Mensalidade dos módulos (Mercado Pago): assinatura por empresa + corte por
@@ -345,12 +348,12 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			supportCfg.POST("/templates/image", middleware.RequireAdminOrPerm(apSvc, "modelos"), supportH.UploadTemplateImage) // imagem de exemplo do cabeçalho
 			supportCfg.PUT("/templates/:name/enabled", middleware.RequirePerm(apSvc, "modelos"), supportH.SetTemplateEnabled)
 			supportCfg.PUT("/templates/:name/usage", middleware.RequirePerm(apSvc, "modelos"), supportH.SetTemplateUsage)
-			supportCfg.GET("/sectors", supportH.ListSectors)                                             // setores (todos veem, p/ transferir)
+			supportCfg.GET("/sectors", supportH.ListSectors) // setores (todos veem, p/ transferir)
 			supportCfg.POST("/sectors", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.CreateSector)
 			supportCfg.PUT("/sectors/:id", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.UpdateSector)
 			supportCfg.DELETE("/sectors/:id", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.DeleteSector)
 			supportCfg.PUT("/sectors/:id/ad", middleware.RequireAdminOrPerm(apSvc, "setores"), supportH.SetAdSector) // recebe os leads de anúncio
-			supportCfg.GET("/tags", supportH.ListTags) // etiquetas da empresa
+			supportCfg.GET("/tags", supportH.ListTags)                                                               // etiquetas da empresa
 			supportCfg.POST("/tags", middleware.RequirePerm(apSvc, "etiquetas"), supportH.CreateTag)
 			// Presença é estado do PRÓPRIO usuário — vale para qualquer perfil.
 			supportCfg.PUT("/presence", supportH.SetMyPresence)
@@ -367,24 +370,24 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			support.POST("/tickets", supportH.StartConversation) // iniciar conversa com um contato
 			support.GET("/tickets/:id/messages", supportH.ListMessages)
 			support.POST("/tickets/:id/messages", supportH.Reply)
-			support.POST("/tickets/:id/media", supportH.SendMedia)                                    // envia foto/anexo
-			support.POST("/tickets/:id/template", supportH.SendTemplate)                              // envia um modelo aprovado
-			support.POST("/tickets/:id/interactive", supportH.SendInteractive)                        // envia botões ou menu de lista
-			support.POST("/tickets/:id/read", supportH.MarkRead)                                      // marca como lida (+ digitando)
-			support.POST("/tickets/:id/location", supportH.SendLocation)                              // envia localização
-			support.POST("/tickets/:id/contact", supportH.SendContact)                                // envia cartão de contato
-			support.POST("/tickets/:id/messages/:msgId/retry", supportH.RetryMessage)                 // reenvia mensagem que falhou
-			support.POST("/forward", supportH.ForwardMessage) // encaminha uma mensagem a outro contato
-			support.GET("/ai-state", supportH.AIState)                                                // Atendente IA ligado na empresa? (exibe o toggle na conversa)
-			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)                        // consumo/valores da própria empresa (admin)
-			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                                     // liga/pausa a IA nesta conversa
+			support.POST("/tickets/:id/media", supportH.SendMedia)                    // envia foto/anexo
+			support.POST("/tickets/:id/template", supportH.SendTemplate)              // envia um modelo aprovado
+			support.POST("/tickets/:id/interactive", supportH.SendInteractive)        // envia botões ou menu de lista
+			support.POST("/tickets/:id/read", supportH.MarkRead)                      // marca como lida (+ digitando)
+			support.POST("/tickets/:id/location", supportH.SendLocation)              // envia localização
+			support.POST("/tickets/:id/contact", supportH.SendContact)                // envia cartão de contato
+			support.POST("/tickets/:id/messages/:msgId/retry", supportH.RetryMessage) // reenvia mensagem que falhou
+			support.POST("/forward", supportH.ForwardMessage)                         // encaminha uma mensagem a outro contato
+			support.GET("/ai-state", supportH.AIState)                                // Atendente IA ligado na empresa? (exibe o toggle na conversa)
+			support.GET("/usage", middleware.RequireAdmin(), supportH.MyUsage)        // consumo/valores da própria empresa (admin)
+			support.POST("/tickets/:id/ai", supportH.SetTicketAI)                     // liga/pausa a IA nesta conversa
 			// Cmd+I: rascunho da IA para o atendente revisar (não envia nada).
 			support.POST("/tickets/:id/suggest", middleware.RequireModule(moduleSvc, services.ModuleIA), supportH.SuggestReply)
 			// Fase 1 de atendimento: assumir, transferir, ciclo de vida e histórico.
 			support.POST("/tickets/:id/claim", supportH.ClaimTicket)       // assumir a conversa (puxar p/ si)
 			support.POST("/tickets/:id/transfer", supportH.TransferTicket) // transferir p/ atendente e/ou setor
 			support.PUT("/tickets/:id/status", supportH.SetTicketStatus)   // resolver / fechar / reabrir…
-			support.GET("/tickets/:id/events", supportH.ListTicketEvents) // timeline (transferências, status, notas)
+			support.GET("/tickets/:id/events", supportH.ListTicketEvents)  // timeline (transferências, status, notas)
 			// Fase 2: notas internas, respostas rápidas, etiquetas, fila e presença.
 			support.POST("/tickets/:id/notes", supportH.AddNote)  // nota interna (só a equipe vê)
 			support.PUT("/tickets/:id/phone", supportH.LinkPhone) // cadastra o WhatsApp de um contato do Instagram
@@ -428,7 +431,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 		}
 		crmBoard := crm.Group("", middleware.RequirePerm(apSvc, "crm"))
 		{
-			crm := crmBoard // as rotas abaixo exigem a chave 'crm'
+			crm := crmBoard               // as rotas abaixo exigem a chave 'crm'
 			crm.GET("/board", crmH.Board) // etapas + negócios abertos/ganhos (o Kanban numa chamada)
 			crm.GET("/stages", crmH.ListStages)
 			crm.POST("/stages", middleware.RequireAdminOrPerm(apSvc, "crm_etapas"), crmH.CreateStage)
@@ -532,7 +535,7 @@ func New(cfg *config.Config, db *sql.DB) *gin.Engine {
 			ai.PUT("/actions/:id", aiH.UpdateAction)
 			ai.PUT("/actions/:id/enabled", aiH.ToggleAction)
 			ai.DELETE("/actions/:id", aiH.DeleteAction)
-			ai.GET("/ledger", middleware.RequireAdmin(), aiH.Ledger) // extrato de tokens = dinheiro, indelegável
+			ai.GET("/ledger", middleware.RequireAdmin(), aiH.Ledger)                          // extrato de tokens = dinheiro, indelegável
 			ai.GET("/plans", middleware.RequireAdmin(), billingH.Plans)                       // planos/pacotes + preço p/ o cliente
 			ai.POST("/recharge/checkout", middleware.RequireAdmin(), billingH.Checkout)       // gera o PIX (Mercado Pago)
 			ai.POST("/recharge/preference", middleware.RequireAdmin(), billingH.CardCheckout) // Checkout Pro (PIX + cartão hospedado)

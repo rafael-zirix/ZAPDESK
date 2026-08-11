@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'module_prices_card.dart';
 import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
@@ -89,9 +88,8 @@ class _UsageScreenState extends State<UsageScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        _PricingCard(c),
-        const ModulePricesCard(),
-        _MetaPricingCard(c),
+        // Preços (custo do provedor, plataforma, módulos) migraram para a tela
+        // "Preços" — aqui fica só o consumo por empresa.
         for (final co in c.companies) _companyCard(co, c.pricing),
       ],
     );
@@ -245,6 +243,55 @@ class _UsageScreenState extends State<UsageScreen> {
 /// Tabela de custo da META por categoria + custo da IA — REFERÊNCIA DO DONO.
 /// O cliente nunca vê isto: a Meta cobra na conta de WhatsApp dele e a IA é
 /// custo nosso. Serve para saber a margem de cada serviço.
+/// Tela "Preços" (super-admin): custo do provedor + preços da plataforma +
+/// preços dos módulos. Saíram da tela "Consumo" (que ficou só com o consumo por
+/// empresa) para um menu próprio, ao lado de Pacotes.
+class PricesScreen extends StatefulWidget {
+  const PricesScreen({super.key});
+  @override
+  State<PricesScreen> createState() => _PricesScreenState();
+}
+
+class _PricesScreenState extends State<PricesScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => context.read<UsageController>().load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<UsageController>();
+    return Container(
+      color: AppTheme.bg,
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+          child: Row(children: [
+            const Text('IA',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('modelos de IA e o custo do provedor de cada um (o preço de venda fica no pacote)',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5)),
+            ),
+          ]),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              _MetaPricingCard(c),
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
 class _MetaPricingCard extends StatelessWidget {
   const _MetaPricingCard(this.c);
   final UsageController c;
@@ -357,7 +404,9 @@ class _AICostRowState extends State<_AICostRow> {
   Widget build(BuildContext context) {
     final c = widget.c;
     final tokens = c.totalAITokens;
-    final custo = tokens / 1000.0 * c.aiCosts.activePer1k;
+    // Custo do provedor é cotado por 1 MILHÃO de tokens (padrão Google/OpenAI/
+    // Anthropic). A receita (preço ao cliente) segue por 1.000 — pacote de venda.
+    final custo = tokens / 1000000.0 * c.aiCosts.activePer1k;
     final receita = tokens / 1000.0 * c.pricing.per1kTokens;
     final margem = receita - custo;
     return Column(
@@ -370,7 +419,7 @@ class _AICostRowState extends State<_AICostRow> {
           Row(children: [
             SizedBox(width: 230, child: Text('MODELO', style: _th)),
             SizedBox(width: 120, child: Text('PROVEDOR', style: _th)),
-            SizedBox(width: 150, child: Text('CUSTO / 1.000 TOKENS', style: _th)),
+            SizedBox(width: 150, child: Text('CUSTO / 1M TOKENS', style: _th)),
             SizedBox(width: 90, child: Text('EM USO', style: _th)),
           ]),
           const Divider(height: 14),
@@ -394,7 +443,7 @@ class _AICostRowState extends State<_AICostRow> {
                 SizedBox(
                   width: 110,
                   child: m.offered
-                      ? Text('oferta · ${m.factor}×',
+                      ? Text('ofertada',
                           style: const TextStyle(
                               fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF12B76A)))
                       : Text('interno', style: _td),
@@ -470,7 +519,6 @@ class _AICostRowState extends State<_AICostRow> {
     final contexto = TextEditingController(text: editar?.context ?? '');
     final inteligencia = TextEditingController(text: (editar?.intelligence ?? 0) > 0 ? '${editar!.intelligence}' : '');
     final velocidade = TextEditingController(text: (editar?.speed ?? 0) > 0 ? '${editar!.speed}' : '');
-    final fator = TextEditingController(text: '${editar?.factor ?? 1}');
     final baseUrl = TextEditingController(text: editar?.baseUrl ?? '');
     final keyEnv = TextEditingController(text: editar?.keyEnv ?? '');
     var ofertado = editar?.offered ?? false;
@@ -518,8 +566,8 @@ class _AICostRowState extends State<_AICostRow> {
                     controller: price,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(
-                        labelText: 'Custo por 1.000 tokens', prefixText: 'R\$ ', border: OutlineInputBorder(),
-                        helperText: 'O que NÓS pagamos'),
+                        labelText: 'Custo por 1M tokens', prefixText: 'R\$ ', border: OutlineInputBorder(),
+                        helperText: 'O que NÓS pagamos ao provedor (por 1 milhão)'),
                   )),
                 ]),
                 const Divider(height: 28),
@@ -534,13 +582,6 @@ class _AICostRowState extends State<_AICostRow> {
                   SizedBox(width: 130, child: TextField(
                     controller: contexto,
                     decoration: const InputDecoration(labelText: 'Contexto', hintText: '1M', border: OutlineInputBorder()),
-                  )),
-                  const SizedBox(width: 12),
-                  SizedBox(width: 150, child: TextField(
-                    controller: fator,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                        labelText: 'Consumo (×)', border: OutlineInputBorder(), helperText: 'Multiplica o saldo'),
                   )),
                 ]),
                 const SizedBox(height: 10),
@@ -608,7 +649,6 @@ class _AICostRowState extends State<_AICostRow> {
       per1k: double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0,
       label: label.text.trim(),
       offered: ofertado,
-      factor: double.tryParse(fator.text.trim().replaceAll(',', '.')) ?? 1,
       baseUrl: baseUrl.text.trim(),
       keyEnv: keyEnv.text.trim(),
       context: contexto.text.trim(),

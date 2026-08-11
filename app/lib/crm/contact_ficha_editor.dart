@@ -163,7 +163,7 @@ class _ContactFichaDialogState extends State<_ContactFichaDialog> {
                       ),
                     ]),
                     const SizedBox(height: 10),
-                    _field('Nome', _name, width: 250),
+                    _field('Nome', _name, width: 472),
                     const SizedBox(height: 10),
                     Row(children: [
                       _field(_personType == 'pj' ? 'CNPJ' : 'CPF', _document,

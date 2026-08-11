@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/ai_logo.dart';
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/theme.dart';
@@ -17,6 +18,7 @@ class PackagesScreen extends StatefulWidget {
 class _PackagesScreenState extends State<PackagesScreen> {
   final _api = ApiClient.instance;
   List<AppPackage> _pkgs = [];
+  List<Map<String, dynamic>> _models = []; // modelos de IA p/ preço por modelo
   bool _loading = true;
   AppPackage? _edit; // pacote em edição (cópia); null = nada selecionado
   bool _saving = false;
@@ -30,11 +32,15 @@ class _PackagesScreenState extends State<PackagesScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final r = await _api.get('/admin/packages');
+    final rm = await _api.get('/admin/ai-costs');
     if (!mounted) return;
     setState(() {
       _loading = false;
       _pkgs = r.ok && r.data is List
           ? (r.data as List).map((e) => AppPackage.fromJson(e as Map<String, dynamic>)).toList()
+          : [];
+      _models = rm.ok && rm.data is Map && (rm.data as Map)['models'] is List
+          ? ((rm.data as Map)['models'] as List).cast<Map<String, dynamic>>()
           : [];
     });
   }
@@ -257,6 +263,10 @@ class _PackagesScreenState extends State<PackagesScreen> {
           (v) => ch(() => p.incCampanhas = v)),
       _toggleRow(Icons.query_stats_outlined, 'Métricas', 'Relatórios de atendimento e IA', p.incMetricas,
           (v) => ch(() => p.incMetricas = v)),
+      _toggleRow(Icons.view_kanban_outlined, 'CRM', 'Quadro de leads e funil de vendas', p.incCRM,
+          (v) => ch(() => p.incCRM = v)),
+      _toggleRow(Icons.filter_alt_outlined, 'Leads & Qualificação', 'Captação e qualificação de leads', p.incLeads,
+          (v) => ch(() => p.incLeads = v)),
       // franquia
       const Divider(height: 28),
       Opacity(
@@ -287,6 +297,148 @@ class _PackagesScreenState extends State<PackagesScreen> {
               ])),
         ),
       ),
+      const Divider(height: 28),
+      _field('Preço por tipo de mensagem (R\$/msg entregue)',
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+                'A Meta cobra o cliente por modelo entregue, por categoria. Defina o preço deste pacote:',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+            const SizedBox(height: 10),
+            Row(children: [
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  initialValue: reaisFromCents(p.msgMarketingCents),
+                  key: ValueKey('mkt-${p.id}'),
+                  keyboardType: TextInputType.number,
+                  decoration: _dec(prefix: 'R\$ ', dense: true).copyWith(labelText: 'Marketing'),
+                  onChanged: (v) => ch(() => p.msgMarketingCents = centsFromReais(v)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  initialValue: reaisFromCents(p.msgUtilityCents),
+                  key: ValueKey('util-${p.id}'),
+                  keyboardType: TextInputType.number,
+                  decoration: _dec(prefix: 'R\$ ', dense: true).copyWith(labelText: 'Utilidade'),
+                  onChanged: (v) => ch(() => p.msgUtilityCents = centsFromReais(v)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  initialValue: reaisFromCents(p.msgAuthCents),
+                  key: ValueKey('auth-${p.id}'),
+                  keyboardType: TextInputType.number,
+                  decoration: _dec(prefix: 'R\$ ', dense: true).copyWith(labelText: 'Autenticação'),
+                  onChanged: (v) => ch(() => p.msgAuthCents = centsFromReais(v)),
+                ),
+              ),
+            ]),
+          ])),
+      // IA — preço de VENDA por modelo (R$ por 1M tokens), neste pacote.
+      const Divider(height: 28),
+      _field('Preço de venda da IA por modelo (R\$ por 1M tokens)',
+          child: _models.isEmpty
+              ? Text('Cadastre modelos de IA em "Custo do provedor" para precificá-los aqui.',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12))
+              : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                      'O cliente escolhe o modelo no painel dele e vê o preço deste pacote antes de usar.',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                  const SizedBox(height: 10),
+                  for (final m in _models)
+                    Builder(builder: (_) {
+                      final mid = (m['model'] ?? '').toString();
+                      final cur = p.aiPrices[mid] ?? 0;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: aiLogo((m['logo'] ?? '').toString(), size: 26),
+                          ),
+                          SizedBox(
+                            width: 214,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text((m['label'] ?? mid).toString(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontSize: 13, fontWeight: FontWeight.w600)),
+                                Text([
+                                  (m['provider'] ?? '').toString(),
+                                  mid,
+                                ].where((e) => e.toString().isNotEmpty).join(' · '),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        fontSize: 11, color: Colors.grey.shade600)),
+                                // Custo do provedor (só super-admin) — referência
+                                // para definir o preço de venda com margem.
+                                if (((m['per1k'] as num?) ?? 0) > 0)
+                                  Text(
+                                      'seu custo R\$ ${(m['per1k'] as num).toDouble().toStringAsFixed(2).replaceAll('.', ',')}/1M',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.orange.shade800,
+                                          fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 170,
+                            child: TextFormField(
+                              initialValue: cur == 0 ? '' : '$cur',
+                              key: ValueKey('aip-${p.id}-$mid'),
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: _dec(prefix: 'R\$ ', dense: true).copyWith(suffixText: '/1M'),
+                              onChanged: (v) => ch(() => p.aiPrices = {
+                                    ...p.aiPrices,
+                                    mid: double.tryParse(v.replaceAll(',', '.')) ?? 0,
+                                  }),
+                            ),
+                          ),
+                        ]),
+                      );
+                    }),
+                ])),
+      // Recarga avulsa por TAMANHO (tokens). O preço deriva do preço/1M do modelo.
+      const Divider(height: 28),
+      _field('Pacotes de recarga avulsa (tamanhos em tokens, separados por vírgula)',
+          child: SizedBox(
+            width: 340,
+            child: TextFormField(
+              initialValue: p.rechargeSizes.join(', '),
+              key: ValueKey('recharge-${p.id}'),
+              decoration: _dec(dense: true).copyWith(hintText: 'ex.: 500, 1000, 5000, 10000'),
+              onChanged: (v) => ch(() => p.rechargeSizes = v
+                  .split(',')
+                  .map((e) => int.tryParse(e.trim()) ?? 0)
+                  .where((n) => n > 0)
+                  .toList()),
+            ),
+          )),
+      // Base de conhecimento: teto de caracteres liberado neste pacote.
+      const Divider(height: 28),
+      _field('Base de conhecimento — tamanho disponível (caracteres)',
+          child: SizedBox(
+            width: 220,
+            child: TextFormField(
+              initialValue: p.kbChars.toString(),
+              key: ValueKey('kb-${p.id}'),
+              keyboardType: TextInputType.number,
+              decoration: _dec(dense: true).copyWith(suffixText: 'caracteres'),
+              onChanged: (v) =>
+                  ch(() => p.kbChars = int.tryParse(v.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0),
+            ),
+          )),
       const SizedBox(height: 20),
       Row(children: [
         FilledButton.icon(
@@ -370,6 +522,8 @@ class _PackagesScreenState extends State<PackagesScreen> {
             inc('Instagram — Direct e Lead Ads', p.incInstagram),
             inc('Campanhas em massa', p.incCampanhas),
             inc('Métricas e relatórios', p.incMetricas),
+            inc('CRM — quadro e funil', p.incCRM),
+            inc('Leads & Qualificação', p.incLeads),
             if (p.incIA && p.franchiseCents > 0) ...[
               const SizedBox(height: 6),
               Container(

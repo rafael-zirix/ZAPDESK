@@ -145,6 +145,7 @@ class _AppShellState extends State<AppShell> {
       return const [
         _NavDest(Icons.apartment_outlined, Icons.apartment, 'Empresas', AccountsScreen()),
         _NavDest(Icons.inventory_2_outlined, Icons.inventory_2, 'Pacotes', PackagesScreen()),
+        _NavDest(Icons.smart_toy_outlined, Icons.smart_toy, 'IA', PricesScreen()),
         _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', UsageScreen()),
       ];
     }
@@ -207,7 +208,7 @@ class _AppShellState extends State<AppShell> {
     if (me.isAdmin) {
       // Indelegáveis: plano/cobrança, consumo, login e o editor de perfis.
       items.add(const _NavDest(Icons.inventory_2_outlined, Icons.inventory_2, 'Meu plano', MeuPlanoScreen()));
-      items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Planos', PlansScreen()));
+      items.add(const _NavDest(Icons.credit_card_outlined, Icons.credit_card, 'Créditos', PlansScreen()));
       items.add(const _NavDest(Icons.bar_chart_outlined, Icons.bar_chart, 'Consumo', MyUsageScreen()));
       items.add(const _NavDest(Icons.key_outlined, Icons.key, 'Tipo de login', SettingsScreen()));
       items.add(const _NavDest(Icons.admin_panel_settings_outlined, Icons.admin_panel_settings,
@@ -338,7 +339,7 @@ class _AppShellState extends State<AppShell> {
       label: 'Configurações',
       icon: Icons.settings_outlined,
       activeIcon: Icons.settings,
-      members: {'Usuários', 'Meu plano', 'Telefones', 'Instagram', 'Planos', 'Consumo', 'Tipo de login', 'Perfis'},
+      members: {'Usuários', 'Meu plano', 'Telefones', 'Instagram', 'Créditos', 'Consumo', 'Tipo de login', 'Perfis'},
     ),
   ];
 

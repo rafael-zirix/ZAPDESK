@@ -653,12 +653,13 @@ func (r *CrmRepository) UpdateContactFicha(accountID, contactID string, req mode
 		  district     = COALESCE(NULLIF($13,''), CASE WHEN $13='' THEN NULL ELSE district END),
 		  city         = COALESCE(NULLIF($14,''), CASE WHEN $14='' THEN NULL ELSE city END),
 		  state        = COALESCE(NULLIF($15,''), CASE WHEN $15='' THEN NULL ELSE state END),
-		  updated_at   = $16
+		  phone        = COALESCE(NULLIF($16,''), CASE WHEN $16='' THEN NULL ELSE phone END),
+		  updated_at   = $17
 		WHERE id=$1 AND account_id=$2
 		RETURNING `+fichaCols,
 		contactID, accountID, sv(req.Name), sv(req.Email), sv(req.PersonType), sv(req.Document),
 		sv(req.CompanyName), sv(req.TradeName), sv(req.ZipCode), sv(req.Street), sv(req.Number),
-		sv(req.Complement), sv(req.District), sv(req.City), sv(req.State), time.Now().UTC()))
+		sv(req.Complement), sv(req.District), sv(req.City), sv(req.State), sv(req.Phone), time.Now().UTC()))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

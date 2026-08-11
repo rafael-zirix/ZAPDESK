@@ -29,7 +29,17 @@ func (s *SupportService) SuggestReply(accountID, ticketID string) (string, int, 
 	if err != nil {
 		return "", 0, err
 	}
-	if cfg == nil || cfg.TokenBalance <= 0 {
+	if cfg == nil {
+		return "", 0, ErrAINoBalance
+	}
+	// Trilha dupla: conta com preço de IA no pacote usa a carteira R$; senão, o
+	// saldo de tokens de sempre.
+	newModel, sell, hasCredit := s.aiTrack(accountID)
+	if newModel {
+		if !hasCredit {
+			return "", 0, ErrAINoBalance
+		}
+	} else if cfg.TokenBalance <= 0 {
 		return "", 0, ErrAINoBalance
 	}
 	msgs, err := s.repo.ListMessages(accountID, ticketID)
@@ -73,8 +83,8 @@ func (s *SupportService) SuggestReply(accountID, ticketID string) (string, int, 
 	if text == "" {
 		return "", tokens, ErrAINothingToSay
 	}
-	newBal, _ := s.aiRepo.ConsumeTokens(accountID, cobrarTokens(tokens, fator), ticketID)
-	if s.billing != nil {
+	newBal := s.aiDebit(accountID, ticketID, tokens, sell, fator, newModel)
+	if !newModel && s.billing != nil {
 		go s.billing.MaybeCharge(accountID, newBal)
 	}
 	return text, tokens, nil

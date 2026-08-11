@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/ai_logo.dart';
 import '../core/api_client.dart';
 import '../core/entity_form.dart';
 import '../core/file_pick.dart';
@@ -30,6 +31,8 @@ class _AIScreenState extends State<AIScreen> {
   // qual IA usar; modelo mais forte consome mais do saldo).
   List<Map<String, dynamic>> _modelos = [];
   String _modeloAtual = '';
+  int _franchiseCents = 0; // franquia mensal do pacote (R$) p/ mostrar tokens/mês por IA
+  List<int> _rechargeSizes = []; // tamanhos de recarga avulsa (tokens) do pacote
   int _balance = 0;
   int _kbLimit = 4000; // teto de caracteres da base de conhecimento (vem do backend)
 
@@ -82,6 +85,10 @@ class _AIScreenState extends State<AIScreen> {
         final m = mods.data as Map;
         _modelos = ((m['models'] as List?) ?? const []).cast<Map<String, dynamic>>();
         _modeloAtual = (m['current'] ?? '').toString();
+        _franchiseCents = ((m['franchise_cents'] ?? 0) as num).toInt();
+        _rechargeSizes = ((m['recharge_sizes'] as List?) ?? const [])
+            .map((e) => (e as num).toInt())
+            .toList();
       }
     });
   }
@@ -620,11 +627,27 @@ class _AIScreenState extends State<AIScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text((m['label'] ?? id).toString(),
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
-            Text((m['provider'] ?? '').toString(),
-                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+            Row(
+              children: [
+                aiLogo((m['logo'] ?? '').toString(), size: 42),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 168,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text((m['label'] ?? id).toString(),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                      Text((m['provider'] ?? '').toString(),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             if ((m['best_for'] ?? '').toString().isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(m['best_for'].toString(),
@@ -633,15 +656,29 @@ class _AIScreenState extends State<AIScreen> {
             const SizedBox(height: 10),
             if ((m['context'] ?? '').toString().isNotEmpty)
               _linhaSpec('Contexto', m['context'].toString()),
+            if (((m['sell_per_1m'] as num?) ?? 0) > 0)
+              Builder(builder: (_) {
+                final sell = (m['sell_per_1m'] as num).toDouble();
+                final mensal = _franchiseCents > 0
+                    ? (_franchiseCents / 100 / sell * 1000000).round()
+                    : 0;
+                String tok(int n) => n >= 1000000
+                    ? '${(n / 1000000).toStringAsFixed(1)}M'
+                    : n >= 1000
+                        ? '${(n / 1000).round()}k'
+                        : '$n';
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (mensal > 0)
+                        _linhaSpec('Por mês', '≈ ${tok(mensal)} tokens'),
+                      if (_rechargeSizes.isNotEmpty)
+                        _linhaSpec('Extras',
+                            'R\$ ${(_rechargeSizes.first / 1000000 * sell).toStringAsFixed(2).replaceAll('.', ',')} / ${tok(_rechargeSizes.first)}'),
+                    ]);
+              }),
             _barra('Inteligência', (m['intelligence'] ?? 0) as int),
             _barra('Velocidade', (m['speed'] ?? 0) as int),
-            const SizedBox(height: 8),
-            Row(children: [
-              const Icon(Icons.token, size: 15, color: Color(0xFFF79009)),
-              const SizedBox(width: 5),
-              Text('consome ${_fator(m)}× por mensagem',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFB54708))),
-            ]),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -697,10 +734,6 @@ class _AIScreenState extends State<AIScreen> {
     );
   }
 
-  String _fator(Map<String, dynamic> m) {
-    final f = (m['factor'] ?? 1) as num;
-    return f == f.roundToDouble() ? f.toInt().toString() : f.toStringAsFixed(1);
-  }
 
   Future<void> _salvarModelo(String model) async {
     final anterior = _modeloAtual;

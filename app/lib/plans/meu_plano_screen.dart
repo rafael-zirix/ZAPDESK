@@ -65,6 +65,33 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
     return l.isEmpty ? (m['provider'] ?? id).toString() : l;
   }
 
+  // Formata quantidade de tokens de forma amigável (4M, 240k, 900).
+  String _tok(int n) => n >= 1000000
+      ? '${(n / 1000000).toStringAsFixed(1)}M'
+      : n >= 1000
+          ? '${(n / 1000).round()}k'
+          : '$n';
+
+  // Franquia (R$) do pacote convertida em tokens/mês para um modelo. 0 = sem
+  // preço de IA no pacote (mostra em R$, comportamento antigo).
+  int _tokensMes(AppPackage p, String model) {
+    final sell = p.aiPrices[model] ?? 0;
+    if (sell <= 0 || p.franchiseCents <= 0) return 0;
+    return (p.franchiseCents / 100 / sell * 1000000).round();
+  }
+
+  // Melhor caso: a IA mais barata do pacote rende mais tokens (número de vitrine).
+  int _maxTokensMes(AppPackage p) {
+    var best = 0;
+    for (final e in p.aiPrices.entries) {
+      if (e.value > 0 && p.franchiseCents > 0) {
+        final t = (p.franchiseCents / 100 / e.value * 1000000).round();
+        if (t > best) best = t;
+      }
+    }
+    return best;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -145,12 +172,18 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
         inc('Métricas e relatórios', p.incMetricas),
         if (p.incIA && p.franchiseCents > 0) ...[
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.white.withValues(alpha: .16), borderRadius: BorderRadius.circular(10)),
-            child: Text('Franquia de IA: R\$ ${reaisFromCents(p.franchiseCents)}/mês inclusos',
-                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-          ),
+          Builder(builder: (_) {
+            final tks = _tokensMes(p, _aiCurrent);
+            final txt = tks > 0
+                ? 'Franquia de IA: ≈ ${_tok(tks)} tokens/mês em ${_label(_aiCurrent)}'
+                : 'Franquia de IA: R\$ ${reaisFromCents(p.franchiseCents)}/mês inclusos';
+            return Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: .16), borderRadius: BorderRadius.circular(10)),
+              child: Text(txt,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            );
+          }),
         ],
       ]),
     );
@@ -376,6 +409,12 @@ class _MeuPlanoScreenState extends State<MeuPlanoScreen> {
             Text('${p.incLines} linha${p.incLines > 1 ? 's' : ''} · ${p.incAgents} atendentes'
                 '${bits.isEmpty ? '' : ' · ${bits.join(' · ')}'}',
                 style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5)),
+            if (_maxTokensMes(p) > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text('até ${_tok(_maxTokensMes(p))} tokens/mês de IA',
+                    style: TextStyle(color: AppTheme.seed, fontSize: 12, fontWeight: FontWeight.w600)),
+              ),
           ]),
         ),
         const SizedBox(width: 12),

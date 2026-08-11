@@ -638,7 +638,7 @@ func (h *SupportHandler) SetTemplateUsage(c *gin.Context) {
 
 // ListContacts devolve os contatos da conta.
 func (h *SupportHandler) ListContacts(c *gin.Context) {
-	list, err := h.support.ListContacts(middleware.AccountID(c), middleware.UserID(c))
+	list, err := h.support.ListContacts(middleware.AccountID(c), middleware.UserID(c), middleware.IsAdmin(c))
 	if err != nil {
 		RespondError(c, http.StatusInternalServerError, ErrInternal, "Erro ao listar contatos", nil)
 		return

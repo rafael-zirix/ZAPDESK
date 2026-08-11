@@ -31,7 +31,7 @@ cp -r "$ROOT/app/build/web/." "$ROOT/deploy/web/app/"
 mv "$ROOT/deploy/web/app/start.html" "$ROOT/deploy/web/index.html"
 # Páginas legais na RAIZ do site (a Meta exige política de privacidade e
 # instruções de exclusão de dados; o router serve com URL limpa: /privacidade…).
-for f in privacidade.html termos.html exclusao-de-dados.html legal.css; do
+for f in privacidade.html termos.html exclusao-de-dados.html legal.css start.js; do
   mv "$ROOT/deploy/web/app/$f" "$ROOT/deploy/web/$f" 2>/dev/null || true
 done
 # favicon acessível na raiz (a landing referencia /favicon.png).

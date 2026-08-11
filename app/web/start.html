@@ -175,7 +175,7 @@
       <div class="card">
         <h2>Acesse sua conta</h2>
         <p class="sub">Entre com o e-mail cadastrado da sua empresa — enviamos um código de acesso na hora.</p>
-        <form onsubmit="return goLogin(event)">
+        <form id="loginForm">
           <div class="field">
             <label for="email">E-mail</label>
             <input id="email" type="email" inputmode="email" placeholder="voce@suaempresa.com.br" autocomplete="email" />
@@ -236,61 +236,8 @@
     </div>
   </footer>
 
-  <script>
-    document.getElementById('y').textContent = new Date().getFullYear();
-
-    // Planos: puxados do backend (/public/packages). É a MESMA lista que o
-    // super-admin edita e que o painel do cliente mostra — publicar lá atualiza o
-    // site sozinho. Quantos pacotes existirem, tantos cards aparecem.
-    (function loadPlanos() {
-      var brl = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      var reais = function (cents) { return brl.format((cents || 0) / 100); };
-      var ck = '<svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 7" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      var li = function (txt, on) {
-        return '<li class="' + (on ? '' : 'off') + '">' + ck + '<span>' + txt + '</span></li>';
-      };
-      fetch('/public/packages').then(function (r) { return r.json(); }).then(function (res) {
-        var pks = (res && res.data) || [];
-        if (!pks.length) return; // sem pacotes publicados: seção fica oculta
-        // O "mais popular" é o do meio (destaque visual), só quando há 3+.
-        var feat = pks.length >= 3 ? Math.floor(pks.length / 2) : -1;
-        var html = pks.map(function (p, i) {
-          var free = (p.price_month_cents || 0) === 0;
-          var preco = free
-            ? '<div class="pfree">Grátis</div>'
-            : '<div class="pprice"><span class="rs">R$</span><span class="val">' + reais(p.price_month_cents) + '</span><span class="per">/mês</span></div>';
-          var itens = '';
-          itens += li('<b>' + (p.inc_lines || 1) + '</b> linha' + ((p.inc_lines || 1) > 1 ? 's' : '') + ' de WhatsApp', true);
-          itens += li('<b>' + (p.inc_agents || 1) + '</b> atendentes', true);
-          itens += li('Atendente de IA 24/7', p.inc_ia);
-          itens += li('Instagram — Direct e Lead Ads', p.inc_instagram);
-          itens += li('Campanhas em massa', p.inc_campanhas);
-          itens += li('Métricas e relatórios', p.inc_metricas);
-          var fran = (p.inc_ia && (p.franchise_cents || 0) > 0)
-            ? '<div class="pfran">R$ ' + reais(p.franchise_cents) + '/mês de IA inclusos</div>' : '';
-          return '<div class="pcard' + (i === feat ? ' feat-plan' : '') + '">' +
-            (i === feat ? '<span class="flag">Mais popular</span>' : '') +
-            '<div class="pname">' + (p.name || 'Plano') + '</div>' +
-            preco +
-            '<ul>' + itens + '</ul>' + fran +
-            '<a class="btn lg" style="width:auto" href="/app/?signup=1">' + (free ? 'Começar grátis' : 'Quero este plano') + '</a>' +
-            '</div>';
-        }).join('');
-        document.getElementById('pgrid').innerHTML = html;
-        document.getElementById('planos').hidden = false;
-      }).catch(function () { /* silêncio: se a API falhar, o site segue sem a seção */ });
-    })();
-
-    // O login real (código por e-mail) acontece no painel; levamos o e-mail
-    // digitado para lá pré-preenchido (?email=).
-    function goLogin(e) {
-      e.preventDefault();
-      var email = (document.getElementById('email').value || '').trim();
-      var url = '/app/';
-      if (email) url += '?email=' + encodeURIComponent(email);
-      window.location.href = url;
-      return false;
-    }
-  </script>
+  <!-- JS em arquivo separado por causa da CSP (script-src 'self' sem
+       'unsafe-inline'): script inline seria bloqueado. -->
+  <script src="/start.js" defer></script>
 </body>
 </html>

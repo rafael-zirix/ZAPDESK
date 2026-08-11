@@ -110,11 +110,11 @@ func normalizePhone(s string) string {
 // (decifrado na hora). Se a conta não tem número, cai no cliente global do .env
 // (compat/dev), quando configurado.
 type SupportService struct {
-	repo     *repository.SupportRepository
-	wa       *repository.WhatsAppRepository
-	cipher   *crypto.Cipher
-	apiBase  string
-	fallback *MetaClient
+	repo      *repository.SupportRepository
+	wa        *repository.WhatsAppRepository
+	cipher    *crypto.Cipher
+	apiBase   string
+	fallback  *MetaClient
 	mediaDir  string
 	publicURL string // base pública da API (links de mídia p/ a Meta baixar)
 	metaAppID string // App ID da Meta (Resumable Upload das imagens de modelo)
@@ -124,6 +124,10 @@ type SupportService struct {
 	aiActions *repository.AIActionRepository // ferramentas configuráveis (function-calling)
 	// Cobrança (opcional) — dispara a recarga automática ao consumir tokens.
 	billing *BillingService
+	// Pacotes (opcional): quando o pacote da conta tem preço de IA para o modelo,
+	// a IA debita da CARTEIRA em R$ (franquia mensal que acumula + preço/1M) em
+	// vez do saldo de tokens. Nil/sem preço = trilha antiga (tokens+fator).
+	pkgs *PackageService
 	// Envio pelo Direct do Instagram (ligado no wiring; nil = canal desligado).
 	igSend func(accountID, ticketID, recipientID, text string) (string, error)
 	// Módulos contratados (ligado no wiring). Nil = não checa.
@@ -421,14 +425,14 @@ type NumberUsage struct {
 
 // CompanyUsage é o consumo de uma empresa no período.
 type CompanyUsage struct {
-	AccountID     string        `json:"account_id"`
-	Name          string        `json:"name"`
-	MessagesOut   int           `json:"messages_out"`
-	MessagesIn    int           `json:"messages_in"`
-	Templates     int           `json:"templates"`
-	Media         int           `json:"media"`
-	Conversations int           `json:"conversations"`
-	AITokens      int64         `json:"ai_tokens"` // tokens de IA consumidos no período
+	AccountID     string `json:"account_id"`
+	Name          string `json:"name"`
+	MessagesOut   int    `json:"messages_out"`
+	MessagesIn    int    `json:"messages_in"`
+	Templates     int    `json:"templates"`
+	Media         int    `json:"media"`
+	Conversations int    `json:"conversations"`
+	AITokens      int64  `json:"ai_tokens"` // tokens de IA consumidos no período
 	// Cobrança da Meta: mensagens de template ENTREGUES por categoria.
 	Marketing      int `json:"marketing"`
 	Utility        int `json:"utility"`
@@ -519,6 +523,13 @@ func (s *SupportService) AdminUsage(from, to time.Time) ([]CompanyUsage, error) 
 	for i := range out {
 		out[i].AITokens = tok[out[i].AccountID]
 		applyPricing(&out[i], p)
+		// Trilha nova (carteira R$): o valor de IA é pelo preço/1M do MODELO do
+		// pacote da conta, não pelo preço global.
+		model, _ := s.AccountAIModel(out[i].AccountID)
+		if sell, _ := s.aiBillingFor(out[i].AccountID, model); sell > 0 {
+			out[i].ValueAI = float64(out[i].AITokens) / 1_000_000 * sell
+			out[i].ValueTotal = out[i].ValueWhatsApp + out[i].ValueAI
+		}
 	}
 	return out, nil
 }
@@ -778,7 +789,7 @@ func (s *SupportService) NotifyInbound(accountID, ticketID, preview string) {
 			corpo = string([]rune(corpo)[:120]) + "…"
 		}
 		s.push.Send(tokens, titulo, corpo, map[string]string{
-			"ticket_id": ticketID,
+			"ticket_id":  ticketID,
 			"account_id": accountID,
 		})
 	}()
@@ -793,7 +804,16 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 		return
 	}
 	cfg, err := s.aiRepo.GetConfig(accountID)
-	if err != nil || cfg == nil || !cfg.Enabled || cfg.TokenBalance <= 0 {
+	if err != nil || cfg == nil || !cfg.Enabled {
+		return
+	}
+	// Trilha dupla: carteira R$ (pacote com preço de IA) ou saldo de tokens.
+	newModel, sell, hasCredit := s.aiTrack(accountID)
+	if newModel {
+		if !hasCredit {
+			return
+		}
+	} else if cfg.TokenBalance <= 0 {
 		return
 	}
 	if paused, err := s.aiRepo.TicketAIPaused(ticketID); err != nil || paused {
@@ -859,9 +879,10 @@ func (s *SupportService) TriggerAIReply(accountID, ticketID string) {
 		slog.Error("Falha ao enviar resposta da IA", "erro", err, "ticket", ticketID)
 		return
 	}
-	newBal, _ := s.aiRepo.ConsumeTokens(accountID, cobrarTokens(tokens, fator), ticketID)
-	// Recarga automática por cartão (Stripe): dispara sozinha ao chegar ao limite.
-	if s.billing != nil {
+	newBal := s.aiDebit(accountID, ticketID, tokens, sell, fator, newModel)
+	// Recarga automática por cartão (Stripe): dispara sozinha ao chegar ao limite
+	// (só na trilha antiga de tokens; a carteira R$ tem recarga própria).
+	if !newModel && s.billing != nil {
 		go s.billing.MaybeCharge(accountID, newBal)
 	}
 }
@@ -882,6 +903,88 @@ func cobrarTokens(tokens int, fator float64) int64 {
 		return int64(tokens)
 	}
 	return int64(float64(tokens) * fator)
+}
+
+// WithPackages liga a cobrança por pacote (carteira R$ + franquia por modelo).
+// Trilha dupla: conta sem preço de IA no pacote segue no modelo antigo, sem risco.
+func (s *SupportService) WithPackages(p *PackageService) *SupportService {
+	s.pkgs = p
+	return s
+}
+
+// aiBillingFor lê de UMA vez o preço de venda/1M do modelo e a franquia mensal
+// (R$ centavos) do pacote da conta. sell=0 → conta na trilha antiga.
+func (s *SupportService) aiBillingFor(accountID, model string) (sell float64, franchiseCents int64) {
+	if s.pkgs == nil {
+		return 0, 0
+	}
+	p, err := s.pkgs.Current(accountID)
+	if err != nil || p == nil {
+		return 0, 0
+	}
+	if p.AIPrices != nil {
+		sell = p.AIPrices[model]
+	}
+	return sell, int64(p.FranchiseCents)
+}
+
+// aiTrack decide a trilha e, na nova, concede a franquia do mês (acumula) e diz
+// se ainda há carteira. newModel=false → o chamador usa o saldo de tokens.
+func (s *SupportService) aiTrack(accountID string) (newModel bool, sell float64, hasCredit bool) {
+	if s.aiRepo == nil {
+		return false, 0, false
+	}
+	model, _ := s.AccountAIModel(accountID)
+	sell, franchise := s.aiBillingFor(accountID, model)
+	if sell <= 0 {
+		return false, 0, false
+	}
+	// Mês local (UTC-3), idempotente: credita a franquia uma vez por mês, acumula.
+	period := time.Now().UTC().Add(-3 * time.Hour).Format("2006-01")
+	_ = s.aiRepo.EnsureFranchise(accountID, franchise, period)
+	c, _ := s.aiRepo.CreditCents(accountID)
+	return true, sell, c > 0
+}
+
+// aiDebit cobra o consumo na trilha certa e devolve o saldo pós-débito (tokens na
+// antiga; centavos na nova — o chamador não mistura as unidades).
+func (s *SupportService) aiDebit(accountID, ticketID string, tokens int, sell, fator float64, newModel bool) int64 {
+	if newModel {
+		cents := int64(float64(tokens)/1_000_000*sell*100 + 0.5)
+		if cents < 1 && tokens > 0 {
+			cents = 1 // um consumo real nunca custa zero
+		}
+		bal, _ := s.aiRepo.DebitCreditCents(accountID, cents)
+		_ = s.aiRepo.LogConsumption(accountID, int64(tokens), ticketID) // p/ o relatório do super-admin
+		return bal
+	}
+	bal, _ := s.aiRepo.ConsumeTokens(accountID, cobrarTokens(tokens, fator), ticketID)
+	return bal
+}
+
+// AIBalanceTokens devolve o saldo para MOSTRAR ao cliente, sempre em TOKENS: na
+// trilha nova, a carteira R$ convertida pelo preço/1M do modelo; na antiga, o
+// saldo de tokens.
+func (s *SupportService) AIBalanceTokens(accountID string) int64 {
+	model, _ := s.AccountAIModel(accountID)
+	if sell, _ := s.aiBillingFor(accountID, model); sell > 0 && s.aiRepo != nil {
+		c, _ := s.aiRepo.CreditCents(accountID)
+		return int64(float64(c) / 100 / sell * 1_000_000)
+	}
+	if s.aiRepo != nil {
+		if cfg, _ := s.aiRepo.GetConfig(accountID); cfg != nil {
+			return cfg.TokenBalance
+		}
+	}
+	return 0
+}
+
+// AIUsesCredit diz se a conta cobra pela CARTEIRA em R$ (trilha nova) — a recarga
+// usa isso para creditar R$ em vez de tokens.
+func (s *SupportService) AIUsesCredit(accountID string) bool {
+	model, _ := s.AccountAIModel(accountID)
+	sell, _ := s.aiBillingFor(accountID, model)
+	return sell > 0
 }
 
 func (s *SupportService) generateAIReplyWith(ai *AIClient, accountID, ticketID string, chat []AIChatMessage) (string, int, error) {
@@ -1074,7 +1177,9 @@ func (s *SupportService) AIRepo() *repository.AIRepository { return s.aiRepo }
 func (s *SupportService) OnboardingStatus(accountID string) (*models.OnboardingStatus, error) {
 	return s.repo.OnboardingStatus(accountID)
 }
-func (s *SupportService) SetOnboardingDone(accountID string) error { return s.repo.SetOnboardingDone(accountID) }
+func (s *SupportService) SetOnboardingDone(accountID string) error {
+	return s.repo.SetOnboardingDone(accountID)
+}
 
 // onboardingHelpPrompt ensina o assistente a guiar a configuração do HotZap.
 const onboardingHelpPrompt = `Você é o assistente de configuração do HotZap, uma plataforma de atendimento por WhatsApp com IA. Ajude o cliente NOVO a configurar a conta, de forma curta, cordial e objetiva, em português do Brasil. Baseie-se APENAS nas instruções abaixo; diga em qual menu clicar. Se não souber, diga que um atendente humano pode ajudar.
@@ -2093,8 +2198,8 @@ func (s *SupportService) ListMessages(accountID, ticketID string) ([]models.Supp
 // --- Contatos ---
 
 // ListContacts devolve os contatos da conta.
-func (s *SupportService) ListContacts(accountID, userID string) ([]models.SupportContact, error) {
-	return s.repo.ListContactsWithGroups(accountID, userID) // inclui os grupos de marketing
+func (s *SupportService) ListContacts(accountID, userID string, isAdmin bool) ([]models.SupportContact, error) {
+	return s.repo.ListContactsWithGroups(accountID, userID, isAdmin) // inclui os grupos de marketing
 }
 
 // CreateContact cadastra um contato (telefone normalizado, único por conta).

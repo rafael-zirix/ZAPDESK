@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../core/phone.dart';
 import '../core/theme.dart';
+import '../core/url_open.dart';
 import '../models/crm.dart';
 import 'contact_ficha_editor.dart';
 import 'crm_controller.dart';
@@ -153,59 +155,75 @@ class _CrmBoardViewState extends State<CrmBoardView> {
           message: 'Nenhum retorno pendente 🎉',
           child: Padding(padding: const EdgeInsets.all(8), child: bell));
     }
-    const maxShow = 12;
+    // Painel de altura fixa com rolagem interna. Antes o menu crescia com a
+    // quantidade de retornos e ESTOURAVA a tela (dezenas de alertas), e os que
+    // passavam do teto nem eram acessíveis. Agora cabe tudo, rolando.
     return PopupMenuButton<String>(
       tooltip: 'Retornos de hoje e atrasados',
-      onSelected: (id) {
-        final deal = crm.deals.where((d) => d.id == id).firstOrNull;
-        if (deal != null) showDealEditor(context, crm, deal: deal);
-      },
+      constraints: const BoxConstraints(minWidth: 300, maxWidth: 320),
       itemBuilder: (_) => [
-        for (final d in alerts.take(maxShow))
-          PopupMenuItem(
-            value: d.id,
-            height: 42,
-            child: Row(children: [
-              Icon(
-                  followUpState(d.nextFollowUpAt!) == 2
-                      ? Icons.notifications_active
-                      : Icons.notifications_active_outlined,
-                  size: 16,
-                  color: followUpState(d.nextFollowUpAt!) == 2
-                      ? const Color(0xFFEF4444)
-                      : const Color(0xFFF79009)),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 190,
-                child: Text(d.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        PopupMenuItem<String>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 360),
+            child: Scrollbar(
+              thumbVisibility: alerts.length > 8,
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                itemCount: alerts.length,
+                itemBuilder: (itemCtx, i) {
+                  final d = alerts[i];
+                  final late = followUpState(d.nextFollowUpAt!) == 2;
+                  final c =
+                      late ? const Color(0xFFEF4444) : const Color(0xFFF79009);
+                  return InkWell(
+                    // Fecha o balão e abre o lead na hora.
+                    onTap: () {
+                      Navigator.pop(itemCtx);
+                      showDealEditor(context, crm, deal: d);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      child: Row(children: [
+                        Icon(
+                            late
+                                ? Icons.notifications_active
+                                : Icons.notifications_active_outlined,
+                            size: 16,
+                            color: c),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 180,
+                          child: Text(d.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w600)),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 52,
+                          child: Text(
+                              followUpState(d.nextFollowUpAt!) == 1
+                                  ? 'hoje'
+                                  : followUpLabel(d.nextFollowUpAt!),
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: c)),
+                        ),
+                      ]),
+                    ),
+                  );
+                },
               ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 60,
-                child: Text(
-                    followUpState(d.nextFollowUpAt!) == 1
-                        ? 'hoje'
-                        : followUpLabel(d.nextFollowUpAt!),
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: followUpState(d.nextFollowUpAt!) == 2
-                            ? const Color(0xFFEF4444)
-                            : const Color(0xFFF79009))),
-              ),
-            ]),
+            ),
           ),
-        if (alerts.length > maxShow)
-          PopupMenuItem(
-            enabled: false,
-            height: 34,
-            child: Text('… e mais ${alerts.length - maxShow}',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          ),
+        ),
       ],
       child: Padding(padding: const EdgeInsets.all(8), child: bell),
     );
@@ -401,6 +419,21 @@ class _CrmBoardViewState extends State<CrmBoardView> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          ],
+          if (deal.contactPhone != null && deal.contactPhone!.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Row(children: [
+              Icon(Icons.phone_outlined, size: 12, color: Colors.grey.shade500),
+              const SizedBox(width: 4),
+              // CanvasKit: sem Expanded em Row (colapsa) — largura fixa.
+              SizedBox(
+                width: innerWidth - 16,
+                child: Text(formatPhone(deal.contactPhone!),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+              ),
+            ]),
           ],
           const SizedBox(height: 6),
           Row(children: [
@@ -626,6 +659,14 @@ class _CrmBoardViewState extends State<CrmBoardView> {
             title: const Text('Editar negócio'),
             onTap: () => Navigator.of(ctx).pop('edit'),
           ),
+          if (deal.contactPhone != null && deal.contactPhone!.isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.chat, color: Color(0xFF25D366)),
+              title: const Text('Abrir no WhatsApp'),
+              subtitle: Text(formatPhone(deal.contactPhone!),
+                  style: const TextStyle(fontSize: 11.5)),
+              onTap: () => Navigator.of(ctx).pop('whatsapp'),
+            ),
           ListTile(
             leading: const Icon(Icons.badge_outlined, color: AppTheme.seed),
             title: const Text('Ficha do contato'),
@@ -651,6 +692,8 @@ class _CrmBoardViewState extends State<CrmBoardView> {
     switch (action) {
       case 'edit':
         await showDealEditor(context, crm, deal: deal);
+      case 'whatsapp':
+        openUrl('https://wa.me/${deal.contactPhone}');
       case 'ficha':
         await showContactFicha(context, deal.contactId);
         await crm.load(); // nome/empresa podem ter mudado no card
